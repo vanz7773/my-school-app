@@ -8,3 +8,4 @@ school-management-elearning-*.json
 
 # Uploads
 uploads/
+.history/
