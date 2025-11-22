@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 const Attendance = require('../models/TeacherAttendance');
 const Teacher = require('../models/Teacher');
-const Term = require("../models/term");
+const Term = require('../models/Term');
 const Notification = require('../models/Notification');
 const geofenceValidator = require('../middlewares/geofenceValidator');
 const { startOfDay, endOfDay, eachWeekOfInterval, format, addDays } = require('date-fns');

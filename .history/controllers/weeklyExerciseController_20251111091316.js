@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 const WeeklyExercise = require('../models/WeeklyExercise');
 const Class = require('../models/Class');
 const Teacher = require('../models/Teacher');
-const Term = require("../models/term");
+const Term = require('../models/Term');
 const Subject = require("../models/Subject");
 
 /**

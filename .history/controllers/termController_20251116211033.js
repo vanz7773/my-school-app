@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const Term = require("../models/term");
+const Term = require('../models/Term');
 const { isWeekend } = require('../utils/dateHelpers');
 
 // 🟢 Create a new term

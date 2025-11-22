@@ -1,7 +1,7 @@
 // StudentAttendanceController.js
 const StudentAttendance = require('../models/StudentAttendance');
 const Student = require('../models/Student');
-const Term = require("../models/term");
+const Term = require('../models/Term');
 const FeedingFeeRecord = require('../models/FeedingFeeRecord');
 const FeedingFeeConfig = require('../models/FeedingFeeConfig');
 const Class = require('../models/Class');

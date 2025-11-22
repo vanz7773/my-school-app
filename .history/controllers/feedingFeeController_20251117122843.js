@@ -4,7 +4,7 @@ const StudentAttendance = require('../models/StudentAttendance');
 const Student = require('../models/Student');
 const FeedingFeeConfig = require('../models/FeedingFeeConfig');
 const FeedingFeeRecord = require('../models/FeedingFeeRecord');
-const Term = require("../models/term");
+const Term = require('../models/Term');
 const Class = require('../models/Class');
 const Notification = require('../models/Notification');
 
