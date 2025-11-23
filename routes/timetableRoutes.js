@@ -10,7 +10,7 @@ const {
   createClassTeacherTimetable,
   updateTimetableEntry,
   deleteTimetableEntry,
-  getTeaherClassTimetable
+  getTeacherClassTimetable
 
 } = require('../controllers/timetableController');
 
@@ -26,7 +26,7 @@ router.get('/teacher', protect, restrictTo('teacher'), getTeacherTimetable);
 // ✅ Student/Parent: View student’s class timetable
 router.get('/my-class', protect, restrictTo('student', 'parent'), getStudentTimetable);
 
-router.get("/timetable/teacher/class",protect, restrictTo('teacher'), getTeaherClassTimetable);
+router.get("/timetable/teacher/class",protect, restrictTo('teacher'), getTeacherClassTimetable);
 
 // ✅ Parent: View all children’s timetables
 router.get('/parent', protect, restrictTo('parent'), getParentTimetables);
