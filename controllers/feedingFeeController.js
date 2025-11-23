@@ -805,7 +805,7 @@ const getClassesWithFeeBands = async (req, res) => {
 };
 
 // --------------------------------------------------------------------
-// 🍽️ Student/Parent Feeding Fee Breakdown WITH CACHING
+// 🍽️ Student/Parent Feeding Fee Breakdown WITH CACHING - FIXED VERSION
 // --------------------------------------------------------------------
 const getFeedingFeeForStudent = async (req, res) => {
   try {
@@ -813,35 +813,82 @@ const getFeedingFeeForStudent = async (req, res) => {
     const { termId, week, childId } = req.query;
     const user = req.user;
 
+    console.log(`🔍 getFeedingFeeForStudent called:`, {
+      studentId,
+      termId, 
+      week,
+      childId,
+      userRole: user.role,
+      userId: user._id
+    });
+
     if (!termId || !week) {
-      return res.status(400).json({ message: "Missing termId or week" });
+      return res.status(400).json({ 
+        success: false,
+        message: "Missing termId or week" 
+      });
     }
 
     const weekNumber = Number(week);
-    const term = await Term.findById(termId);
-    if (!term) return res.status(404).json({ message: "Term not found" });
+    const schoolId = user.school;
 
-    const feeConfig = await getFeeConfigWithCache(user.school);
-    if (!feeConfig)
-      return res.status(404).json({ message: "Feeding fee config not found" });
+    // 🟢 Get term
+    const term = await Term.findById(termId);
+    if (!term) {
+      return res.status(404).json({ 
+        success: false,
+        message: "Term not found" 
+      });
+    }
+
+    // 🟢 Get fee config
+    const feeConfig = await getFeeConfigWithCache(schoolId);
+    if (!feeConfig) {
+      return res.status(404).json({ 
+        success: false,
+        message: "Feeding fee config not found" 
+      });
+    }
 
     // -----------------------------------------------------
-    // 1️⃣ Identify student (student or parent)
+    // 1️⃣ Identify student (FIXED: Proper student resolution)
     // -----------------------------------------------------
     let students = [];
+    
     if (user.role === "student") {
-      const student = await getStudentWithCache(null, user.school, user._id);
-      if (!student)
-        return res.status(404).json({ message: "Student record not found" });
+      console.log("🎓 Student role detected, finding student record...");
+      // Find student by user ID
+      const student = await Student.findOne({ 
+        user: user._id, 
+        school: schoolId 
+      })
+      .populate("class")
+      .populate("user");
+
+      if (!student) {
+        return res.status(404).json({ 
+          success: false,
+          message: "Student record not found for this user" 
+        });
+      }
       students = [student];
+      console.log(`🎓 Found student: ${student._id} - ${getFullStudentName(student)}`);
+      
     } else if (user.role === "parent") {
+      console.log("👪 Parent role detected, finding children...");
       const filter = {
-        school: user.school,
+        school: schoolId,
         $or: [{ parent: user._id }, { parentIds: { $in: [user._id] } }],
       };
 
-      if (childId) filter._id = childId;
-      else if (studentId && studentId !== "undefined") filter._id = studentId;
+      // Use childId if provided, otherwise use studentId from params
+      if (childId && childId !== "undefined") {
+        filter._id = childId;
+        console.log(`👪 Filtering by childId: ${childId}`);
+      } else if (studentId && studentId !== "undefined") {
+        filter._id = studentId;
+        console.log(`👪 Filtering by studentId: ${studentId}`);
+      }
 
       students = await Student.find(filter)
         .populate("class")
@@ -849,11 +896,14 @@ const getFeedingFeeForStudent = async (req, res) => {
 
       if (!students.length) {
         return res.status(404).json({
-          message: "No linked child found for this parent.",
+          success: false,
+          message: "No linked children found for this parent",
         });
       }
+      console.log(`👪 Found ${students.length} children for parent`);
     } else {
       return res.status(403).json({
+        success: false,
         message: "Access denied. Only students or parents allowed.",
       });
     }
@@ -876,7 +926,7 @@ const getFeedingFeeForStudent = async (req, res) => {
 
     // 🔔 FETCH NOTIFICATIONS
     const notifications = await Notification.find({
-      school: user.school,
+      school: schoolId,
       type: "feedingfee",
       studentId: { $in: allStudentIds },
       $or: [{ recipientUsers: user._id }, { recipientRoles: user.role }],
@@ -894,6 +944,8 @@ const getFeedingFeeForStudent = async (req, res) => {
       const className = student.class?.name || "Unknown";
       const amountPerDay = getAmountPerDay(student, feeConfig);
 
+      console.log(`📊 Processing student ${studentName}, amountPerDay: ${amountPerDay}`);
+
       const [attendance, feedingRecord] = await Promise.all([
         StudentAttendance.findOne({
           student: student._id,
@@ -904,24 +956,30 @@ const getFeedingFeeForStudent = async (req, res) => {
           classId: student.class?._id,
           termId,
           week: weekNumber,
-          school: user.school,
+          school: schoolId,
         }).lean(),
       ]);
 
+      console.log(`📊 Found attendance: ${!!attendance}, feedingRecord: ${!!feedingRecord}`);
+
       let days = {
         M: "notmarked",
-        T: "notmarked",
+        T: "notmarked", 
         W: "notmarked",
         TH: "notmarked",
         F: "notmarked",
       };
 
+      // Merge attendance data
       if (attendance?.days) {
         for (const key of ["M", "T", "W", "TH", "F"]) {
-          if (attendance.days[key]) days[key] = attendance.days[key];
+          if (attendance.days[key]) {
+            days[key] = attendance.days[key];
+          }
         }
       }
 
+      // Merge manual feeding data (overrides attendance)
       const manualEntry = feedingRecord?.breakdown?.find(
         (b) => String(b.student) === String(student._id)
       );
@@ -939,16 +997,16 @@ const getFeedingFeeForStudent = async (req, res) => {
       ).length;
       const total = presentDays * amountPerDay;
 
+      // Build records array for frontend
       const records = Object.entries(days).map(([key, val]) => ({
         day: key,
         status: val,
         amount: val === "present" ? amountPerDay : 0,
         category: student.class?.level || "N/A",
-        source:
-          manualEntry?.days?.[key] && manualEntry.days[key] !== "notmarked"
-            ? "manual"
-            : attendance?.days?.[key]
-            ? "attendance"
+        source: manualEntry?.days?.[key] && manualEntry.days[key] !== "notmarked" 
+          ? "manual" 
+          : attendance?.days?.[key] 
+            ? "attendance" 
             : "none",
       }));
 
@@ -969,14 +1027,15 @@ const getFeedingFeeForStudent = async (req, res) => {
     await Notification.updateMany(
       {
         studentId: { $in: allStudentIds },
-        type: "feedingfee",
+        type: "feedingfee", 
         isRead: false,
         recipientUsers: user._id,
       },
       { $set: { isRead: true } }
     );
 
-    return res.json({
+    // 🟢 RETURN PROPER RESPONSE FORMAT
+    const responseData = {
       success: true,
       count: results.length,
       data: childId || results.length === 1 ? results[0] : results,
@@ -984,10 +1043,15 @@ const getFeedingFeeForStudent = async (req, res) => {
       term: termId,
       weekDates,
       configType: feeConfig.classFeeBands ? "class-based" : "category-based",
-    });
+    };
+
+    console.log(`✅ Returning feeding fee data for ${results.length} students`);
+    return res.json(responseData);
+
   } catch (error) {
     console.error("❌ Error in getFeedingFeeForStudent:", error);
     return res.status(500).json({
+      success: false,
       message: "Server error fetching feeding fee data",
       error: error.message,
     });
