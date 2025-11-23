@@ -1,4 +1,4 @@
-// StudentAttendanceController.js - OPTIMIZED VERSION
+// StudentAttendanceController.js - OPTIMIZED VERSION (No External Dependencies)
 const StudentAttendance = require('../models/StudentAttendance');
 const Student = require('../models/Student');
 const Term = require("../models/term");
@@ -9,12 +9,52 @@ const Notification = require('../models/Notification');
 const mongoose = require('mongoose');
 const { getAmountPerDay } = require('../utils/feedingFeeUtils');
 
-// 🎯 CACHE LAYER - TTL-based caching
-const NodeCache = require('node-cache');
-const cache = new NodeCache({ 
-  stdTTL: 300, // 5 minutes
-  checkperiod: 60 
-});
+// 🎯 SIMPLE IN-MEMORY CACHE (No external dependencies)
+class SimpleCache {
+  constructor() {
+    this.cache = new Map();
+    this.defaultTTL = 300000; // 5 minutes in milliseconds
+  }
+
+  set(key, value, ttl = this.defaultTTL) {
+    this.cache.set(key, {
+      value,
+      expires: Date.now() + ttl
+    });
+  }
+
+  get(key) {
+    const item = this.cache.get(key);
+    if (!item) return null;
+    
+    if (Date.now() > item.expires) {
+      this.cache.delete(key);
+      return null;
+    }
+    
+    return item.value;
+  }
+
+  del(key) {
+    this.cache.delete(key);
+  }
+
+  clear() {
+    this.cache.clear();
+  }
+
+  // Clean up expired items (optional - call periodically)
+  cleanup() {
+    const now = Date.now();
+    for (const [key, item] of this.cache.entries()) {
+      if (now > item.expires) {
+        this.cache.delete(key);
+      }
+    }
+  }
+}
+
+const cache = new SimpleCache();
 
 // -------------------- Cache Keys & Helper Utilities --------------------
 const CACHE_KEYS = {
