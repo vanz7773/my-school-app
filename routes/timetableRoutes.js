@@ -28,7 +28,6 @@ router.get('/my-class', protect, restrictTo('student', 'parent'), getStudentTime
 
 router.get("/teacher/class", protect, restrictTo('teacher'), getTeacherClassTimetable);
 
-
 // ✅ Parent: View all children’s timetables
 router.get('/parent', protect, restrictTo('parent'), getParentTimetables);
 
