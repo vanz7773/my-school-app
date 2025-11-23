@@ -349,3 +349,28 @@ exports.getTeacherAssignedClasses = async (req, res) => {
     res.status(500).json({ success: false, message: 'Error fetching classes', error: err.message });
   }
 };
+// Teacher: View timetable for a specific class
+exports.getTeacherClassTimetable = async (req, res) => {
+  try {
+    const { classId } = req.query;
+
+    if (!classId)
+      return res.status(400).json({ success: false, message: "classId is required" });
+
+    const results = await Timetable.find({
+      school: req.user.school,
+      class: classId
+    })
+      .populate("class", "name")
+      .populate("teacher", "name email");
+
+    res.json({ success: true, timetable: results });
+  } catch (err) {
+    console.error('Error fetching class timetable:', err);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching timetable",
+      error: err.message
+    });
+  }
+};
