@@ -479,7 +479,7 @@ const publishQuiz = async (req, res) => {
 };
 
 // ---------------------------
-// 3. Get QuizSession with Caching
+// 3. Get QuizSession with Caching (Updated with Shuffling Support)
 // ---------------------------
 const getQuiz = async (req, res) => {
   try {
@@ -487,8 +487,11 @@ const getQuiz = async (req, res) => {
     const school = toObjectId(req.user.school);
     const cacheKey = CACHE_KEYS.QUIZ_SINGLE(quizId, req.user.role);
 
-    // 🎯 Check cache first
-    const cached = cache.get(cacheKey);
+    // 🎯 Check cache only if shuffle is OFF
+    const cached = (!req.user.role || req.user.role !== "student")
+      ? cache.get(cacheKey)
+      : null;
+
     if (cached) {
       return res.json(cached);
     }
@@ -508,29 +511,48 @@ const getQuiz = async (req, res) => {
       return res.status(404).json({ message: 'Quiz not found in your school' });
     }
 
+    // Students only see it after startTime
     if (quiz.startTime && new Date() < quiz.startTime && req.user.role === 'student') {
       return res.status(403).json({ message: 'Quiz is not available yet' });
     }
 
     let response;
+
+    // 🟢 STUDENT VIEW (with shuffling)
     if (req.user.role === 'student') {
-      const questionsWithoutAnswers = quiz.questions.map(q => {
-        const question = {
+
+      // Copy questions
+      let quizQuestions = [...quiz.questions];
+
+      // 🔀 Shuffle questions if enabled
+      if (quiz.shuffleQuestions) {
+        quizQuestions = quizQuestions.sort(() => Math.random() - 0.5);
+      }
+
+      // Now process questions
+      const questionsWithoutAnswers = quizQuestions.map(q => {
+        let question = {
           _id: q._id,
           questionText: q.questionText,
           type: q.type,
-          options: q.options,
           explanation: q.explanation,
-          points: q.points
+          points: q.points,
+          options: q.options ? [...q.options] : []
         };
-        
+
+        // 🔀 Shuffle options if enabled
+        if (quiz.shuffleOptions && Array.isArray(question.options)) {
+          question.options = [...question.options].sort(() => Math.random() - 0.5);
+        }
+
+        // Hide correct answer for students (except true/false)
         if (q.type !== 'true-false') {
           delete question.correctAnswer;
         }
-        
+
         return question;
       });
-      
+
       response = {
         _id: quiz._id,
         title: quiz.title,
@@ -542,17 +564,25 @@ const getQuiz = async (req, res) => {
         shuffleQuestions: quiz.shuffleQuestions,
         shuffleOptions: quiz.shuffleOptions
       };
-    } else {
-      response = quiz;
+
+      // ❌ Do NOT cache shuffled quizzes — order must be different per student/session
+      return res.json(response);
     }
 
-    // 🎯 Cache the response
-    cache.set(cacheKey, response, 300); // 5 min cache
-    res.json(response);
+    // 🟠 TEACHER VIEW (no need to shuffle)
+    response = quiz;
+
+    // 🎯 Cache only for teachers (no shuffling needed)
+    cache.set(cacheKey, response, 300); // 5 min
+
+    return res.json(response);
+
   } catch (error) {
+    console.error("getQuiz error", error);
     res.status(500).json({ message: 'Error fetching quiz', error: error.message });
   }
 };
+
 
 /// ---------------------------
 // 4. Get QuizSessions for a Class (Optimized & Fixed)
