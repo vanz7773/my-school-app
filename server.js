@@ -48,15 +48,12 @@ io.on('connection', (socket) => {
 app.set('io', io);
 app.set('connectedUsers', connectedUsers);
 
-// ✅ Enable CORS for frontend
 app.use(cors({
-  origin: [
-    "http://localhost:3000",
-    "http://192.168.0.11:8081",
-    "exp://192.168.0.11:8081"
-  ],
-  credentials: true,
+  origin: "*",
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
+  allowedHeaders: ["Content-Type", "Authorization"],
 }));
+
 
 
 // Parse JSON requests
