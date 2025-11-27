@@ -479,18 +479,21 @@ const publishQuiz = async (req, res) => {
 };
 
 // ---------------------------
-// 3. Get QuizSession with Caching
+// 3. Get QuizSession with Caching (Fixed Shuffling)
 // ---------------------------
 const getQuiz = async (req, res) => {
   try {
     const { quizId } = req.params;
     const school = toObjectId(req.user.school);
-    const cacheKey = CACHE_KEYS.QUIZ_SINGLE(quizId, req.user.role);
+    const userId = req.user._id;
 
-    // 🎯 Check cache first
-    const cached = cache.get(cacheKey);
-    if (cached) {
-      return res.json(cached);
+    // Never cache for students (due to shuffling)
+    const cacheKey = CACHE_KEYS.QUIZ_SINGLE(quizId, req.user.role);
+    if (req.user.role !== "student") {
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        return res.json(cached);
+      }
     }
 
     if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
@@ -508,29 +511,72 @@ const getQuiz = async (req, res) => {
       return res.status(404).json({ message: 'Quiz not found in your school' });
     }
 
+    // Students only see it after startTime
     if (quiz.startTime && new Date() < quiz.startTime && req.user.role === 'student') {
       return res.status(403).json({ message: 'Quiz is not available yet' });
     }
 
     let response;
+
+    // 🟢 STUDENT VIEW (with proper shuffling)
     if (req.user.role === 'student') {
-      const questionsWithoutAnswers = quiz.questions.map(q => {
-        const question = {
+      // Create a seed based on user ID and quiz ID for consistent shuffling per student
+      const seed = `${userId}-${quizId}`;
+      
+      // Proper Fisher-Yates shuffle function with seed
+      const seededShuffle = (array, seed) => {
+        const shuffled = [...array];
+        let random = simpleRandom(seed);
+        
+        for (let i = shuffled.length - 1; i > 0; i--) {
+          const j = Math.floor(random() * (i + 1));
+          [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        return shuffled;
+      };
+
+      // Simple seeded random number generator
+      function simpleRandom(seed) {
+        let value = 0;
+        for (let i = 0; i < seed.length; i++) {
+          value = ((value << 5) - value) + seed.charCodeAt(i);
+          value = value & value;
+        }
+        return () => {
+          value = (value * 9301 + 49297) % 233280;
+          return value / 233280;
+        };
+      }
+
+      let quizQuestions = [...quiz.questions];
+
+      // 🔀 Shuffle questions if enabled
+      if (quiz.shuffleQuestions) {
+        quizQuestions = seededShuffle(quizQuestions, seed + '-questions');
+      }
+
+      // Process questions for student view
+      const questionsWithoutAnswers = quizQuestions.map(q => {
+        let question = {
           _id: q._id,
           questionText: q.questionText,
           type: q.type,
-          options: q.options,
           explanation: q.explanation,
-          points: q.points
+          points: q.points,
+          options: q.options ? [...q.options] : []
         };
-        
-        if (q.type !== 'true-false') {
-          delete question.correctAnswer;
+
+        // 🔀 Shuffle options if enabled
+        if (quiz.shuffleOptions && Array.isArray(question.options) && question.options.length > 0) {
+          question.options = seededShuffle(question.options, seed + '-options-' + q._id);
         }
-        
+
+        // Hide correct answer for students
+        delete question.correctAnswer;
+
         return question;
       });
-      
+
       response = {
         _id: quiz._id,
         title: quiz.title,
@@ -542,14 +588,19 @@ const getQuiz = async (req, res) => {
         shuffleQuestions: quiz.shuffleQuestions,
         shuffleOptions: quiz.shuffleOptions
       };
-    } else {
-      response = quiz;
+
+      // ❌ Do NOT cache shuffled quizzes for students
+      return res.json(response);
     }
 
-    // 🎯 Cache the response
-    cache.set(cacheKey, response, 300); // 5 min cache
-    res.json(response);
+    // 🟠 TEACHER VIEW (no shuffling, safe to cache)
+    response = quiz;
+    cache.set(cacheKey, response, 300); // 5 min cache for teachers
+
+    return res.json(response);
+
   } catch (error) {
+    console.error("getQuiz error", error);
     res.status(500).json({ message: 'Error fetching quiz', error: error.message });
   }
 };
