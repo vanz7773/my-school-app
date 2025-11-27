@@ -9,6 +9,42 @@ const Subject = require('../models/Subject');
 const Teacher = require('../models/Teacher');
 const Student = require('../models/Student');
 
+
+
+
+// Add these helper functions at the TOP of your file (after imports)
+// ---------------------------
+// Seeded Shuffle Functions
+// ---------------------------
+const createSeededRandom = (seed) => {
+  let x = Math.sin(seed) * 10000;
+  return () => {
+    x = Math.sin(x) * 10000;
+    return x - Math.floor(x);
+  };
+};
+
+const seededShuffle = (array, seedString) => {
+  if (!array || !Array.isArray(array)) return array;
+  
+  // Convert string seed to numeric seed
+  let numericSeed = 0;
+  for (let i = 0; i < seedString.length; i++) {
+    numericSeed = ((numericSeed << 5) - numericSeed) + seedString.charCodeAt(i);
+    numericSeed |= 0; // Convert to 32-bit integer
+  }
+  
+  const random = createSeededRandom(numericSeed);
+  const shuffled = [...array];
+  
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  
+  return shuffled;
+};
+
 // 🎯 PERFORMANCE OPTIMIZATIONS
 // 1. Simple In-Memory Caching Layer (No external dependencies)
 class SimpleCache {
@@ -479,13 +515,20 @@ const publishQuiz = async (req, res) => {
 };
 
 // ---------------------------
-// 3. Get QuizSession with Caching (Fixed Shuffling)
+// 3. Get QuizSession with Caching (Fixed & Safe)
 // ---------------------------
 const getQuiz = async (req, res) => {
   try {
     const { quizId } = req.params;
     const school = toObjectId(req.user.school);
     const userId = req.user._id;
+
+    console.log(`📥 Loading quiz ${quizId} for user ${userId}, role: ${req.user.role}`);
+
+    // Validate quiz ID
+    if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
+      return res.status(400).json({ message: 'Invalid quiz ID format' });
+    }
 
     // Never cache for students (due to shuffling)
     const cacheKey = CACHE_KEYS.QUIZ_SINGLE(quizId, req.user.role);
@@ -496,10 +539,7 @@ const getQuiz = async (req, res) => {
       }
     }
 
-    if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
-      return res.status(400).json({ message: 'Invalid quiz ID format' });
-    }
-
+    // Fetch quiz with timeout
     const quiz = await executeWithTimeout(
       QuizSession.findOne({ 
         _id: toObjectId(quizId), 
@@ -511,9 +551,17 @@ const getQuiz = async (req, res) => {
       return res.status(404).json({ message: 'Quiz not found in your school' });
     }
 
-    // Students only see it after startTime
-    if (quiz.startTime && new Date() < quiz.startTime && req.user.role === 'student') {
-      return res.status(403).json({ message: 'Quiz is not available yet' });
+    console.log(`✅ Quiz found: ${quiz.title}, Published: ${quiz.isPublished}`);
+
+    // Students only see it after startTime and if published
+    if (req.user.role === 'student') {
+      if (quiz.startTime && new Date() < new Date(quiz.startTime)) {
+        return res.status(403).json({ message: 'Quiz is not available yet' });
+      }
+      
+      if (!quiz.isPublished) {
+        return res.status(403).json({ message: 'Quiz is not published yet' });
+      }
     }
 
     let response;
@@ -523,59 +571,40 @@ const getQuiz = async (req, res) => {
       // Create a seed based on user ID and quiz ID for consistent shuffling per student
       const seed = `${userId}-${quizId}`;
       
-      // Proper Fisher-Yates shuffle function with seed
-      const seededShuffle = (array, seed) => {
-        const shuffled = [...array];
-        let random = simpleRandom(seed);
-        
-        for (let i = shuffled.length - 1; i > 0; i--) {
-          const j = Math.floor(random() * (i + 1));
-          [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-        }
-        return shuffled;
-      };
-
-      // Simple seeded random number generator
-      function simpleRandom(seed) {
-        let value = 0;
-        for (let i = 0; i < seed.length; i++) {
-          value = ((value << 5) - value) + seed.charCodeAt(i);
-          value = value & value;
-        }
-        return () => {
-          value = (value * 9301 + 49297) % 233280;
-          return value / 233280;
-        };
-      }
-
-      let quizQuestions = [...quiz.questions];
+      let quizQuestions = [...(quiz.questions || [])];
 
       // 🔀 Shuffle questions if enabled
       if (quiz.shuffleQuestions) {
+        console.log(`🔄 Shuffling questions for student ${userId}`);
         quizQuestions = seededShuffle(quizQuestions, seed + '-questions');
       }
 
       // Process questions for student view
-      const questionsWithoutAnswers = quizQuestions.map(q => {
+      const questionsWithoutAnswers = quizQuestions.map((q, index) => {
+        if (!q) return null;
+        
         let question = {
-          _id: q._id,
-          questionText: q.questionText,
-          type: q.type,
-          explanation: q.explanation,
-          points: q.points,
+          _id: q._id || `temp-${index}`,
+          questionText: q.questionText || 'No question text',
+          type: q.type || 'multiple-choice',
+          explanation: q.explanation || '',
+          points: q.points || 1,
           options: q.options ? [...q.options] : []
         };
 
         // 🔀 Shuffle options if enabled
         if (quiz.shuffleOptions && Array.isArray(question.options) && question.options.length > 0) {
-          question.options = seededShuffle(question.options, seed + '-options-' + q._id);
+          console.log(`🔄 Shuffling options for question ${question._id}`);
+          question.options = seededShuffle(question.options, seed + '-options-' + (q._id || index));
         }
 
-        // Hide correct answer for students
-        delete question.correctAnswer;
+        // Hide correct answer for students (except for debugging)
+        if (process.env.NODE_ENV !== 'development') {
+          delete question.correctAnswer;
+        }
 
         return question;
-      });
+      }).filter(q => q !== null); // Remove any null questions
 
       response = {
         _id: quiz._id,
@@ -586,10 +615,11 @@ const getQuiz = async (req, res) => {
         dueDate: quiz.dueDate,
         questions: questionsWithoutAnswers,
         shuffleQuestions: quiz.shuffleQuestions,
-        shuffleOptions: quiz.shuffleOptions
+        shuffleOptions: quiz.shuffleOptions,
+        totalPoints: quiz.questions ? quiz.questions.reduce((sum, q) => sum + (q.points || 1), 0) : 0
       };
 
-      // ❌ Do NOT cache shuffled quizzes for students
+      console.log(`✅ Sending ${questionsWithoutAnswers.length} questions to student`);
       return res.json(response);
     }
 
@@ -597,11 +627,16 @@ const getQuiz = async (req, res) => {
     response = quiz;
     cache.set(cacheKey, response, 300); // 5 min cache for teachers
 
+    console.log(`✅ Sending quiz to teacher`);
     return res.json(response);
 
   } catch (error) {
-    console.error("getQuiz error", error);
-    res.status(500).json({ message: 'Error fetching quiz', error: error.message });
+    console.error("❌ getQuiz error:", error);
+    res.status(500).json({ 
+      message: 'Error fetching quiz', 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 };
 
