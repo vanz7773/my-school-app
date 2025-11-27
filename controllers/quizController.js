@@ -479,7 +479,7 @@ const publishQuiz = async (req, res) => {
 };
 
 // ---------------------------
-// 3. Get QuizSession with Caching (Updated with Shuffling Support + Expiry Check)
+// 3. Get QuizSession with Caching
 // ---------------------------
 const getQuiz = async (req, res) => {
   try {
@@ -487,11 +487,8 @@ const getQuiz = async (req, res) => {
     const school = toObjectId(req.user.school);
     const cacheKey = CACHE_KEYS.QUIZ_SINGLE(quizId, req.user.role);
 
-    // 🎯 Check cache only if shuffle is OFF and not a student
-    const cached = (!req.user.role || req.user.role !== "student")
-      ? cache.get(cacheKey)
-      : null;
-
+    // 🎯 Check cache first
+    const cached = cache.get(cacheKey);
     if (cached) {
       return res.json(cached);
     }
@@ -501,116 +498,39 @@ const getQuiz = async (req, res) => {
     }
 
     const quiz = await executeWithTimeout(
-      QuizSession.findOne({
-        _id: toObjectId(quizId),
-        school
+      QuizSession.findOne({ 
+        _id: toObjectId(quizId), 
+        school 
       }).lean().maxTimeMS(5000)
     );
-
+    
     if (!quiz) {
       return res.status(404).json({ message: 'Quiz not found in your school' });
     }
 
-    // Students only see it after startTime
-    if (quiz.startTime && new Date() < new Date(quiz.startTime) && req.user.role === 'student') {
+    if (quiz.startTime && new Date() < quiz.startTime && req.user.role === 'student') {
       return res.status(403).json({ message: 'Quiz is not available yet' });
     }
 
-    // === Student-specific expiry + access checks ===
-    if (req.user.role === 'student') {
-      // 1) Ensure quiz is published (optional but recommended)
-      if (!quiz.isPublished) {
-        return res.status(403).json({ message: 'Quiz is not published yet' });
-      }
-
-      // 2) If quiz dueDate passed -> deny access
-      if (quiz.dueDate && new Date() > new Date(quiz.dueDate)) {
-        return res.status(403).json({
-          expired: true,
-          message: 'The quiz due date has passed. You cannot open this quiz.'
-        });
-      }
-
-      // 3) Check for an active attempt (covers both User ID and Student doc)
-      let studentDoc;
-      try {
-        studentDoc = await executeWithTimeout(
-          Student.findOne({ user: req.user._id, school }).lean().maxTimeMS(3000)
-        );
-      } catch (e) {
-        studentDoc = null;
-      }
-
-      const studentIdentifier = studentDoc?._id || req.user._id;
-
-      const activeAttempt = await executeWithTimeout(
-        QuizAttempt.findOne({
-          quizId: toObjectId(quizId),
-          studentId: toObjectId(studentIdentifier),
-          school,
-          status: "in-progress"
-        }).lean().maxTimeMS(3000)
-      );
-
-      if (activeAttempt) {
-        // If attempt expired -> auto-submit and block viewing
-        if (new Date() > new Date(activeAttempt.expiresAt)) {
-          // best-effort: call auto-submit (no session) and respond expired
-          try {
-            // pass quiz (lean) and school as stored
-            await autoSubmitExpiredAttempt(activeAttempt, quiz, school);
-          } catch (err) {
-            console.error('autoSubmitExpiredAttempt in getQuiz failed:', err?.message || err);
-          }
-
-          return res.status(403).json({
-            expired: true,
-            message: "Your quiz time expired. The quiz has been auto-submitted."
-          });
-        }
-
-        // If active attempt exists and not expired — allow student to fetch the quiz (shuffling still done below)
-        // (No further action needed here)
-      }
-    }
-
     let response;
-
-    // 🟢 STUDENT VIEW (with shuffling)
     if (req.user.role === 'student') {
-
-      // Copy questions
-      let quizQuestions = Array.isArray(quiz.questions) ? [...quiz.questions] : [];
-
-      // 🔀 Shuffle questions if enabled
-      if (quiz.shuffleQuestions) {
-        quizQuestions = quizQuestions.sort(() => Math.random() - 0.5);
-      }
-
-      // Now process questions
-      const questionsWithoutAnswers = quizQuestions.map(q => {
-        let question = {
+      const questionsWithoutAnswers = quiz.questions.map(q => {
+        const question = {
           _id: q._id,
           questionText: q.questionText,
           type: q.type,
+          options: q.options,
           explanation: q.explanation,
-          points: q.points,
-          options: q.options ? [...q.options] : []
+          points: q.points
         };
-
-        // 🔀 Shuffle options if enabled
-        if (quiz.shuffleOptions && Array.isArray(question.options)) {
-          question.options = [...question.options].sort(() => Math.random() - 0.5);
-        }
-
-        // Hide correct answer for students (except true/false)
+        
         if (q.type !== 'true-false') {
           delete question.correctAnswer;
         }
-
+        
         return question;
       });
-
+      
       response = {
         _id: quiz._id,
         title: quiz.title,
@@ -622,26 +542,17 @@ const getQuiz = async (req, res) => {
         shuffleQuestions: quiz.shuffleQuestions,
         shuffleOptions: quiz.shuffleOptions
       };
-
-      // ❌ Do NOT cache shuffled quizzes — order must be different per student/session
-      return res.json(response);
+    } else {
+      response = quiz;
     }
 
-    // 🟠 TEACHER VIEW (no need to shuffle)
-    response = quiz;
-
-    // 🎯 Cache only for teachers (no shuffling needed)
-    cache.set(cacheKey, response, 300); // 5 min
-
-    return res.json(response);
-
+    // 🎯 Cache the response
+    cache.set(cacheKey, response, 300); // 5 min cache
+    res.json(response);
   } catch (error) {
-    console.error("getQuiz error", error);
     res.status(500).json({ message: 'Error fetching quiz', error: error.message });
   }
 };
-
-
 
 /// ---------------------------
 // 4. Get QuizSessions for a Class (Optimized & Fixed)
@@ -1517,7 +1428,6 @@ const submitQuiz = async (req, res) => {
       status: "in-progress",
     }).session(session);
 
-    // If no attempt exists, create a local temporary one
     if (!activeAttempt) {
       activeAttempt = {
         sessionId: new mongoose.Types.ObjectId().toString(),
@@ -1527,60 +1437,8 @@ const submitQuiz = async (req, res) => {
       };
     }
 
-    // -------------------------------------------------------
-    // 🔥 CHECK IF ATTEMPT EXPIRED — AUTO-SUBMIT & BLOCK ACCESS
-    // -------------------------------------------------------
-    if (activeAttempt && new Date() > new Date(activeAttempt.expiresAt)) {
-
-      console.log("⏳ Attempt expired → Auto-submitting...");
-
-      const storedAnswers = activeAttempt.answers || {};
-
-      // Convert saved answers into proper structure
-      const answersArray = Object.entries(storedAnswers).map(([qId, ans]) => ({
-        questionId: qId,
-        selectedAnswer: ans,
-        timeSpent: 0
-      }));
-
-      // Save expired submission
-      const expiredResult = await QuizResult.findOneAndUpdate(
-        {
-          school: toObjectId(school),
-          quizId: toObjectId(quizId),
-          studentId: student._id,
-        },
-        {
-          school,
-          quizId,
-          studentId: student._id,
-          answers: answersArray,
-          submittedAt: new Date(),
-          startTime: activeAttempt.startTime,
-          status: "submitted",
-          autoSubmit: true,
-        },
-        { upsert: true, new: true, setDefaultsOnInsert: true, session }
-      );
-
-      // Mark attempt as completed
-      if (activeAttempt._id) {
-        activeAttempt.status = "submitted";
-        activeAttempt.completedAt = new Date();
-        await activeAttempt.save({ session });
-      }
-
-      await session.commitTransaction();
-
-      return res.status(403).json({
-        expired: true,
-        message: "Your time expired. The quiz was auto-submitted.",
-        result: expiredResult
-      });
-    }
-
     // ---------------------------------------
-    // 🎯 Process Answers (NORMAL SUBMISSION)
+    // 🎯 Process Answers
     // ---------------------------------------
     let score = 0;
     let totalAutoGradedPoints = 0;
@@ -1615,10 +1473,9 @@ const submitQuiz = async (req, res) => {
       const questionPoints = q.points || 1;
       item.points = questionPoints;
       item.correctAnswer = q.correctAnswer;
-
+      
       if (studentAnswer && studentAnswer.selectedAnswer !== undefined && studentAnswer.selectedAnswer !== null) {
         let correct = false;
-
         if (type === "true-false") {
           correct = String(q.correctAnswer).toLowerCase() === String(studentAnswer.selectedAnswer).toLowerCase();
         } else {
@@ -1630,7 +1487,6 @@ const submitQuiz = async (req, res) => {
 
         totalAutoGradedPoints += questionPoints;
         if (correct) score += questionPoints;
-
       } else {
         item.isCorrect = false;
         item.earnedPoints = 0;
@@ -1714,7 +1570,6 @@ const submitQuiz = async (req, res) => {
     session.endSession();
   }
 };
-
 
 
 // ---------------------------
@@ -2306,56 +2161,8 @@ const checkQuizInProgress = async (req, res) => {
   }
 };
 
-// 🔥 Auto-submit expired attempts
-const autoSubmitExpiredAttempt = async (attempt, quiz, school) => {
-  try {
-    if (!attempt) return;
-
-    const studentId = attempt.studentId;
-    const quizId = attempt.quizId;
-
-    // Convert stored answers (object) into array format
-    const answersArray = Object.entries(attempt.answers || {}).map(([qId, ans]) => ({
-      questionId: qId,
-      selectedAnswer: ans,
-      timeSpent: 0,
-    }));
-
-    // Create or update QuizResult
-    await QuizResult.findOneAndUpdate(
-      {
-        quizId,
-        studentId,
-        school
-      },
-      {
-        quizId,
-        studentId,
-        school,
-        answers: answersArray,
-        submittedAt: new Date(),
-        status: "submitted",
-        autoSubmit: true
-      },
-      { upsert: true }
-    );
-
-    // Close attempt
-    await QuizAttempt.updateOne(
-      { _id: attempt._id },
-      { status: "submitted", completedAt: new Date() }
-    );
-
-  } catch (err) {
-    console.error("❌ Auto-submit failed:", err.message);
-  }
-};
-
-
-
-
 // ---------------------------
-// 19. Start a new quiz attempt (Strict due date + completion lock) - OPTIMIZED + EXPIRE CHECK
+// 19. Start a new quiz attempt (Strict due date + completion lock) - OPTIMIZED
 // ---------------------------
 const startQuizAttempt = async (req, res) => {
   const session = await mongoose.startSession();
@@ -2431,10 +2238,11 @@ const startQuizAttempt = async (req, res) => {
       ),
       executeWithTimeout(
         QuizAttempt.findOne({
-          quizId: toObjectObjectId(quizId),
+          quizId: toObjectId(quizId),
           studentId: studentIdentifier,
           school,
-          status: "in-progress"
+          status: "in-progress",
+          expiresAt: { $gt: now }
         }).session(session).maxTimeMS(5000)
       ),
       executeWithTimeout(
@@ -2453,30 +2261,15 @@ const startQuizAttempt = async (req, res) => {
       });
     }
 
-    // ⭐ UPDATED BLOCK (your requested patch)
     if (activeAttempt) {
-
-      // 🔥 If expired → auto-submit and block resume
-      if (new Date() > new Date(activeAttempt.expiresAt)) {
-        await autoSubmitExpiredAttempt(activeAttempt, quiz, school);
-
-        await session.commitTransaction();
-        return res.status(403).json({
-          expired: true,
-          message: "Your quiz time expired. It has been auto-submitted."
-        });
-      }
-
-      // Otherwise resume attempt
       await session.commitTransaction();
       return res.json({
         sessionId: activeAttempt.sessionId,
         timeRemaining: Math.floor((new Date(activeAttempt.expiresAt) - now) / 1000),
         startTime: activeAttempt.startTime,
-        resumed: true
+        resumed: true,
       });
     }
-    // ⭐ END PATCH
 
     const attemptNumber = attemptCount + 1;
     if (quiz.maxAttempts && attemptNumber > quiz.maxAttempts) {
@@ -2509,7 +2302,6 @@ const startQuizAttempt = async (req, res) => {
       startTime: newAttempt[0].startTime,
       resumed: false,
     });
-
   } catch (error) {
     await session.abortTransaction();
     console.error("❌ Error starting quiz attempt:", error);
@@ -2522,9 +2314,8 @@ const startQuizAttempt = async (req, res) => {
   }
 };
 
-
 // ---------------------------
-// 20. Resume quiz attempt - OPTIMIZED + EXPIRE CHECK
+// 20. Resume quiz attempt - OPTIMIZED
 // ---------------------------
 const resumeQuizAttempt = async (req, res) => {
   try {
@@ -2548,7 +2339,8 @@ const resumeQuizAttempt = async (req, res) => {
         quizId: toObjectId(quizId),
         studentId: toObjectId(studentId),
         school,
-        status: 'in-progress'
+        status: 'in-progress',
+        expiresAt: { $gt: new Date() }
       }).maxTimeMS(5000)
     );
 
@@ -2556,26 +2348,14 @@ const resumeQuizAttempt = async (req, res) => {
       return res.status(404).json({ message: 'No active quiz attempt found' });
     }
 
-    // 🔥 CHECK IF EXPIRED (NO chance to continue)
-    if (new Date() > new Date(activeAttempt.expiresAt)) {
-      const quiz = await QuizSession.findById(quizId).lean();
-
-      await autoSubmitExpiredAttempt(activeAttempt, quiz, school);
-
-      return res.status(403).json({
-        expired: true,
-        message: "Time is up. Your quiz was auto-submitted."
-      });
-    }
-
-    // Update last activity (NOT before expiration check)
+    // Update last activity
     activeAttempt.lastActivity = new Date();
     await activeAttempt.save();
 
     const quiz = await executeWithTimeout(
       QuizSession.findById(quizId).maxTimeMS(5000)
     );
-
+    
     if (!quiz) {
       return res.status(404).json({ message: 'Quiz not found' });
     }
@@ -2592,16 +2372,14 @@ const resumeQuizAttempt = async (req, res) => {
 
     cache.set(cacheKey, response, 30); // 30 sec cache for resume data
     res.json(response);
-
   } catch (error) {
     console.error('Error resuming quiz attempt:', error);
     res.status(500).json({ message: 'Error resuming quiz attempt', error: error.message });
   }
 };
 
-
 // ---------------------------
-// 21. Save quiz progress - OPTIMIZED + EXPIRE CHECK
+// 21. Save quiz progress - OPTIMIZED
 // ---------------------------
 const saveQuizProgress = async (req, res) => {
   try {
@@ -2619,24 +2397,13 @@ const saveQuizProgress = async (req, res) => {
         quizId: toObjectId(quizId),
         studentId: toObjectId(studentId),
         school,
-        status: 'in-progress'
+        status: 'in-progress',
+        expiresAt: { $gt: new Date() }
       }).maxTimeMS(5000)
     );
 
     if (!activeAttempt) {
       return res.status(404).json({ message: 'No active quiz attempt found' });
-    }
-
-    // 🔥 Block saving if expired
-    if (new Date() > new Date(activeAttempt.expiresAt)) {
-
-      const quiz = await QuizSession.findById(quizId).lean();
-      await autoSubmitExpiredAttempt(activeAttempt, quiz, school);
-
-      return res.status(403).json({
-        expired: true,
-        message: "Time is up. Your quiz was auto-submitted."
-      });
     }
 
     // Update answers and last activity
@@ -2653,7 +2420,6 @@ const saveQuizProgress = async (req, res) => {
     res.status(500).json({ message: 'Error saving quiz progress', error: error.message });
   }
 };
-
 
 // ---------------------------
 // PUT /api/quizzes/results/:resultId/grade-question - OPTIMIZED
