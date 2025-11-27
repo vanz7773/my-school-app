@@ -479,7 +479,7 @@ const publishQuiz = async (req, res) => {
 };
 
 // ---------------------------
-// 3. Get QuizSession with Caching (Updated with Shuffling Support)
+// 3. Get QuizSession with Caching (Updated with Shuffling Support + Expiry Check)
 // ---------------------------
 const getQuiz = async (req, res) => {
   try {
@@ -487,7 +487,7 @@ const getQuiz = async (req, res) => {
     const school = toObjectId(req.user.school);
     const cacheKey = CACHE_KEYS.QUIZ_SINGLE(quizId, req.user.role);
 
-    // 🎯 Check cache only if shuffle is OFF
+    // 🎯 Check cache only if shuffle is OFF and not a student
     const cached = (!req.user.role || req.user.role !== "student")
       ? cache.get(cacheKey)
       : null;
@@ -501,19 +501,77 @@ const getQuiz = async (req, res) => {
     }
 
     const quiz = await executeWithTimeout(
-      QuizSession.findOne({ 
-        _id: toObjectId(quizId), 
-        school 
+      QuizSession.findOne({
+        _id: toObjectId(quizId),
+        school
       }).lean().maxTimeMS(5000)
     );
-    
+
     if (!quiz) {
       return res.status(404).json({ message: 'Quiz not found in your school' });
     }
 
     // Students only see it after startTime
-    if (quiz.startTime && new Date() < quiz.startTime && req.user.role === 'student') {
+    if (quiz.startTime && new Date() < new Date(quiz.startTime) && req.user.role === 'student') {
       return res.status(403).json({ message: 'Quiz is not available yet' });
+    }
+
+    // === Student-specific expiry + access checks ===
+    if (req.user.role === 'student') {
+      // 1) Ensure quiz is published (optional but recommended)
+      if (!quiz.isPublished) {
+        return res.status(403).json({ message: 'Quiz is not published yet' });
+      }
+
+      // 2) If quiz dueDate passed -> deny access
+      if (quiz.dueDate && new Date() > new Date(quiz.dueDate)) {
+        return res.status(403).json({
+          expired: true,
+          message: 'The quiz due date has passed. You cannot open this quiz.'
+        });
+      }
+
+      // 3) Check for an active attempt (covers both User ID and Student doc)
+      let studentDoc;
+      try {
+        studentDoc = await executeWithTimeout(
+          Student.findOne({ user: req.user._id, school }).lean().maxTimeMS(3000)
+        );
+      } catch (e) {
+        studentDoc = null;
+      }
+
+      const studentIdentifier = studentDoc?._id || req.user._id;
+
+      const activeAttempt = await executeWithTimeout(
+        QuizAttempt.findOne({
+          quizId: toObjectId(quizId),
+          studentId: toObjectId(studentIdentifier),
+          school,
+          status: "in-progress"
+        }).lean().maxTimeMS(3000)
+      );
+
+      if (activeAttempt) {
+        // If attempt expired -> auto-submit and block viewing
+        if (new Date() > new Date(activeAttempt.expiresAt)) {
+          // best-effort: call auto-submit (no session) and respond expired
+          try {
+            // pass quiz (lean) and school as stored
+            await autoSubmitExpiredAttempt(activeAttempt, quiz, school);
+          } catch (err) {
+            console.error('autoSubmitExpiredAttempt in getQuiz failed:', err?.message || err);
+          }
+
+          return res.status(403).json({
+            expired: true,
+            message: "Your quiz time expired. The quiz has been auto-submitted."
+          });
+        }
+
+        // If active attempt exists and not expired — allow student to fetch the quiz (shuffling still done below)
+        // (No further action needed here)
+      }
     }
 
     let response;
@@ -522,7 +580,7 @@ const getQuiz = async (req, res) => {
     if (req.user.role === 'student') {
 
       // Copy questions
-      let quizQuestions = [...quiz.questions];
+      let quizQuestions = Array.isArray(quiz.questions) ? [...quiz.questions] : [];
 
       // 🔀 Shuffle questions if enabled
       if (quiz.shuffleQuestions) {
@@ -582,6 +640,7 @@ const getQuiz = async (req, res) => {
     res.status(500).json({ message: 'Error fetching quiz', error: error.message });
   }
 };
+
 
 
 /// ---------------------------
