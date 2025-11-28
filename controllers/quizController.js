@@ -1435,6 +1435,9 @@ const deleteQuiz = async (req, res) => {
   }
 };
 
+// --------------------------- 
+// 14. Submit Quiz (NON-TRANSACTION VERSION, SAME LOGIC)
+// ---------------------------
 const submitQuiz = async (req, res) => {
   try {
     const { quizId } = req.params;
@@ -1451,16 +1454,22 @@ const submitQuiz = async (req, res) => {
       answersCount: Array.isArray(answers) ? answers.length : Object.keys(answers || {}).length
     });
 
-    // ❌ removed session
+    // 🎯 Parallel fetching (NO SESSION)
     const [student, quiz] = await Promise.all([
       Student.findOne({ user: userId, school }).maxTimeMS(5000),
       QuizSession.findById(quizId).lean().maxTimeMS(5000)
     ]);
 
-    if (!student) return res.status(404).json({ message: "Student record not found" });
-    if (!quiz) return res.status(404).json({ message: "Quiz not found" });
+    if (!student) {
+      return res.status(404).json({ message: "Student record not found" });
+    }
+    if (!quiz) {
+      return res.status(404).json({ message: "Quiz not found" });
+    }
 
-    // 🔍 check result
+    // ---------------------------------------
+    // 🔍 CHECK IF RESULT ALREADY EXISTS
+    // ---------------------------------------
     const existingResult = await QuizResult.findOne({
       quizId,
       studentId: student._id,
@@ -1470,7 +1479,7 @@ const submitQuiz = async (req, res) => {
     if (existingResult && autoSubmit) {
       return res.status(200).json({
         message: "Quiz already submitted manually. Auto-submit skipped.",
-        status: "already-submitted"
+        status: "already-submitted",
       });
     }
 
@@ -1478,16 +1487,18 @@ const submitQuiz = async (req, res) => {
       return res.status(409).json({
         message: "You have already submitted this quiz.",
         status: "duplicate-submission",
-        result: existingResult
+        result: existingResult,
       });
     }
 
-    // 🔍 active attempt
+    // ---------------------------------------
+    // 🔍 LOAD ACTIVE ATTEMPT
+    // ---------------------------------------
     let activeAttempt = await QuizAttempt.findOne({
       quizId,
       studentId: student._id,
       school,
-      status: "in-progress"
+      status: "in-progress",
     });
 
     if (!activeAttempt) {
@@ -1499,27 +1510,121 @@ const submitQuiz = async (req, res) => {
       };
     }
 
-    // 🎯 process answers … (unchanged)
+    // ---------------------------------------
+    // 🎯 Process Answers (RESTORED EXACTLY)
+    // ---------------------------------------
+    let score = 0;
+    let totalAutoGradedPoints = 0;
+    let requiresManualReview = false;
 
-    // ⚡ UPSERT result (no session)
+    const results = quiz.questions.map((q, i) => {
+      const type = (q.type || "").toLowerCase().replace(/\s+/g, "-");
+      const studentAnswer = Array.isArray(answers)
+        ? answers.find(a => a.questionId === q._id.toString())
+        : { 
+            selectedAnswer: answers[q._id] ?? answers[`q${i}`] ?? null,
+            timeSpent: (answers[q._id] && answers[q._id].timeSpent) || 0 
+          };
+
+      const item = {
+        questionId: q._id,
+        questionText: q.questionText,
+        questionType: q.type,
+        selectedAnswer: studentAnswer ? studentAnswer.selectedAnswer ?? studentAnswer : null,
+        explanation: q.explanation ?? null,
+        manualReviewRequired: false,
+        isCorrect: null,
+        correctAnswer: undefined,
+        points: null,
+        earnedPoints: null,
+        timeSpent: studentAnswer ? studentAnswer.timeSpent || 0 : 0,
+      };
+
+      // Essay / Short Answer → Manual
+      if (["essay", "short-answer"].includes(type)) {
+        requiresManualReview = true;
+        item.manualReviewRequired = true;
+        return item;
+      }
+
+      const questionPoints = q.points || 1;
+      item.points = questionPoints;
+      item.correctAnswer = q.correctAnswer;
+
+      if (studentAnswer && studentAnswer.selectedAnswer !== undefined && studentAnswer.selectedAnswer !== null) {
+        let correct = false;
+
+        if (type === "true-false") {
+          correct = String(q.correctAnswer).toLowerCase() === 
+                    String(studentAnswer.selectedAnswer).toLowerCase();
+        } else {
+          correct = studentAnswer.selectedAnswer === q.correctAnswer;
+        }
+
+        item.isCorrect = !!correct;
+        item.earnedPoints = correct ? questionPoints : 0;
+
+        totalAutoGradedPoints += questionPoints;
+        if (correct) score += questionPoints;
+      } else {
+        item.isCorrect = false;
+        item.earnedPoints = 0;
+        totalAutoGradedPoints += questionPoints;
+      }
+
+      return item;
+    });
+
+    let percentage = null;
+    if (!requiresManualReview && totalAutoGradedPoints > 0) {
+      percentage = Number(((score / totalAutoGradedPoints) * 100).toFixed(2));
+    }
+
+    // ---------------------------------------
+    // ✅ SAVE RESULT (NO SESSION)
+    // ---------------------------------------
     const quizResultDoc = await QuizResult.findOneAndUpdate(
-      { school, quizId, studentId: student._id },
-      { /* same update object */ },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
+      {
+        school,
+        quizId,
+        studentId: student._id,
+      },
+      {
+        school,
+        quizId,
+        sessionId: activeAttempt.sessionId,
+        studentId: student._id,
+        answers: results,
+        score: requiresManualReview ? null : score,
+        totalPoints: quiz.questions.reduce((s, q) => s + (q.points || 1), 0),
+        percentage: requiresManualReview ? null : percentage,
+        startTime: activeAttempt.startTime,
+        submittedAt: now,
+        timeSpent,
+        attemptNumber: activeAttempt.attemptNumber,
+        status: requiresManualReview ? "needs-review" : "submitted",
+        autoGraded: !requiresManualReview,
+        autoSubmit: !!autoSubmit,
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true
+      }
     );
 
-    // mark attempt complete
+    // Mark attempt as completed
     if (activeAttempt && activeAttempt._id) {
       activeAttempt.status = "submitted";
       activeAttempt.completedAt = now;
       await activeAttempt.save();
     }
 
-    // cache cleanup
+    // 🎯 Cache invalidation in background
     processInBackground(() => {
       cache.del(CACHE_KEYS.STUDENT_PROGRESS(student._id.toString()));
       cache.del(CACHE_KEYS.QUIZ_RESULTS(quizId));
-      cache.del(CACHE_KEYS.QUIZ_CLASS(quiz.class.toString(), "student", userId));
+      cache.del(CACHE_KEYS.QUIZ_CLASS(quiz.class.toString(), 'student', userId));
       cache.del(CACHE_KEYS.CLASS_RESULTS_TEACHER(quiz.teacher?.toString()));
     });
 
@@ -1530,7 +1635,7 @@ const submitQuiz = async (req, res) => {
       percentage: quizResultDoc.percentage,
       status: quizResultDoc.status,
       autoGraded: quizResultDoc.autoGraded,
-      answers: quizResultDoc.answers
+      answers: results,
     });
 
   } catch (err) {
@@ -1538,6 +1643,8 @@ const submitQuiz = async (req, res) => {
     return res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+
+
 
 
 
