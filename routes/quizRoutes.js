@@ -20,7 +20,7 @@ const {
   resumeQuizAttempt,
   saveQuizProgress,
   gradeQuestion,
-  autoSubmitQuiz
+
 } = require('../controllers/quizController.js');
 
 const { protect, restrictTo } = require('../middlewares/authMiddleware');
@@ -69,8 +69,7 @@ router.post('/:quizId/save', protect, restrictTo('student'), saveQuizProgress);
 // 🔥 Submit must come BEFORE any /results/ routes
 router.post('/:quizId/submit', protect, restrictTo('student'), submitQuiz);
 
-// 🔥 Auto-submit also BEFORE any /results/... routes
-router.post('/:quizId/auto-submit', protect, restrictTo('student'), autoSubmitQuiz);
+
 
 // Student reads their own results
 router.get('/results/student/:studentId', protect, restrictTo('student', 'parent', 'teacher'), getResultsForStudent);

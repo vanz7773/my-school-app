@@ -1436,7 +1436,7 @@ const deleteQuiz = async (req, res) => {
 };
 
 // --------------------------- 
-// 14. Submit Quiz (NON-TRANSACTION VERSION, SAME LOGIC)
+// 14. Submit Quiz (NON-TRANSACTION VERSION, FIXED FOR AUTO-SUBMIT)
 // ---------------------------
 const submitQuiz = async (req, res) => {
   try {
@@ -1460,12 +1460,8 @@ const submitQuiz = async (req, res) => {
       QuizSession.findById(quizId).lean().maxTimeMS(5000)
     ]);
 
-    if (!student) {
-      return res.status(404).json({ message: "Student record not found" });
-    }
-    if (!quiz) {
-      return res.status(404).json({ message: "Quiz not found" });
-    }
+    if (!student) return res.status(404).json({ message: "Student record not found" });
+    if (!quiz) return res.status(404).json({ message: "Quiz not found" });
 
     // ---------------------------------------
     // 🔍 CHECK IF RESULT ALREADY EXISTS
@@ -1492,6 +1488,27 @@ const submitQuiz = async (req, res) => {
     }
 
     // ---------------------------------------
+    // 🔥 FIX: ENSURE FULL ANSWER ARRAY (EVEN IF EMPTY)
+    // ---------------------------------------
+    let normalizedAnswers = [];
+
+    if (Array.isArray(answers) && answers.length > 0) {
+      // Use submitted answers directly
+      normalizedAnswers = answers.map(a => ({
+        questionId: a.questionId,
+        selectedAnswer: a.selectedAnswer ?? null,
+        timeSpent: a.timeSpent ?? 0
+      }));
+    } else {
+      // Auto-create empty answers (CRITICAL FIX)
+      normalizedAnswers = quiz.questions.map(q => ({
+        questionId: q._id.toString(),
+        selectedAnswer: null,
+        timeSpent: 0,
+      }));
+    }
+
+    // ---------------------------------------
     // 🔍 LOAD ACTIVE ATTEMPT
     // ---------------------------------------
     let activeAttempt = await QuizAttempt.findOne({
@@ -1511,7 +1528,7 @@ const submitQuiz = async (req, res) => {
     }
 
     // ---------------------------------------
-    // 🎯 Process Answers (RESTORED EXACTLY)
+    // 🎯 Process Answers
     // ---------------------------------------
     let score = 0;
     let totalAutoGradedPoints = 0;
@@ -1519,57 +1536,54 @@ const submitQuiz = async (req, res) => {
 
     const results = quiz.questions.map((q, i) => {
       const type = (q.type || "").toLowerCase().replace(/\s+/g, "-");
-      const studentAnswer = Array.isArray(answers)
-        ? answers.find(a => a.questionId === q._id.toString())
-        : { 
-            selectedAnswer: answers[q._id] ?? answers[`q${i}`] ?? null,
-            timeSpent: (answers[q._id] && answers[q._id].timeSpent) || 0 
-          };
+
+      const studentAnswer = normalizedAnswers.find(a => a.questionId == q._id.toString());
 
       const item = {
         questionId: q._id,
         questionText: q.questionText,
         questionType: q.type,
-        selectedAnswer: studentAnswer ? studentAnswer.selectedAnswer ?? studentAnswer : null,
+        selectedAnswer: studentAnswer?.selectedAnswer ?? null,
         explanation: q.explanation ?? null,
         manualReviewRequired: false,
         isCorrect: null,
-        correctAnswer: undefined,
-        points: null,
-        earnedPoints: null,
-        timeSpent: studentAnswer ? studentAnswer.timeSpent || 0 : 0,
+        correctAnswer: q.correctAnswer,
+        points: q.points || 1,
+        earnedPoints: 0,
+        timeSpent: studentAnswer?.timeSpent || 0,
       };
 
-      // Essay / Short Answer → Manual
+      // Essay / Short Answer
       if (["essay", "short-answer"].includes(type)) {
         requiresManualReview = true;
         item.manualReviewRequired = true;
         return item;
       }
 
-      const questionPoints = q.points || 1;
-      item.points = questionPoints;
-      item.correctAnswer = q.correctAnswer;
+      // Auto-gradable questions
+      const questionPoints = item.points;
+      totalAutoGradedPoints += questionPoints;
 
-      if (studentAnswer && studentAnswer.selectedAnswer !== undefined && studentAnswer.selectedAnswer !== null) {
+      const selected = studentAnswer?.selectedAnswer;
+
+      if (selected !== null && selected !== undefined) {
         let correct = false;
 
         if (type === "true-false") {
-          correct = String(q.correctAnswer).toLowerCase() === 
-                    String(studentAnswer.selectedAnswer).toLowerCase();
+          correct =
+            String(q.correctAnswer).toLowerCase() ===
+            String(selected).toLowerCase();
         } else {
-          correct = studentAnswer.selectedAnswer === q.correctAnswer;
+          correct = selected === q.correctAnswer;
         }
 
-        item.isCorrect = !!correct;
+        item.isCorrect = correct;
         item.earnedPoints = correct ? questionPoints : 0;
-
-        totalAutoGradedPoints += questionPoints;
         if (correct) score += questionPoints;
       } else {
+        // unanswered → always incorrect
         item.isCorrect = false;
         item.earnedPoints = 0;
-        totalAutoGradedPoints += questionPoints;
       }
 
       return item;
@@ -1581,7 +1595,7 @@ const submitQuiz = async (req, res) => {
     }
 
     // ---------------------------------------
-    // ✅ SAVE RESULT (NO SESSION)
+    // ✅ SAVE RESULT
     // ---------------------------------------
     const quizResultDoc = await QuizResult.findOneAndUpdate(
       {
@@ -1606,27 +1620,14 @@ const submitQuiz = async (req, res) => {
         autoGraded: !requiresManualReview,
         autoSubmit: !!autoSubmit,
       },
-      {
-        upsert: true,
-        new: true,
-        setDefaultsOnInsert: true
-      }
+      { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
-    // Mark attempt as completed
     if (activeAttempt && activeAttempt._id) {
       activeAttempt.status = "submitted";
       activeAttempt.completedAt = now;
       await activeAttempt.save();
     }
-
-    // 🎯 Cache invalidation in background
-    processInBackground(() => {
-      cache.del(CACHE_KEYS.STUDENT_PROGRESS(student._id.toString()));
-      cache.del(CACHE_KEYS.QUIZ_RESULTS(quizId));
-      cache.del(CACHE_KEYS.QUIZ_CLASS(quiz.class.toString(), 'student', userId));
-      cache.del(CACHE_KEYS.CLASS_RESULTS_TEACHER(quiz.teacher?.toString()));
-    });
 
     return res.json({
       message: autoSubmit ? "Quiz auto-submitted (time expired)" : "Quiz submitted",
@@ -1643,6 +1644,7 @@ const submitQuiz = async (req, res) => {
     return res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+
 
 
 
@@ -2689,290 +2691,7 @@ const gradeQuestion = async (req, res) => {
     session.endSession();
   }
 };
-// Add this to your backend quiz controller (after the existing functions)
 
-// ---------------------------
-// Auto-Submit Expired Quizzes (Background Job)
-// ---------------------------
-const autoSubmitExpiredQuizzes = async () => {
-  try {
-    const now = new Date();
-    
-    // Find expired but not submitted attempts
-    const expiredAttempts = await QuizAttempt.find({
-      status: 'in-progress',
-      expiresAt: { $lte: now }
-    })
-    .populate('quizId')
-    .populate('studentId');
-
-    console.log(`🕒 Found ${expiredAttempts.length} expired quiz attempts to auto-submit`);
-
-    for (const attempt of expiredAttempts) {
-      console.log(`🕒 Auto-submitting expired quiz attempt: ${attempt._id} for student: ${attempt.studentId}`);
-      
-      try {
-        // Check if already submitted
-        const existingResult = await QuizResult.findOne({
-          quizId: attempt.quizId,
-          studentId: attempt.studentId,
-        });
-
-        if (existingResult) {
-          console.log(`✅ Already submitted, marking attempt as completed: ${attempt._id}`);
-          attempt.status = "submitted";
-          attempt.completedAt = now;
-          await attempt.save();
-          continue;
-        }
-
-        const quiz = attempt.quizId;
-        if (!quiz) {
-          console.log(`❌ Quiz not found for attempt: ${attempt._id}`);
-          continue;
-        }
-
-        // Create empty answers
-        const emptyAnswers = quiz.questions.map(q => ({
-          questionId: q._id,
-          questionText: q.questionText,
-          questionType: q.type,
-          selectedAnswer: null,
-          explanation: q.explanation || '',
-          manualReviewRequired: false,
-          isCorrect: false,
-          correctAnswer: q.correctAnswer,
-          points: q.points || 1,
-          earnedPoints: 0,
-          timeSpent: 0,
-        }));
-
-        const totalPoints = emptyAnswers.reduce((sum, a) => sum + (a.points || 1), 0);
-        const timeSpent = Math.floor((now - attempt.startTime) / 1000);
-
-        // Create quiz result
-        await QuizResult.findOneAndUpdate(
-          {
-            school: attempt.school,
-            quizId: attempt.quizId,
-            studentId: attempt.studentId,
-          },
-          {
-            school: attempt.school,
-            quizId: attempt.quizId,
-            sessionId: attempt.sessionId,
-            studentId: attempt.studentId,
-            answers: emptyAnswers,
-            score: 0,
-            totalPoints,
-            percentage: 0,
-            startTime: attempt.startTime,
-            submittedAt: now,
-            timeSpent,
-            attemptNumber: attempt.attemptNumber,
-            status: "submitted",
-            autoGraded: true,
-            autoSubmit: true,
-          },
-          {
-            upsert: true,
-            new: true,
-            setDefaultsOnInsert: true
-          }
-        );
-
-        // Mark attempt as completed
-        attempt.status = "submitted";
-        attempt.completedAt = now;
-        await attempt.save();
-
-        console.log(`✅ Auto-submitted quiz for student: ${attempt.studentId}`);
-        
-      } catch (error) {
-        console.error(`❌ Failed to auto-submit attempt ${attempt._id}:`, error);
-      }
-    }
-  } catch (error) {
-    console.error('❌ Error in autoSubmitExpiredQuizzes:', error);
-  }
-};
-
-// ---------------------------
-// Dedicated Auto-Submit Endpoint
-// ---------------------------
-const autoSubmitQuiz = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
-  try {
-    const { quizId } = req.params;
-    const { startTime } = req.body;
-    const userId = req.user._id;
-    const school = req.user.school;
-    const now = new Date();
-
-    console.log("🕒 [AUTO-SUBMIT] Processing auto-submit for quiz:", quizId, "user:", userId);
-
-    // Validate inputs
-    if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
-      await session.abortTransaction();
-      return res.status(400).json({ message: "Invalid quiz ID" });
-    }
-
-    // Find student and quiz in parallel
-    const [student, quiz, activeAttempt] = await Promise.all([
-      Student.findOne({ user: userId, school }).session(session),
-      QuizSession.findById(quizId).session(session),
-      QuizAttempt.findOne({
-        quizId: toObjectId(quizId),
-        $or: [
-          { studentId: toObjectId(userId) },
-          { studentId: (await Student.findOne({ user: userId, school }))?._id }
-        ],
-        school,
-        status: "in-progress"
-      }).session(session)
-    ]);
-
-    if (!student) {
-      await session.abortTransaction();
-      return res.status(404).json({ message: "Student record not found" });
-    }
-
-    if (!quiz) {
-      await session.abortTransaction();
-      return res.status(404).json({ message: "Quiz not found" });
-    }
-
-    if (!activeAttempt) {
-      await session.abortTransaction();
-      return res.status(404).json({ 
-        message: "No active quiz attempt found",
-        code: "NO_ACTIVE_ATTEMPT"
-      });
-    }
-
-    // Check if already submitted
-    const existingResult = await QuizResult.findOne({
-      quizId: toObjectId(quizId),
-      studentId: student._id,
-      school
-    }).session(session);
-
-    if (existingResult) {
-      await session.abortTransaction();
-      console.log("✅ Quiz already submitted, skipping auto-submit");
-      return res.json({
-        message: "Quiz already submitted",
-        status: "already-submitted",
-        score: existingResult.score,
-        percentage: existingResult.percentage
-      });
-    }
-
-    // Calculate time spent
-    const calculatedStartTime = startTime ? new Date(startTime) : activeAttempt.startTime;
-    const timeSpent = Math.floor((now - calculatedStartTime) / 1000);
-
-    // Create empty answers for unanswered questions
-    const emptyAnswers = quiz.questions.map(q => ({
-      questionId: q._id,
-      selectedAnswer: null,
-      timeSpent: 0
-    }));
-
-    // Process submission with proper answer structure
-    const processedAnswers = emptyAnswers.map((answer, index) => {
-      const question = quiz.questions[index];
-      return {
-        questionId: answer.questionId,
-        questionText: question.questionText,
-        questionType: question.type,
-        selectedAnswer: null,
-        explanation: question.explanation || '',
-        manualReviewRequired: ["essay", "short-answer"].includes(question.type?.toLowerCase()),
-        isCorrect: false,
-        correctAnswer: question.correctAnswer,
-        points: question.points || 1,
-        earnedPoints: 0,
-        timeSpent: 0,
-      };
-    });
-
-    // Calculate totals
-    const totalPoints = processedAnswers.reduce((sum, answer) => sum + (answer.points || 1), 0);
-    const score = 0; // Auto-submit gets 0 for unanswered questions
-    const percentage = totalPoints > 0 ? parseFloat(((score / totalPoints) * 100).toFixed(2)) : 0;
-
-    // Create quiz result
-    const quizResultDoc = new QuizResult({
-      school,
-      quizId: toObjectId(quizId),
-      sessionId: activeAttempt.sessionId,
-      studentId: student._id,
-      answers: processedAnswers,
-      score,
-      totalPoints,
-      percentage,
-      startTime: activeAttempt.startTime,
-      submittedAt: now,
-      timeSpent,
-      attemptNumber: activeAttempt.attemptNumber,
-      status: "submitted",
-      autoGraded: true,
-      autoSubmit: true,
-    });
-
-    await quizResultDoc.save({ session });
-
-    // Mark attempt as completed
-    activeAttempt.status = "submitted";
-    activeAttempt.completedAt = now;
-    await activeAttempt.save({ session });
-
-    await session.commitTransaction();
-
-    // Cache invalidation
-    processInBackground(() => {
-      cache.del(CACHE_KEYS.STUDENT_PROGRESS(student._id.toString()));
-      cache.del(CACHE_KEYS.QUIZ_RESULTS(quizId));
-      cache.del(CACHE_KEYS.QUIZ_CLASS(quiz.class.toString(), 'student', userId));
-      cache.del(`quiz:completion:${quizId}:${userId}`);
-      cache.del(`quiz:inprogress:${quizId}:${userId}`);
-    });
-
-    console.log("✅ Auto-submit successful for student:", student._id);
-
-    res.json({
-      message: "Quiz auto-submitted successfully (time expired)",
-      score: 0,
-      totalPoints,
-      percentage: 0,
-      status: "submitted",
-      autoSubmit: true
-    });
-
-  } catch (error) {
-    await session.abortTransaction();
-    console.error("❌ Auto-submit error:", error);
-    
-    // Check if it's a duplicate key error (already submitted)
-    if (error.code === 11000) {
-      return res.json({
-        message: "Quiz already submitted",
-        status: "already-submitted"
-      });
-    }
-    
-    res.status(500).json({ 
-      message: "Auto-submission failed", 
-      error: error.message,
-      code: "AUTO_SUBMIT_ERROR"
-    });
-  } finally {
-    session.endSession();
-  }
-};
 
 // 🎯 ADD autoSubmitQuiz TO YOUR EXPORTS AT THE BOTTOM OF THE FILE
 module.exports = {
@@ -2998,5 +2717,5 @@ module.exports = {
   resumeQuizAttempt,
   saveQuizProgress,
   gradeQuestion,
-  autoSubmitQuiz  // ← ADD THIS LINE to export the function
+
 };
