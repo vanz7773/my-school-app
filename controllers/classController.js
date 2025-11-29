@@ -173,21 +173,39 @@ exports.assignClassTeacher = async (req, res) => {
     const { teacherId } = req.body;
     const schoolId = req.user.school;
 
+    // Find class
     const classDoc = await Class.findOne({ _id: classId, school: schoolId });
     if (!classDoc) {
       return res.status(404).json({ message: 'Class not found' });
     }
 
-    const teacher = await User.findOne({ _id: teacherId, role: 'teacher', school: schoolId });
+    // Find teacher
+    const teacher = await User.findOne({
+      _id: teacherId,
+      role: 'teacher',
+      school: schoolId
+    });
     if (!teacher) {
       return res.status(400).json({ message: 'Teacher not found in your school' });
     }
 
-    // Assign and save
-    classDoc.classTeacher = teacher._id;
+    // 🔥 AUTO-REMOVE teacher from previous class (if any)
+    const previousClass = await Class.findOne({
+      school: schoolId,
+      classTeacher: teacherId,
+      _id: { $ne: classId }  // Ignore the class we're assigning to
+    });
+
+    if (previousClass) {
+      previousClass.classTeacher = null;
+      await previousClass.save();
+    }
+
+    // Assign to new class
+    classDoc.classTeacher = teacherId;
     await classDoc.save();
 
-    // ✅ Populate after save
+    // Populate after save
     const updatedClass = await Class.findById(classDoc._id)
       .populate('teachers', 'name email')
       .populate('classTeacher', 'name email')
@@ -195,15 +213,18 @@ exports.assignClassTeacher = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: 'Class teacher assigned successfully',
-      class: updatedClass,
+      message: previousClass
+        ? `Teacher moved from ${previousClass.name} to ${classDoc.name}`
+        : 'Class teacher assigned successfully',
+      class: updatedClass
     });
+
   } catch (err) {
     console.error('Error assigning class teacher:', err);
     res.status(500).json({
       success: false,
       message: 'Error assigning class teacher',
-      error: err.message,
+      error: err.message
     });
   }
 };
