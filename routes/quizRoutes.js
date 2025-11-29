@@ -19,7 +19,8 @@ const {
   startQuizAttempt,
   resumeQuizAttempt,
   saveQuizProgress,
-  gradeQuestion
+  gradeQuestion,
+  autoSubmitQuiz
 } = require('../controllers/quizController.js');
 
 const { protect, restrictTo } = require('../middlewares/authMiddleware');
@@ -40,6 +41,8 @@ router.get('/class/:classId', protect, getQuizzesForClass);
 
 // Student submits quiz attempt
 router.post('/:quizId/submit', protect, restrictTo('student'), submitQuiz);
+
+router.post('/:quizId/auto-submit', protect, restrictTo('student'), autoSubmitQuiz);
 
 // Teacher and student views quiz results
 router.get('/:quizId/results', protect, restrictTo('teacher','student'), getQuizResults);

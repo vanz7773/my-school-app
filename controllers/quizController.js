@@ -2689,8 +2689,207 @@ const gradeQuestion = async (req, res) => {
     session.endSession();
   }
 };
+// Add this to your backend quiz controller (after the existing functions)
 
-// 🎯 Export ALL functions
+// ---------------------------
+// Auto-Submit Expired Quizzes (Background Job)
+// ---------------------------
+const autoSubmitExpiredQuizzes = async () => {
+  try {
+    const now = new Date();
+    
+    // Find expired but not submitted attempts
+    const expiredAttempts = await QuizAttempt.find({
+      status: 'in-progress',
+      expiresAt: { $lte: now }
+    }).populate('quizId').populate('studentId');
+
+    console.log(`🕒 Found ${expiredAttempts.length} expired quiz attempts to auto-submit`);
+
+    for (const attempt of expiredAttempts) {
+      console.log(`🕒 Auto-submitting expired quiz attempt: ${attempt._id}`);
+      
+      try {
+        // Create empty answers for auto-submit
+        const emptyAnswers = attempt.quizId.questions.map(q => ({
+          questionId: q._id,
+          selectedAnswer: null,
+          timeSpent: 0
+        }));
+
+        const timeSpent = Math.floor((now - attempt.startTime) / 1000);
+
+        // Use the existing submitQuiz logic but force auto-submit
+        const quizResult = await QuizResult.findOneAndUpdate(
+          {
+            school: attempt.school,
+            quizId: attempt.quizId,
+            studentId: attempt.studentId,
+          },
+          {
+            school: attempt.school,
+            quizId: attempt.quizId,
+            sessionId: attempt.sessionId,
+            studentId: attempt.studentId,
+            answers: emptyAnswers.map((a, i) => ({
+              questionId: a.questionId,
+              questionText: attempt.quizId.questions[i].questionText,
+              questionType: attempt.quizId.questions[i].type,
+              selectedAnswer: null,
+              explanation: attempt.quizId.questions[i].explanation,
+              manualReviewRequired: false,
+              isCorrect: false,
+              correctAnswer: attempt.quizId.questions[i].correctAnswer,
+              points: attempt.quizId.questions[i].points || 1,
+              earnedPoints: 0,
+              timeSpent: 0,
+            })),
+            score: 0,
+            totalPoints: attempt.quizId.questions.reduce((sum, q) => sum + (q.points || 1), 0),
+            percentage: 0,
+            startTime: attempt.startTime,
+            submittedAt: now,
+            timeSpent,
+            attemptNumber: attempt.attemptNumber,
+            status: "submitted",
+            autoGraded: true,
+            autoSubmit: true,
+          },
+          {
+            upsert: true,
+            new: true,
+            setDefaultsOnInsert: true
+          }
+        );
+
+        // Mark attempt as completed
+        attempt.status = "submitted";
+        attempt.completedAt = now;
+        await attempt.save();
+
+        console.log(`✅ Auto-submitted quiz for student: ${attempt.studentId}`);
+        
+      } catch (error) {
+        console.error(`❌ Failed to auto-submit attempt ${attempt._id}:`, error);
+      }
+    }
+  } catch (error) {
+    console.error('❌ Error in autoSubmitExpiredQuizzes:', error);
+  }
+};
+
+// Start the periodic job (run every minute)
+setInterval(autoSubmitExpiredQuizzes, 60000);
+
+// ---------------------------
+// Dedicated Auto-Submit Endpoint
+// ---------------------------
+const autoSubmitQuiz = async (req, res) => {
+  try {
+    const { quizId } = req.params;
+    const { studentId, startTime } = req.body;
+    const school = req.user.school;
+    const now = new Date();
+
+    console.log("🕒 Processing auto-submit for quiz:", quizId);
+
+    const [student, quiz, activeAttempt] = await Promise.all([
+      Student.findOne({ user: studentId, school }),
+      QuizSession.findById(quizId),
+      QuizAttempt.findOne({
+        quizId,
+        studentId: student._id,
+        school,
+        status: "in-progress"
+      })
+    ]);
+
+    if (!activeAttempt) {
+      return res.status(404).json({ message: "No active quiz attempt found" });
+    }
+
+    // Calculate time spent
+    const timeSpent = Math.floor((now - new Date(startTime)) / 1000);
+
+    // Create empty answers for unanswered questions
+    const answers = quiz.questions.map(q => ({
+      questionId: q._id,
+      selectedAnswer: null,
+      timeSpent: 0
+    }));
+
+    // Process submission
+    const quizResultDoc = await QuizResult.findOneAndUpdate(
+      {
+        school,
+        quizId,
+        studentId: student._id,
+      },
+      {
+        school,
+        quizId,
+        sessionId: activeAttempt.sessionId,
+        studentId: student._id,
+        answers: answers.map((a, i) => ({
+          questionId: a.questionId,
+          questionText: quiz.questions[i].questionText,
+          questionType: quiz.questions[i].type,
+          selectedAnswer: null,
+          explanation: quiz.questions[i].explanation,
+          manualReviewRequired: false,
+          isCorrect: false,
+          correctAnswer: quiz.questions[i].correctAnswer,
+          points: quiz.questions[i].points || 1,
+          earnedPoints: 0,
+          timeSpent: 0,
+        })),
+        score: 0,
+        totalPoints: quiz.questions.reduce((sum, q) => sum + (q.points || 1), 0),
+        percentage: 0,
+        startTime: activeAttempt.startTime,
+        submittedAt: now,
+        timeSpent,
+        attemptNumber: activeAttempt.attemptNumber,
+        status: "submitted",
+        autoGraded: true,
+        autoSubmit: true,
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true
+      }
+    );
+
+    // Mark attempt as completed
+    activeAttempt.status = "submitted";
+    activeAttempt.completedAt = now;
+    await activeAttempt.save();
+
+    // Cache invalidation
+    cache.del(CACHE_KEYS.STUDENT_PROGRESS(student._id.toString()));
+    cache.del(CACHE_KEYS.QUIZ_RESULTS(quizId));
+    cache.del(CACHE_KEYS.QUIZ_CLASS(quiz.class.toString(), 'student', studentId));
+
+    res.json({
+      message: "Quiz auto-submitted successfully",
+      score: 0,
+      totalPoints: quizResultDoc.totalPoints,
+      percentage: 0,
+      status: "submitted",
+      autoSubmit: true
+    });
+
+  } catch (error) {
+    console.error("❌ Auto-submit error:", error);
+    res.status(500).json({ 
+      message: "Auto-submission failed", 
+      error: error.message 
+    });
+  }
+};
+
+// 🎯 ADD autoSubmitQuiz TO YOUR EXPORTS AT THE BOTTOM OF THE FILE
 module.exports = {
   createQuiz,
   publishQuiz,
@@ -2713,5 +2912,6 @@ module.exports = {
   startQuizAttempt,
   resumeQuizAttempt,
   saveQuizProgress,
-  gradeQuestion
+  gradeQuestion,
+  autoSubmitQuiz  // ← ADD THIS LINE to export the function
 };
