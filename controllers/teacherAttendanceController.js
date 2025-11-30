@@ -94,146 +94,159 @@ const calculateTermWeeks = (startDate, endDate) => {
 };
 
 // ─────────────────────────────────────────────────────────────
-// CLOCK IN / OUT (NOW USES GEOFENCE MIDDLEWARE)
+// CLOCK IN / OUT (WITH GEOFENCE + DEBUG LOGS)
 // ─────────────────────────────────────────────────────────────
 const clockAttendance = async (req, res) => {
-  console.log('=== CLOCK ATTENDANCE STARTED ===');
+  console.log("=== CLOCK ATTENDANCE STARTED ===");
+
   const { teacherId, type, timestamp, date, termId, deviceUUID, latitude, longitude } = req.body;
   const userId = req.user.id;
-  const isAdmin = req.user.role === 'admin'; // ✅ Supervisor removed
+  const isAdmin = req.user.role === "admin";
 
-  console.log('Request body:', { teacherId, type, timestamp, date, termId, deviceUUID, latitude, longitude });
+  console.log("📥 Incoming request body:", {
+    teacherId,
+    type,
+    timestamp,
+    date,
+    termId,
+    deviceUUID,
+    latitude,
+    longitude,
+  });
+
+  console.log("🔐 Authenticated User:", req.user);
 
   // Validate type
-  if (!['in', 'out'].includes(type))
-    return res.status(400).json({ status: 'fail', message: 'Invalid type. Must be "in" or "out".' });
+  if (!["in", "out"].includes(type)) {
+    console.warn("❌ Invalid type:", type);
+    return res.status(400).json({ status: "fail", message: 'Invalid type. Must be "in" or "out".' });
+  }
 
   const clockTime = new Date(timestamp);
-  if (isNaN(clockTime.getTime()))
-    return res.status(400).json({ status: 'fail', message: 'Invalid timestamp.' });
+  if (isNaN(clockTime.getTime())) {
+    console.warn("❌ Invalid timestamp received:", timestamp);
+    return res.status(400).json({ status: "fail", message: "Invalid timestamp." });
+  }
 
-  if (!deviceUUID)
-    return res.status(400).json({ status: 'fail', message: 'Device UUID is required.' });
+  if (!deviceUUID) {
+    console.warn("❌ Missing deviceUUID");
+    return res.status(400).json({ status: "fail", message: "Device UUID is required." });
+  }
 
-  // Validate coordinates
-  if (!latitude || !longitude)
-    return res.status(400).json({ status: 'fail', message: 'Latitude and longitude are required.' });
+  if (!latitude || !longitude) {
+    console.warn("❌ Missing coordinates");
+    return res.status(400).json({ status: "fail", message: "Latitude and longitude are required." });
+  }
 
   const lat = parseFloat(latitude);
   const lng = parseFloat(longitude);
 
-  if (isNaN(lat) || isNaN(lng))
-    return res.status(400).json({ status: 'fail', message: 'Invalid latitude or longitude values.' });
+  if (isNaN(lat) || isNaN(lng)) {
+    console.warn("❌ Invalid coordinate values:", latitude, longitude);
+    return res.status(400).json({ status: "fail", message: "Invalid latitude or longitude values." });
+  }
 
   try {
-    // 1️⃣ Fetch term
+    // 1️⃣ TERM LOOKUP
+    console.log("🔎 Looking up term:", termId);
     const term = await Term.findById(termId);
-    if (!term)
-      return res.status(404).json({ status: 'fail', message: 'Term not found.' });
 
-    // 2️⃣ Fetch teacher
+    if (!term) {
+      console.warn("❌ Term not found:", termId);
+      return res.status(404).json({ status: "fail", message: "Term not found." });
+    }
+    console.log("✅ Term found:", termId);
+
+    // 2️⃣ TEACHER LOOKUP
+    console.log("🔎 Looking up teacher...");
     let teacher;
-    try {
-      console.log('Attempting teacher lookup. teacherId (body):', teacherId, 'req.user:', req.user);
-      if (teacherId && isAdmin) {
-        // ✅ Only admins can clock for other teachers
-        teacher = await Teacher.findById(teacherId).populate('school user');
-        console.log('Admin-provided teacher lookup result:', teacher ? teacher._id : null);
-      } else {
-        if (!req.user || !req.user.id)
-          return res.status(401).json({ status: 'fail', message: 'Not authenticated.' });
 
-        const userObjectId =
-          typeof req.user.id === 'string'
+    try {
+      if (teacherId && isAdmin) {
+        console.log("Admin clocking another teacher:", teacherId);
+        teacher = await Teacher.findById(teacherId).populate("school user");
+      } else {
+        console.log("Teacher clocking themselves:", req.user.id);
+        const userObjId =
+          typeof req.user.id === "string"
             ? new mongoose.Types.ObjectId(req.user.id)
             : req.user.id;
 
-        teacher = await Teacher.findOne({ user: userObjectId }).populate('school user');
-        console.log('Teacher lookup by req.user result:', teacher ? teacher._id : null);
+        teacher = await Teacher.findOne({ user: userObjId }).populate("school user");
       }
+
+      console.log("👤 Teacher lookup result:", teacher ? teacher._id : "None");
     } catch (lookupErr) {
-      console.error('Teacher lookup error:', lookupErr);
-      return res.status(500).json({ status: 'error', message: 'Failed to lookup teacher' });
+      console.error("❌ Teacher lookup error:", lookupErr);
+      return res.status(500).json({ status: "error", message: "Failed to lookup teacher" });
     }
 
-    if (!teacher)
-      return res.status(404).json({
-        status: 'fail',
-        message:
-          teacherId && isAdmin
-            ? 'Teacher not found for provided teacherId.'
-            : 'Teacher record not found for authenticated user.',
-      });
+    if (!teacher) {
+      console.warn("❌ Teacher not found for user:", req.user.id);
+      return res.status(404).json({ status: "fail", message: "Teacher not found." });
+    }
 
-    if (!teacher.school)
-      return res.status(404).json({ status: 'fail', message: 'Teacher is not assigned to a school.' });
+    if (!teacher.school) {
+      console.warn("❌ Teacher has no assigned school");
+      return res.status(404).json({ status: "fail", message: "Teacher is not assigned to a school." });
+    }
 
-    // ✅ Geofence validation handled by middleware
-    console.log('Geofence validated via middleware:', req.geofenceStatus || 'unknown');
+    // 3️⃣ GEOFENCE RESULTS
+    console.log("📍 Geofence validation:", {
+      geofenceStatus: req.geofenceStatus,
+      geofenceData: req.geofenceData,
+    });
 
-    // 4️⃣ Device Binding Enforcement
+    // 4️⃣ DEVICE BINDING
+    console.log("🔐 Checking device binding for:", deviceUUID);
+
     let registeredDevice = null;
+
     try {
       const existingByDevice = await DeviceBinding.findOne({ deviceUUID });
 
       if (existingByDevice) {
+        console.log("Device already exists:", existingByDevice._id);
+
         if (existingByDevice.teacher.equals(teacher._id)) {
           registeredDevice = existingByDevice;
         } else {
+          console.warn("❌ Device belongs to another teacher");
           return res.status(403).json({
-            status: 'fail',
-            message: 'This device is already registered to another teacher.',
+            status: "fail",
+            message: "This device is already registered to another teacher.",
           });
         }
       } else {
         const existingByTeacher = await DeviceBinding.findOne({ teacher: teacher._id });
+
         if (!existingByTeacher) {
-          try {
-            registeredDevice = await DeviceBinding.create({
-              teacher: teacher._id,
-              deviceUUID,
-            });
-            console.log(`Device ${deviceUUID} registered for teacher ${teacher._id}`);
-          } catch (createErr) {
-            if (createErr.code === 11000) {
-              const conflict = await DeviceBinding.findOne({ deviceUUID });
-              if (conflict && !conflict.teacher.equals(teacher._id)) {
-                return res.status(403).json({
-                  status: 'fail',
-                  message: 'Device just registered to another teacher.',
-                });
-              }
-              registeredDevice = await DeviceBinding.findOne({ teacher: teacher._id });
-              if (!registeredDevice) throw createErr;
-            } else {
-              throw createErr;
-            }
-          }
+          console.log("🔧 Creating new device binding...");
+          registeredDevice = await DeviceBinding.create({
+            teacher: teacher._id,
+            deviceUUID,
+          });
         } else {
           if (existingByTeacher.deviceUUID !== deviceUUID) {
+            console.warn("❌ Attempt to use a new device without rebinding");
             return res.status(403).json({
-              status: 'fail',
+              status: "fail",
               message:
-                'Your account is already registered to a different device. Contact your admin to rebind your device.',
+                "Your account is already registered to a different device. Contact your admin.",
             });
           }
           registeredDevice = existingByTeacher;
         }
       }
     } catch (err) {
-      console.error('Device binding check error:', err);
-      return res.status(500).json({ status: 'error', message: 'Device binding error' });
+      console.error("❌ Device binding error:", err);
+      return res.status(500).json({ status: "error", message: "Device binding error" });
     }
 
-    console.log('Device binding result:', {
-      registeredDeviceExists: !!registeredDevice,
-      registeredDeviceId: registeredDevice?._id?.toString?.() ?? null,
-      registeredDeviceTeacher: registeredDevice?.teacher?.toString?.() ?? null,
-      incomingDeviceUUID: deviceUUID,
-      teacherId: teacher._id.toString(),
-    });
+    console.log("📱 Device binding result:", registeredDevice);
 
-    // 5️⃣ Attendance Logic
+    // 5️⃣ ATTENDANCE LOGIC
+    console.log("🕒 Processing attendance...");
     const attendanceDate = date ? new Date(date) : clockTime;
     const dayStart = startOfDay(attendanceDate);
     const dayEnd = endOfDay(attendanceDate);
@@ -243,116 +256,134 @@ const clockAttendance = async (req, res) => {
       date: { $gte: dayStart, $lte: dayEnd },
     });
 
+    console.log("📘 Existing attendance record:", attendance ? attendance._id : "None");
+
     const lateThreshold = new Date(dayStart);
     lateThreshold.setHours(8, 0, 0, 0);
 
     if (!attendance) {
+      console.log("➕ Creating new attendance record");
       attendance = new Attendance({
         teacher: teacher._id,
         school: teacher.school._id,
         date: attendanceDate,
         term: term._id,
-        signInTime: type === 'in' ? clockTime : null,
-        signOutTime: type === 'out' ? clockTime : null,
+        signInTime: type === "in" ? clockTime : null,
+        signOutTime: type === "out" ? clockTime : null,
         status:
-          type === 'in'
+          type === "in"
             ? clockTime > lateThreshold
-              ? 'Late'
-              : 'On Time'
-            : 'On Time',
-        location: { type: 'Point', coordinates: [lng, lat] },
+              ? "Late"
+              : "On Time"
+            : "On Time",
+        location: { type: "Point", coordinates: [lng, lat] },
       });
     } else {
-      if (type === 'in') {
-        if (attendance.signInTime)
-          return res.status(400).json({ status: 'fail', message: 'Already clocked in today.' });
+      console.log("✏️ Updating existing attendance record");
+      if (type === "in") {
+        if (attendance.signInTime) {
+          console.warn("❌ Already clocked in today");
+          return res.status(400).json({ status: "fail", message: "Already clocked in today." });
+        }
         attendance.signInTime = clockTime;
-        attendance.status = clockTime > lateThreshold ? 'Late' : 'On Time';
+        attendance.status = clockTime > lateThreshold ? "Late" : "On Time";
       } else {
-        if (!attendance.signInTime)
-          return res.status(400).json({ status: 'fail', message: 'Must clock in before clocking out.' });
-        if (attendance.signOutTime)
-          return res.status(400).json({ status: 'fail', message: 'Already clocked out today.' });
+        if (!attendance.signInTime) {
+          console.warn("❌ Cannot clock out before clocking in");
+          return res.status(400).json({ status: "fail", message: "Must clock in before clocking out." });
+        }
+        if (attendance.signOutTime) {
+          console.warn("❌ Already clocked out today");
+          return res.status(400).json({ status: "fail", message: "Already clocked out today." });
+        }
         attendance.signOutTime = clockTime;
       }
-      attendance.location = { type: 'Point', coordinates: [lng, lat] };
+
+      attendance.location = { type: "Point", coordinates: [lng, lat] };
       attendance.term = term._id;
     }
 
     await attendance.save();
+    console.log("💾 Attendance saved:", attendance._id);
 
-// 🔔 CREATE NOTIFICATION FOR ATTENDANCE
-const teacherName = teacher.user?.name || "Teacher";
-const actionType = type === "in" ? "clocked in" : "clocked out";
-const statusMessage = attendance.status === "Late" ? " (Late)" : "";
+    // 🔔 IN-APP NOTIFICATION
+    const teacherName = teacher.user?.name || "Teacher";
+    const actionType = type === "in" ? "clocked in" : "clocked out";
+    const statusMessage = attendance.status === "Late" ? " (Late)" : "";
 
-// 🔔 IN-APP NOTIFICATION (teachers + admins)
-await Notification.create({
-  sender: req.user._id,
-  school: req.user.school,
-  title: `Teacher ${actionType.charAt(0).toUpperCase() + actionType.slice(1)}`,
-  message: `${teacherName} ${actionType}${statusMessage}`,
-  type: "teacher-attendance",
-  audience: "teacher",
-  recipientRoles: ["teacher", "admin"],
-  recipientUsers: []
-});
+    console.log("📨 Creating in-app notification...");
 
-// 🔔 PUSH NOTIFICATION TARGETS
-// Find admins directly in the Users collection
-const adminUsers = await mongoose.model("User").find({
-  school: teacher.school._id,
-  role: "admin"
-}).select("_id");
+    await Notification.create({
+      sender: req.user._id,
+      school: req.user.school,
+      title: `Teacher ${actionType.charAt(0).toUpperCase() + actionType.slice(1)}`,
+      message: `${teacherName} ${actionType}${statusMessage}`,
+      type: "teacher-attendance",
+      audience: "teacher",
+      recipientRoles: ["teacher", "admin"],
+      recipientUsers: [],
+    });
 
-const adminIds = adminUsers.map(a => String(a._id));
+    console.log("✅ In-app notification created.");
 
+    // 🔔 PUSH NOTIFICATION TARGETS
+    console.log("🔎 Fetching admin recipients...");
+    const adminUsers = await mongoose.model("User").find({
+      school: teacher.school._id,
+      role: "admin",
+    }).select("_id");
 
-// Teacher also receives push
-const teacherUserId = teacher.user?._id ? String(teacher.user._id) : null;
+    console.log("👥 Admin recipients found:", adminUsers.length);
 
-const pushRecipients = [
-  ...(teacherUserId ? [teacherUserId] : []),
-  ...adminIds
-];
+    const adminIds = adminUsers.map((a) => String(a._id));
+    const teacherUserId = teacher.user?._id ? String(teacher.user._id) : null;
 
-// 🔔 SEND PUSH
-await sendPush(
-  pushRecipients,
-  `Attendance ${type === "in" ? "Clock In" : "Clock Out"}`,
-  `${teacherName} ${actionType}${statusMessage}`,
-  {
-    teacherId: String(teacher._id),
-    action: type,
-    time: clockTime
-  }
-);
+    const pushRecipients = [...(teacherUserId ? [teacherUserId] : []), ...adminIds];
 
+    console.log("📤 Sending push notifications to:", pushRecipients);
 
+    try {
+      await sendPush(
+        pushRecipients,
+        `Attendance ${type === "in" ? "Clock In" : "Clock Out"}`,
+        `${teacherName} ${actionType}${statusMessage}`,
+        {
+          teacherId: String(teacher._id),
+          action: type,
+          time: clockTime,
+        }
+      );
+      console.log("✅ Push notifications sent.");
+    } catch (pushErr) {
+      console.error("❌ Push notification error:", pushErr);
+    }
 
-    // ✅ Extract distance info from geofence middleware
-    const { geofenceStatus, geofenceData } = req;
-    const distanceFromCenter = geofenceData?.distanceFromCenter || null;
+    // GEOFENCE DETAILS
+    console.log("📍 Final geofence data:", req.geofenceData);
+
+    const distanceFromCenter = req.geofenceData?.distanceFromCenter || null;
 
     return res.status(200).json({
-      status: 'success',
+      status: "success",
       data: {
         attendance,
-        message: `Successfully clocked ${type} for ${teacher.user?.name || 'teacher'}`,
-        geofenceStatus: geofenceStatus || 'validated',
-        distanceFromCenter, // ✅ Added for mobile app display
+        message: `Successfully clocked ${type} for ${teacher.user?.name || "teacher"}`,
+        geofenceStatus: req.geofenceStatus || "validated",
+        distanceFromCenter,
         teacherId: teacher._id,
       },
     });
   } catch (err) {
-    console.error('Clock attendance error:', err);
+    console.error("🔥 CLOCK ATTENDANCE FATAL ERROR:", err);
     return res.status(500).json({
-      status: 'error',
-      message: 'Internal server error',
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined,
+      status: "error",
+      message: "Internal server error",
+      error: err.message,
+      stack: err.stack,
     });
   }
 };
+
 
 // ─────────────────────────────────────────────────────────────
 // TEACHER DAILY RECORDS (WITH FIXED TEACHER LOOKUP)
