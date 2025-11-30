@@ -2,11 +2,12 @@ const mongoose = require('mongoose');
 const Attendance = require('../models/TeacherAttendance');
 const Teacher = require('../models/Teacher');
 const Term = require("../models/term");
-const Notification = require('../models/Notification');
+const Notification = require('../models/Notification').default;
+
 const geofenceValidator = require('../middlewares/geofenceValidator');
 const { startOfDay, endOfDay, eachWeekOfInterval, format, addDays } = require('date-fns');
 const DeviceBinding = require('../models/DeviceBinding');
-const PushToken = require("../models/PushToken");
+const PushToken = require("../models/PushToken").default;
 const { Expo } = require("expo-server-sdk");
 const expo = new Expo();
 
@@ -280,12 +281,12 @@ const clockAttendance = async (req, res) => {
 
     await attendance.save();
 
-    // 🔔 CREATE NOTIFICATION FOR ATTENDANCE
-    const teacherName = teacher.user?.name || 'Teacher';
-    const actionType = type === 'in' ? 'clocked in' : 'clocked out';
-    const statusMessage = attendance.status === 'Late' ? ' (Late)' : '';
-    
-    // 🔔 IN-APP NOTIFICATION (teachers + admins)
+// 🔔 CREATE NOTIFICATION FOR ATTENDANCE
+const teacherName = teacher.user?.name || "Teacher";
+const actionType = type === "in" ? "clocked in" : "clocked out";
+const statusMessage = attendance.status === "Late" ? " (Late)" : "";
+
+// 🔔 IN-APP NOTIFICATION (teachers + admins)
 await Notification.create({
   sender: req.user._id,
   school: req.user.school,
@@ -294,13 +295,14 @@ await Notification.create({
   type: "teacher-attendance",
   audience: "teacher",
   recipientRoles: ["teacher", "admin"],
-  recipientUsers: [] // optional — depends on your system
+  recipientUsers: []
 });
 
 // 🔔 PUSH NOTIFICATION TARGETS
-// Admins who belong to same school
+// Find admins in the same school (correct lookup using User.role)
 const adminUsers = await Teacher.aggregate([
-  { $match: { role: "admin", school: teacher.school._id } },
+  { $match: { school: teacher.school._id } },
+
   {
     $lookup: {
       from: "users",
@@ -310,13 +312,18 @@ const adminUsers = await Teacher.aggregate([
     }
   },
   { $unwind: "$user" },
-  { $project: { _id: 0, userId: "$user._id" } }
+
+  // ❗ Correct filter → admins are in USER.role, not teacher.role
+  { $match: { "user.role": "admin" } },
+
+  { $project: { userId: "$user._id" } }
 ]);
 
 const adminIds = adminUsers.map(a => String(a.userId));
 
 // Teacher also receives push
 const teacherUserId = teacher.user?._id ? String(teacher.user._id) : null;
+
 const pushRecipients = [
   ...(teacherUserId ? [teacherUserId] : []),
   ...adminIds
@@ -333,6 +340,7 @@ await sendPush(
     time: clockTime
   }
 );
+
 
 
     // ✅ Extract distance info from geofence middleware
