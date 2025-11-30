@@ -299,27 +299,14 @@ await Notification.create({
 });
 
 // 🔔 PUSH NOTIFICATION TARGETS
-// Find admins in the same school (correct lookup using User.role)
-const adminUsers = await Teacher.aggregate([
-  { $match: { school: teacher.school._id } },
+// Find admins directly in the Users collection
+const adminUsers = await mongoose.model("User").find({
+  school: teacher.school._id,
+  role: "admin"
+}).select("_id");
 
-  {
-    $lookup: {
-      from: "users",
-      localField: "user",
-      foreignField: "_id",
-      as: "user"
-    }
-  },
-  { $unwind: "$user" },
+const adminIds = adminUsers.map(a => String(a._id));
 
-  // ❗ Correct filter → admins are in USER.role, not teacher.role
-  { $match: { "user.role": "admin" } },
-
-  { $project: { userId: "$user._id" } }
-]);
-
-const adminIds = adminUsers.map(a => String(a.userId));
 
 // Teacher also receives push
 const teacherUserId = teacher.user?._id ? String(teacher.user._id) : null;
