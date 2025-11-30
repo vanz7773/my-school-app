@@ -2,12 +2,12 @@ const mongoose = require('mongoose');
 const Attendance = require('../models/TeacherAttendance');
 const Teacher = require('../models/Teacher');
 const Term = require("../models/term");
-const Notification = require('../models/Notification').default;
+const Notification = require('../models/Notification')
 
 const geofenceValidator = require('../middlewares/geofenceValidator');
 const { startOfDay, endOfDay, eachWeekOfInterval, format, addDays } = require('date-fns');
 const DeviceBinding = require('../models/DeviceBinding');
-const PushToken = require("../models/PushToken").default;
+const PushToken = require("../models/PushToken")
 const { Expo } = require("expo-server-sdk");
 const expo = new Expo();
 
