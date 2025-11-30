@@ -1,4 +1,5 @@
-import mongoose from "mongoose";
+// models/PushToken.js
+const mongoose = require("mongoose");
 
 const PushTokenSchema = new mongoose.Schema({
   userId: {
@@ -24,10 +25,8 @@ const PushTokenSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
-  createdAt: {
-    type: Date,
-    default: Date.now,
-  },
-});
+}, { timestamps: true });
 
-export default mongoose.model("PushToken", PushTokenSchema);
+module.exports =
+  mongoose.models.PushToken ||
+  mongoose.model("PushToken", PushTokenSchema);
