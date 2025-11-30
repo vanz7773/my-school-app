@@ -16,6 +16,42 @@ const { findTextPosition } = require("../utils/pdfTextLocator");
 const SchoolInfo = require("../models/SchoolInfo");
 const Notification = require("../models/Notification");
 const axios = require("axios");
+const PushToken = require("../models/PushToken");
+const { Expo } = require("expo-server-sdk");
+const expo = new Expo();
+
+async function sendPush(userIds, title, body) {
+  if (!Array.isArray(userIds) || userIds.length === 0) return;
+
+  const tokens = await PushToken.find({
+    userId: { $in: userIds },
+    disabled: false,
+  }).lean();
+
+  const validTokens = tokens
+    .map(t => t.token)
+    .filter(token => Expo.isExpoPushToken(token));
+
+  if (validTokens.length === 0) return;
+
+  const messages = validTokens.map(token => ({
+    to: token,
+    sound: "default",
+    title,
+    body,
+    data: { type: "report-card" }
+  }));
+
+  const chunks = expo.chunkPushNotifications(messages);
+  for (const chunk of chunks) {
+    try {
+      await expo.sendPushNotificationsAsync(chunk);
+    } catch (err) {
+      console.error("Push error:", err);
+    }
+  }
+}
+
 
 // ------------------ Multer setup ------------------
 const upload = multer({ dest: "uploads/" });
@@ -970,24 +1006,16 @@ exports.uploadReportSheetPDF = [
 
 
 
-// 8️⃣ Student + Parent fetch report link (single shared route)
+// ==================== UPDATED ROUTE ====================
 exports.getMyReportSheet = async (req, res) => {
   try {
     const { studentId, termId } = req.params;
     const { childId } = req.query;
     const requester = req.user;
 
-    console.log("🚀 [START] getMyReportSheet", {
-      studentId,
-      termId,
-      childId,
-      role: requester?.role,
-      requesterId: requester?._id,
-    });
-
     let targetStudent;
 
-    // 🎓 Student request — fetch their own record
+    // 🎓 Student request
     if (requester.role === "student") {
       targetStudent = await Student.findOne({ user: requester._id })
         .populate("class", "name reportSheetPdfUrl")
@@ -995,89 +1023,124 @@ exports.getMyReportSheet = async (req, res) => {
         .lean();
 
       if (!targetStudent) {
-        return res.status(404).json({
-          message: "Student record not found for this account.",
-        });
+        return res.status(404).json({ message: "Student not found." });
       }
     }
 
-    // 👪 Parent request — verify child relationship
+    // 👪 Parent request
     else if (requester.role === "parent") {
       const targetId = childId || studentId;
       if (!targetId) {
-        return res.status(400).json({
-          message: "Missing childId or studentId for parent request.",
-        });
+        return res.status(400).json({ message: "childId or studentId required" });
       }
-
-      console.log("👪 Parent request for student:", targetId);
 
       targetStudent = await Student.findOne({
         _id: targetId,
         $or: [
           { parent: requester._id },
-          { parentIds: { $in: [requester._id] } },
-        ],
+          { parentIds: { $in: [requester._id] } }
+        ]
       })
         .populate("class", "name reportSheetPdfUrl")
         .populate("user", "name")
         .lean();
 
       if (!targetStudent) {
-        console.warn("🚫 Unauthorized parent-child access attempt by:", requester._id);
-        return res.status(403).json({
-          message:
-            "Unauthorized: You are not linked to this child. Access denied.",
-        });
+        return res.status(403).json({ message: "Unauthorized childId" });
       }
     }
 
-    // 🚫 All other roles are restricted
+    // ❌ Other roles blocked
     else {
       return res.status(403).json({
-        message:
-          "Access denied: Only students or linked parents can view report sheets.",
+        message: "Only students or linked parents can view report sheets."
       });
     }
 
-    // 🧩 Validation: student record found
+    // --------------------------
+    // VALIDATION
+    // --------------------------
     if (!targetStudent) {
-      return res.status(404).json({
-        message: "Student record not found.",
-      });
+      return res.status(404).json({ message: "Student not found." });
     }
 
     const classDoc = targetStudent.class;
     if (!classDoc) {
-      return res.status(400).json({
-        message: "Student is not assigned to any class.",
-      });
+      return res.status(400).json({ message: "Student not assigned to a class." });
     }
 
-    console.log(`🏫 Class found: ${classDoc.name}`);
-
-    // 🔍 Check for individual report PDF for this term
+    // --------------------------
+    // GET INDIVIDUAL PDF
+    // --------------------------
     const pdfUrl =
       targetStudent.reportCards?.[termId] ||
-      (targetStudent.reportCards && targetStudent.reportCards.get?.(termId));
+      (targetStudent.reportCards &&
+        targetStudent.reportCards.get?.(termId));
 
-    // 🧾 Clean & readable filename (use student name if possible)
     const studentDisplayName =
-      targetStudent.user?.name ||
-      targetStudent.name ||
-      "Student";
+      targetStudent.user?.name || targetStudent.name || "Student";
+
     const safeName = studentDisplayName.replace(/\s+/g, "_") + "_Report.pdf";
 
-    // ✅ If individual report exists
+    // Build recipients (student + parents)
+    const recipients = new Set();
+    if (targetStudent.user?._id) recipients.add(String(targetStudent.user._id));
+    if (targetStudent.parent) recipients.add(String(targetStudent.parent));
+    if (Array.isArray(targetStudent.parentIds)) {
+      targetStudent.parentIds.forEach(id => recipients.add(String(id)));
+    }
+
+    // ======================================================
+    // CASE 1 → Individual report exists
+    // ======================================================
     if (pdfUrl) {
-      console.log(`✅ Found individual report for term ${termId}`);
+      await Notification.create({
+        title: "Report Card Ready",
+        message: `Your Term ${termId} report card is available.`,
+        type: "report-card",
+        school: requester.school,
+        sender: requester._id,
+        class: classDoc._id,
+        termId,
+        studentId: targetStudent._id,
+        fileUrl: pdfUrl,
+        recipientUsers: [...recipients],
+        audience: "student"
+      });
+
+      // PUSH
+      await sendPush(
+        [...recipients],
+        "Report Card Ready",
+        `${studentDisplayName}'s Term ${termId} report card is ready.`
+      );
+
       res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
       return res.redirect(302, pdfUrl);
     }
 
-    // 🏫 Fallback to class-level report
+    // ======================================================
+    // CASE 2 → Class-level report fallback
+    // ======================================================
     if (classDoc.reportSheetPdfUrl) {
-      console.log("⚠️ No individual PDF found; returning class-level report");
+      await Notification.create({
+        title: "Class Report Sheet",
+        message: `Term ${termId} class report sheet is available.`,
+        type: "report-card",
+        school: requester.school,
+        sender: requester._id,
+        class: classDoc._id,
+        termId,
+        recipientUsers: [...recipients],
+        audience: "student"
+      });
+
+      await sendPush(
+        [...recipients],
+        "Report Sheet Available",
+        `The Term ${termId} class report sheet is now available.`
+      );
+
       res.setHeader(
         "Content-Disposition",
         `inline; filename="${classDoc.name}_Report.pdf"`
@@ -1085,21 +1148,21 @@ exports.getMyReportSheet = async (req, res) => {
       return res.redirect(302, classDoc.reportSheetPdfUrl);
     }
 
-    // ❌ No available reports
-    console.warn("⚠️ No report found for student or class");
+    // ======================================================
+    // CASE 3 → No report found
+    // ======================================================
     return res.status(404).json({
-      message:
-        "Report sheet not uploaded yet for this student or class.",
+      message: "Report sheet not uploaded yet."
     });
+
   } catch (err) {
     console.error("💥 getMyReportSheet error:", err);
-    res.status(500).json({
+    return res.status(500).json({
       message: "Failed to fetch report sheet.",
-      error: err.message,
+      error: err.message
     });
   }
 };
-
 
 
 // 🚀 GET true overall subject + class average (based on total marks of all subjects)

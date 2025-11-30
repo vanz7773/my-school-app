@@ -5,6 +5,9 @@ const Class = require('../models/Class');
 const User = require('../models/User');
 const Student = require('../models/Student');
 const Notification = require('../models/Notification');
+const PushToken = require("../models/PushToken");
+const { Expo } = require("expo-server-sdk");
+const expo = new Expo();
 
 // --------------------------------------------------------------------
 // 🔍 Helper: Resolve school based on user type
@@ -214,8 +217,40 @@ function buildAgendaFilter(user, from, to) {
   return filter;
 }
 
+async function sendPushToUsers(userIds, title, message) {
+  if (!Array.isArray(userIds) || userIds.length === 0) return;
+
+  const tokens = await PushToken.find({
+    userId: { $in: userIds },
+    disabled: false,
+  }).lean();
+
+  const validTokens = tokens
+    .filter(t => Expo.isExpoPushToken(t.token))
+    .map(t => t.token);
+
+  if (validTokens.length === 0) {
+    console.log("⚠️ No valid Expo tokens for recipients");
+    return;
+  }
+
+  const messages = validTokens.map(token => ({
+    to: token,
+    sound: "default",
+    title,
+    body: message,
+    data: { type: "agenda" },
+  }));
+
+  const chunks = expo.chunkPushNotifications(messages);
+  for (const chunk of chunks) {
+    await expo.sendPushNotificationsAsync(chunk);
+  }
+}
+
+
 // --------------------------------------------------------------------
-// 🗓️ Create a new agenda
+// 🗓️ Create a new agenda (UPDATED WITH PUSH NOTIFICATIONS)
 // --------------------------------------------------------------------
 exports.createAgenda = async (req, res) => {
   try {
@@ -248,67 +283,113 @@ exports.createAgenda = async (req, res) => {
 
     await agenda.save();
 
-    // 🔔 CREATE NOTIFICATION FOR AGENDA
-    try {
-      let recipientUsers = [];
+    // ============================================================
+    // 🔔 CREATE IN-APP NOTIFICATION (your existing logic)
+    // ============================================================
+    let recipientUsers = [];
 
-      // If audience is class, resolve specific users (students + teachers + parents)
-      if (audience === 'class' && classId) {
-        recipientUsers = await resolveRecipientUsersForClass(classId, true);
+    if (audience === 'class' && classId) {
+      recipientUsers = await resolveRecipientUsersForClass(classId, true);
+    }
+
+    if (audience === 'student' && studentId) {
+      try {
+        const studentDoc = await Student.findById(studentId).select('user parent parentIds').lean();
+        if (studentDoc?.user) recipientUsers.push(String(studentDoc.user));
+        if (studentDoc?.parent) recipientUsers.push(String(studentDoc.parent));
+        if (Array.isArray(studentDoc?.parentIds)) {
+          studentDoc.parentIds.forEach((pid) => pid && recipientUsers.push(String(pid)));
+        }
+      } catch (err) {
+        console.warn("createAgenda student lookup failed:", err);
+      }
+    }
+
+    await Notification.create({
+      title: `New Agenda: ${title}`,
+      sender: req.user._id,
+      school: schoolId,
+      message: `New agenda: ${title}`,
+      type: "agenda",
+      audience,
+      class: classId || null,
+      recipientRoles:
+        audience === "all"
+          ? ["teacher", "student", "parent"]
+          : audience === "teacher"
+          ? ["teacher"]
+          : audience === "student"
+          ? ["student"]
+          : audience === "parent"
+          ? ["parent"]
+          : [],
+      recipientUsers:
+        recipientUsers.length ? Array.from(new Set(recipientUsers)) : undefined,
+    });
+
+    // ============================================================
+    // 📣 SEND EXPO PUSH NOTIFICATIONS (NEW)
+    // ============================================================
+    try {
+      let pushRecipients = [];
+
+      // 📌 CLASS (students + teachers + parents)
+      if (audience === "class" && classId) {
+        pushRecipients = await resolveRecipientUsersForClass(classId, true);
       }
 
-      // If audience targets a specific student
-      if (audience === 'student' && studentId) {
-        try {
-          const studentDoc = await Student.findById(studentId).select('user parent parentIds').lean();
-          if (studentDoc?.user) recipientUsers.push(String(studentDoc.user));
-
-          // Also include parents of the specific student (optional, usually desired)
-          if (studentDoc?.parent) recipientUsers.push(String(studentDoc.parent));
-          if (Array.isArray(studentDoc?.parentIds)) {
-            for (const pid of studentDoc.parentIds) {
-              if (pid) recipientUsers.push(String(pid));
-            }
-          }
-        } catch (sErr) {
-          console.warn('createAgenda: student lookup failed for studentId', sErr);
+      // 📌 SPECIFIC STUDENT
+      if (audience === "student" && studentId) {
+        const s = await Student.findById(studentId).select("user parent parentIds").lean();
+        if (s?.user) pushRecipients.push(String(s.user));
+        if (s?.parent) pushRecipients.push(String(s.parent));
+        if (Array.isArray(s?.parentIds)) {
+          pushRecipients.push(...s.parentIds.map(String));
         }
       }
 
-      await Notification.create({
-        title: `New Agenda: ${title}`,
-        sender: req.user._id,
-        school: schoolId,
-        message: `New agenda: ${title}`,
-        type: "agenda",
-        audience,
-        class: classId || null,
-        recipientRoles:
-          audience === "all"
-            ? ["teacher", "student", "parent"]
-            : audience === "teacher"
-            ? ["teacher"]
-            : audience === "student"
-            ? ["student"]
-            : audience === "parent"
-            ? ["parent"]
-            : [], // class handled by recipientUsers if needed
-        recipientUsers: recipientUsers.length ? Array.from(new Set(recipientUsers)) : undefined,
-      });
-    } catch (notifErr) {
-      console.error('⚠️ createAgenda: failed to create notification', notifErr);
-      // do not fail the request if notifications fail
+      // 📌 ALL STUDENTS
+      if (audience === "student" && !studentId) {
+        const students = await User.find({ role: "student", school: schoolId }).select("_id");
+        pushRecipients = students.map((s) => String(s._id));
+      }
+
+      // 📌 ALL PARENTS
+      if (audience === "parent") {
+        const parents = await User.find({ role: "parent", school: schoolId }).select("_id");
+        pushRecipients = parents.map((p) => String(p._id));
+      }
+
+      // 📌 EVERYONE IN SCHOOL
+      if (audience === "all") {
+        const allUsers = await User.find({ school: schoolId }).select("_id");
+        pushRecipients = allUsers.map((u) => String(u._id));
+      }
+
+      pushRecipients = [...new Set(pushRecipients)]; // dedupe
+
+      await sendPushToUsers(
+        pushRecipients,
+        "New Agenda Posted",
+        title
+      );
+
+    } catch (pushErr) {
+      console.error("⚠️ Push notification failed:", pushErr);
     }
 
+    // ============================================================
+    // 📤 RETURN RESPONSE
+    // ============================================================
     res.status(201).json(agenda);
+
   } catch (err) {
-    console.error('💥 createAgenda error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error("💥 createAgenda error:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 };
-
 // --------------------------------------------------------------------
-// ✏️ Update an existing agenda
+// ✏️ Update an existing agenda (UPDATED WITH PUSH NOTIFICATIONS)
 // --------------------------------------------------------------------
 exports.updateAgenda = async (req, res) => {
   try {
@@ -343,7 +424,10 @@ exports.updateAgenda = async (req, res) => {
 
     if (!agenda) return res.status(404).json({ error: 'Agenda not found' });
 
-    // 🔔 CREATE NOTIFICATION FOR AGENDA UPDATE
+
+    // ============================================================
+    // 🔔 CREATE IN-APP NOTIFICATION (EXISTING LOGIC)
+    // ============================================================
     try {
       let recipientUsers = [];
 
@@ -353,13 +437,15 @@ exports.updateAgenda = async (req, res) => {
 
       if (audience === 'student' && studentId) {
         try {
-          const studentDoc = await Student.findById(studentId).select('user parent parentIds').lean();
+          const studentDoc = await Student.findById(studentId)
+            .select('user parent parentIds')
+            .lean();
+
           if (studentDoc?.user) recipientUsers.push(String(studentDoc.user));
           if (studentDoc?.parent) recipientUsers.push(String(studentDoc.parent));
+
           if (Array.isArray(studentDoc?.parentIds)) {
-            for (const pid of studentDoc.parentIds) {
-              if (pid) recipientUsers.push(String(pid));
-            }
+            studentDoc.parentIds.forEach((pid) => pid && recipientUsers.push(String(pid)));
           }
         } catch (sErr) {
           console.warn('updateAgenda: student lookup failed for studentId', sErr);
@@ -384,13 +470,73 @@ exports.updateAgenda = async (req, res) => {
             : audience === "parent"
             ? ["parent"]
             : [],
-        recipientUsers: recipientUsers.length ? Array.from(new Set(recipientUsers)) : undefined,
+        recipientUsers:
+          recipientUsers.length ? Array.from(new Set(recipientUsers)) : undefined,
       });
+
     } catch (notifErr) {
       console.error('⚠️ updateAgenda: failed to create notification', notifErr);
     }
 
+
+    // ============================================================
+    // 📣 EXPO PUSH NOTIFICATIONS (NEW LOGIC)
+    // ============================================================
+    try {
+      let pushRecipients = [];
+
+      // 📌 CLASS
+      if (audience === "class" && classId) {
+        pushRecipients = await resolveRecipientUsersForClass(classId, true);
+      }
+
+      // 📌 SPECIFIC STUDENT
+      if (audience === "student" && studentId) {
+        const s = await Student.findById(studentId).select("user parent parentIds").lean();
+
+        if (s?.user) pushRecipients.push(String(s.user));
+        if (s?.parent) pushRecipients.push(String(s.parent));
+        if (Array.isArray(s?.parentIds)) {
+          pushRecipients.push(...s.parentIds.map(String));
+        }
+      }
+
+      // 📌 ALL STUDENTS
+      if (audience === "student" && !studentId) {
+        const students = await User.find({ role: "student", school: schoolId }).select("_id");
+        pushRecipients = students.map((s) => String(s._id));
+      }
+
+      // 📌 ALL PARENTS
+      if (audience === "parent") {
+        const parents = await User.find({ role: "parent", school: schoolId }).select("_id");
+        pushRecipients = parents.map((p) => String(p._id));
+      }
+
+      // 📌 SCHOOL-WIDE (everyone)
+      if (audience === "all") {
+        const allUsers = await User.find({ school: schoolId }).select("_id");
+        pushRecipients = allUsers.map((u) => String(u._id));
+      }
+
+      pushRecipients = [...new Set(pushRecipients)]; // clean duplicates
+
+      await sendPushToUsers(
+        pushRecipients,
+        "Agenda Updated",
+        `${title}`
+      );
+
+    } catch (pushErr) {
+      console.error("⚠️ Push notification (updateAgenda) failed:", pushErr);
+    }
+
+
+    // ============================================================
+    // 📤 SEND BACK UPDATED AGENDA
+    // ============================================================
     res.json(agenda);
+
   } catch (err) {
     console.error('💥 updateAgenda error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -398,30 +544,34 @@ exports.updateAgenda = async (req, res) => {
 };
 
 // --------------------------------------------------------------------
-// ❌ Delete an agenda
+// ❌ Delete an agenda (UPDATED WITH EXPO PUSH NOTIFICATIONS)
 // --------------------------------------------------------------------
 exports.deleteAgenda = async (req, res) => {
   try {
     const plainUser = req.user.toObject ? req.user.toObject() : req.user;
     const schoolId = await resolveSchoolForUser(plainUser);
-    if (!schoolId) return res.status(403).json({ error: 'No school linked' });
+    if (!schoolId) return res.status(403).json({ error: "No school linked" });
 
     const agenda = await AgendaEvent.findOneAndDelete({
       _id: req.params.id,
       school: schoolId,
     });
 
-    if (!agenda) return res.status(404).json({ error: 'Agenda not found' });
+    if (!agenda) return res.status(404).json({ error: "Agenda not found" });
 
-    // 🔔 CREATE NOTIFICATION FOR AGENDA DELETION
+
+    // ============================================================
+    // 🔔 CREATE IN-APP NOTIFICATION (existing system)
+    // ============================================================
     try {
       let recipientUsers = [];
-      if (agenda.audience === 'class' && agenda.class) {
-        recipientUsers = await resolveRecipientUsersForClass(agenda.class, true);
-      }
 
-      // For single-student agendas we might have stored student info in class or payload.
-      // (If you have student-specific deletion logic, pass studentId via req.body when deleting.)
+      if (agenda.audience === "class" && agenda.class) {
+        recipientUsers = await resolveRecipientUsersForClass(
+          agenda.class,
+          true
+        );
+      }
 
       await Notification.create({
         title: `Agenda Deleted: ${agenda.title}`,
@@ -441,16 +591,88 @@ exports.deleteAgenda = async (req, res) => {
             : agenda.audience === "parent"
             ? ["parent"]
             : [],
-        recipientUsers: recipientUsers.length ? Array.from(new Set(recipientUsers)) : undefined,
+        recipientUsers:
+          recipientUsers.length
+            ? Array.from(new Set(recipientUsers))
+            : undefined,
       });
     } catch (notifErr) {
-      console.error('⚠️ deleteAgenda: failed to create notification', notifErr);
+      console.error("⚠️ deleteAgenda: failed to create notification", notifErr);
     }
 
-    res.json({ message: 'Agenda deleted successfully' });
+
+    // ============================================================
+    // 📣 EXPO PUSH NOTIFICATIONS (new logic)
+    // ============================================================
+    try {
+      let pushRecipients = [];
+
+      // CLASS → students + parents + teachers
+      if (agenda.audience === "class" && agenda.class) {
+        pushRecipients = await resolveRecipientUsersForClass(
+          agenda.class,
+          true
+        );
+      }
+
+      // STUDENT (for single-student agendas)
+      if (agenda.audience === "student" && agenda.studentId) {
+        const s = await Student.findById(agenda.studentId)
+          .select("user parent parentIds")
+          .lean();
+
+        if (s?.user) pushRecipients.push(String(s.user));
+        if (s?.parent) pushRecipients.push(String(s.parent));
+        if (Array.isArray(s?.parentIds)) {
+          s.parentIds.forEach((pid) => pid && pushRecipients.push(String(pid)));
+        }
+      }
+
+      // ALL STUDENTS
+      if (agenda.audience === "student" && !agenda.studentId) {
+        const students = await User.find({
+          role: "student",
+          school: schoolId,
+        }).select("_id");
+        pushRecipients = students.map((s) => String(s._id));
+      }
+
+      // ALL PARENTS
+      if (agenda.audience === "parent") {
+        const parents = await User.find({
+          role: "parent",
+          school: schoolId,
+        }).select("_id");
+        pushRecipients = parents.map((p) => String(p._id));
+      }
+
+      // WHOLE SCHOOL
+      if (agenda.audience === "all") {
+        const allUsers = await User.find({
+          school: schoolId,
+        }).select("_id");
+        pushRecipients = allUsers.map((u) => String(u._id));
+      }
+
+      pushRecipients = [...new Set(pushRecipients)]; // unique list
+
+      await sendPushToUsers(
+        pushRecipients,
+        "Agenda Deleted",
+        `${agenda.title} has been removed`
+      );
+
+    } catch (pushErr) {
+      console.error("⚠️ Push notification (deleteAgenda) failed:", pushErr);
+    }
+
+
+    // RESPONSE
+    res.json({ message: "Agenda deleted successfully" });
+
   } catch (err) {
-    console.error('💥 deleteAgenda error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error("💥 deleteAgenda error:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 };
 

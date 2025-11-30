@@ -3,6 +3,44 @@ const Class = require('../models/Class');
 const Student = require('../models/Student');
 const Notification = require('../models/Notification');
 const mongoose = require('mongoose');
+const PushToken = require("../models/PushToken");
+const { Expo } = require("expo-server-sdk");
+const expo = new Expo();
+
+
+// 🔔 Reusable push sender
+async function sendPush(userIds, title, body) {
+  try {
+    if (!Array.isArray(userIds) || userIds.length === 0) return;
+
+    const tokens = await PushToken.find({
+      userId: { $in: userIds },
+      disabled: false,
+    }).lean();
+
+    const validTokens = tokens
+      .map(t => t.token)
+      .filter(token => Expo.isExpoPushToken(token));
+
+    if (validTokens.length === 0) return;
+
+    const messages = validTokens.map(token => ({
+      to: token,
+      sound: "default",
+      title,
+      body,
+      data: { type: "assignment" }
+    }));
+
+    const chunks = expo.chunkPushNotifications(messages);
+    for (const chunk of chunks) {
+      await expo.sendPushNotificationsAsync(chunk);
+    }
+  } catch (err) {
+    console.error("⚠️ sendPush failed:", err.message);
+  }
+}
+
 
 // --------------------------------------------------------------------
 // 🔍 Cache for frequently accessed data
@@ -61,9 +99,6 @@ async function getStudentWithCache(studentId, schoolId, userId = null) {
   return student;
 }
 
-// --------------------------------------------------------------------
-// 🔧 Helper: Create assignment notification
-// --------------------------------------------------------------------
 async function createAssignmentNotification({
   title,
   sender,
@@ -78,6 +113,7 @@ async function createAssignmentNotification({
       deleted: 'Assignment Deleted'
     };
 
+    // 1️⃣ Create MongoDB notification
     await Notification.create({
       title: `${actionMap[action]}: ${title}`,
       sender,
@@ -88,11 +124,38 @@ async function createAssignmentNotification({
       class: classId,
       recipientRoles: ["student", "parent"],
     });
-  } catch (notifErr) {
-    console.error(`⚠️ createAssignmentNotification: failed to create notification`, notifErr);
-    // Don't throw - notification failure shouldn't break the main operation
+
+    // 2️⃣ Resolve recipients (students + parents)
+    const students = await Student.find({ 
+      class: classId, 
+      school 
+    }).select("user parent parentIds").lean();
+
+    let userIds = [];
+
+    students.forEach(s => {
+      if (s.user) userIds.push(String(s.user));
+      if (s.parent) userIds.push(String(s.parent));
+      if (Array.isArray(s.parentIds))
+        s.parentIds.forEach(pid => userIds.push(String(pid)));
+    });
+
+    userIds = [...new Set(userIds)];
+
+    if (userIds.length > 0) {
+      // 3️⃣ Send push notification
+      await sendPush(
+        userIds,
+        actionMap[action],
+        title
+      );
+    }
+
+  } catch (err) {
+    console.error("⚠️ Assignment notification failure:", err);
   }
 }
+
 
 // --------------------------------------------------------------------
 // 🗂️ Create new assignment WITH NOTIFICATION SUPPORT (Fixed & Type-Safe)
@@ -443,20 +506,21 @@ exports.updateAssignment = async (req, res) => {
     assignment.dueDate = dueDate;
     await assignment.save();
 
-    // 🔔 Create notification in background
-    setImmediate(async () => {
-      try {
-        await createAssignmentNotification({
-          title,
-          sender: req.user._id,
-          school: schoolId,
-          classId: assignment.class,
-          action: 'updated'
-        });
-      } catch (notifErr) {
-        console.error('⚠️ updateAssignment background notification failed:', notifErr);
-      }
+   // 🔔 Create notification in background
+setImmediate(async () => {
+  try {
+    await createAssignmentNotification({
+      title,
+      sender: req.user._id,
+      school: schoolId,
+      classId: assignment.class,
+      action: 'updated'
     });
+  } catch (notifErr) {
+    console.error('⚠️ updateAssignment background notification failed:', notifErr);
+  }
+});
+
 
     res.json({ message: 'Assignment updated', assignment });
   } catch (err) {
@@ -465,7 +529,7 @@ exports.updateAssignment = async (req, res) => {
 };
 
 // --------------------------------------------------------------------
-// ❌ Delete assignment 
+// ❌ Delete assignment  (with full push support)
 // --------------------------------------------------------------------
 exports.deleteAssignment = async (req, res) => {
   try {
@@ -473,16 +537,18 @@ exports.deleteAssignment = async (req, res) => {
     const schoolId = req.user.school;
     const userId = req.user.id;
 
+    // 1. Find assignment
     const assignment = await Assignment.findOne({ _id: id, school: schoolId });
     if (!assignment) {
       return res.status(404).json({ message: 'Assignment not found' });
     }
 
+    // 2. Permission check (teachers can only delete their own)
     if (req.user.role === 'teacher' && assignment.createdBy.toString() !== userId) {
       return res.status(403).json({ message: 'Unauthorized to delete this assignment' });
     }
 
-    // 🔔 Create notification in background before deletion
+    // 3. Notify students + parents BEFORE deletion
     setImmediate(async () => {
       try {
         await createAssignmentNotification({
@@ -492,17 +558,29 @@ exports.deleteAssignment = async (req, res) => {
           classId: assignment.class,
           action: 'deleted'
         });
+
+        // 🔥 NOTE:
+        // createAssignmentNotification() already handles:
+        // - MongoDB Notification
+        // - student/parent resolution
+        // - Push notifications
       } catch (notifErr) {
-        console.error('⚠️ deleteAssignment background notification failed:', notifErr);
+        console.error('⚠️ deleteAssignment push-notification failed:', notifErr);
       }
     });
 
-    // Delete assignment
+    // 4. Delete assignment
     await Assignment.deleteOne({ _id: id, school: schoolId });
 
-    res.json({ message: 'Assignment deleted' });
+    // 5. Response
+    return res.json({ message: 'Assignment deleted' });
+
   } catch (err) {
-    res.status(500).json({ message: 'Error deleting assignment', error: err.message });
+    console.error("💥 deleteAssignment error:", err);
+    return res.status(500).json({
+      message: 'Error deleting assignment',
+      error: err.message
+    });
   }
 };
 

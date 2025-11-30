@@ -8,6 +8,43 @@ const Class = require('../models/Class');
 const Notification = require('../models/Notification');
 const mongoose = require('mongoose');
 const { getAmountPerDay } = require('../utils/feedingFeeUtils');
+const PushToken = require("../models/PushToken");
+const { Expo } = require("expo-server-sdk");
+const expo = new Expo();
+
+
+// 🔔 Push notification helper
+async function sendPush(userIds, title, body, extraData = {}) {
+  if (!Array.isArray(userIds) || userIds.length === 0) return;
+
+  const tokens = await PushToken.find({
+    userId: { $in: userIds },
+    disabled: false,
+  }).lean();
+
+  const validTokens = tokens
+    .map(t => t.token)
+    .filter(token => Expo.isExpoPushToken(token));
+
+  if (!validTokens.length) return;
+
+  const messages = validTokens.map(token => ({
+    to: token,
+    title,
+    body,
+    sound: "default",
+    data: { type: "attendance", ...extraData }
+  }));
+
+  const chunks = expo.chunkPushNotifications(messages);
+  for (const chunk of chunks) {
+    try {
+      await expo.sendPushNotificationsAsync(chunk);
+    } catch (err) {
+      console.error("⚠️ Push send error:", err);
+    }
+  }
+}
 
 // 🎯 SIMPLE IN-MEMORY CACHE (No external dependencies)
 class SimpleCache {
@@ -161,8 +198,7 @@ const sendNotificationsInBackground = async (changedStudents, schoolId, classId,
       if (changedStudents.size === 0) return;
 
       const changed = Array.from(changedStudents);
-      
-      // 🎯 DATABASE OPTIMIZATIONS - Aggregation pipeline for student data
+
       const affectedStudents = await Student.aggregate([
         { 
           $match: { 
@@ -183,32 +219,30 @@ const sendNotificationsInBackground = async (changedStudents, schoolId, classId,
           $project: {
             _id: 1,
             'user.name': 1,
+            'user._id': 1,
             parent: 1,
             parentIds: 1
           }
         }
       ]);
 
-      const notificationBulkOps = [];
+      const bulkOps = [];
+      const pushTargets = [];
 
       for (const stu of affectedStudents) {
+
         const parentRecipients = new Set();
 
-        if (stu.parent) {
-          parentRecipients.add(String(stu.parent));
-        }
-
+        if (stu.parent) parentRecipients.add(String(stu.parent));
         if (Array.isArray(stu.parentIds)) {
-          stu.parentIds.forEach((p) => {
-            if (!p) return;
-            const id = p._id ? p._id : p;
-            parentRecipients.add(String(id));
-          });
+          stu.parentIds.forEach(p => parentRecipients.add(String(p._id || p)));
         }
 
-        // Parent notifications
+        // PARENT NOTIFICATION
         if (parentRecipients.size > 0) {
-          notificationBulkOps.push({
+          const userList = [...parentRecipients];
+
+          bulkOps.push({
             insertOne: {
               document: {
                 sender: userId,
@@ -218,7 +252,7 @@ const sendNotificationsInBackground = async (changedStudents, schoolId, classId,
                 type: "attendance",
                 audience: "parent",
                 recipientRoles: ["parent"],
-                recipientUsers: Array.from(parentRecipients),
+                recipientUsers: userList,
                 class: classId,
                 studentId: stu._id,
                 termId,
@@ -227,11 +261,16 @@ const sendNotificationsInBackground = async (changedStudents, schoolId, classId,
               }
             }
           });
+
+          // PUSH → Parents
+          pushTargets.push({ users: userList, name: stu.user?.name });
         }
 
-        // Student notifications
+        // STUDENT NOTIFICATION
         if (stu.user?._id) {
-          notificationBulkOps.push({
+          const sid = String(stu.user._id);
+
+          bulkOps.push({
             insertOne: {
               document: {
                 sender: userId,
@@ -241,7 +280,7 @@ const sendNotificationsInBackground = async (changedStudents, schoolId, classId,
                 type: "attendance",
                 audience: "student",
                 recipientRoles: ["student"],
-                recipientUsers: [String(stu.user._id)],
+                recipientUsers: [sid],
                 class: classId,
                 studentId: stu._id,
                 termId,
@@ -250,18 +289,35 @@ const sendNotificationsInBackground = async (changedStudents, schoolId, classId,
               }
             }
           });
+
+          // PUSH → Student
+          pushTargets.push({ users: [sid], name: stu.user?.name });
         }
       }
 
-      if (notificationBulkOps.length > 0) {
-        await Notification.bulkWrite(notificationBulkOps);
-        console.log(`🔔 Notifications sent for ${changed.length} students via bulk write`);
+      // BULK SAVE
+      if (bulkOps.length > 0) {
+        await Notification.bulkWrite(bulkOps);
       }
+
+      // SEND PUSH MESSAGES
+      for (const target of pushTargets) {
+        await sendPush(
+          target.users,
+          "Attendance Updated",
+          `Attendance updated for ${target.name}.`,
+          { weekNumber, classId, termId }
+        );
+      }
+
+      console.log(`🔔 Attendance notifications + push sent for ${changed.length} students`);
+
     } catch (error) {
       console.error('⚠️ Background notification error:', error);
     }
   });
 };
+
 
 // -------------------- Mark Attendance - OPTIMIZED --------------------
 const markAttendance = async (req, res) => {
@@ -730,23 +786,46 @@ const initializeWeek = async (req, res) => {
     // 🎯 CACHE INVALIDATION
     cache.del(CACHE_KEYS.STUDENTS_BY_CLASS(classId, schoolId));
 
-    // 🎯 BACKGROUND PROCESSING - Non-blocking notification
-    setImmediate(async () => {
-      try {
-        await Notification.create({
-          sender: req.user._id,
-          school: req.user.school,
-          title: "Attendance Week Initialized",
-          message: `Attendance week ${weekNumber} initialized for ${classDoc.name}`,
-          type: "attendance",
-          audience: "teacher",
-          class: classId,
-          recipientRoles: ["teacher"],
-        });
-      } catch (error) {
-        console.error('⚠️ Background notification error:', error);
-      }
+// 🎯 BACKGROUND PROCESSING - Non-blocking notification
+setImmediate(async () => {
+  try {
+    // Notify only teachers in that school
+    const teacherUsers = await Class.findById(classId)
+      .populate("teachers", "user")
+      .lean();
+
+    const teacherUserIds = [];
+
+    if (teacherUsers?.teachers) {
+      teacherUsers.teachers.forEach(t => {
+        if (t.user?._id) teacherUserIds.push(String(t.user._id));
+      });
+    }
+
+    await Notification.create({
+      sender: req.user._id,
+      school: req.user.school,
+      title: "Attendance Week Initialized",
+      message: `Attendance week ${weekNumber} initialized for ${classDoc.name}`,
+      type: "attendance",
+      audience: "teacher",
+      class: classId,
+      recipientRoles: ["teacher"],
+      recipientUsers: teacherUserIds
     });
+
+    // SEND PUSH
+    await sendPush(
+      teacherUserIds,
+      "Attendance Week Initialized",
+      `Week ${weekNumber} has been set up for ${classDoc.name}.`
+    );
+
+  } catch (error) {
+    console.error('⚠️ Background notification error:', error);
+  }
+});
+
 
     res.status(200).json({
       success: true,

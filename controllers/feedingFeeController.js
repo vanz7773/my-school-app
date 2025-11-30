@@ -7,6 +7,40 @@ const FeedingFeeRecord = require('../models/FeedingFeeRecord');
 const Term = require("../models/term");
 const Class = require('../models/Class');
 const Notification = require('../models/Notification');
+const PushToken = require("../models/PushToken");
+const { Expo } = require("expo-server-sdk");
+const expo = new Expo();
+
+
+// 🔔 Reusable Push Sender (same as announcements)
+async function sendPush(userIds, title, body, data = {}) {
+  if (!Array.isArray(userIds) || userIds.length === 0) return;
+
+  const tokens = await PushToken.find({
+    userId: { $in: userIds },
+    disabled: false,
+  }).lean();
+
+  const validTokens = tokens
+    .map(t => t.token)
+    .filter(token => Expo.isExpoPushToken(token));
+
+  if (validTokens.length === 0) return;
+
+  const messages = validTokens.map(token => ({
+    to: token,
+    sound: "default",
+    title,
+    body,
+    data
+  }));
+
+  const chunks = expo.chunkPushNotifications(messages);
+  for (const chunk of chunks) {
+    await expo.sendPushNotificationsAsync(chunk);
+  }
+}
+
 
 // --------------------------------------------------------------------
 // 🔍 Cache for frequently accessed data
@@ -90,7 +124,7 @@ async function getStudentWithCache(studentId, schoolId, userId = null) {
 }
 
 // --------------------------------------------------------------------
-// 🔧 Helper: Create feeding fee notification
+// 🔧 Create feeding fee notification + PUSH SUPPORT
 // --------------------------------------------------------------------
 async function createFeedingFeeNotification({
   title,
@@ -98,28 +132,55 @@ async function createFeedingFeeNotification({
   school,
   studentId,
   studentName,
-  action = 'updated'
+  action = "updated"
 }) {
   try {
     const actionMap = {
-      updated: 'Feeding Fee Updated',
-      paid: 'Feeding Fee Payment',
-      marked: 'Feeding Status Changed'
+      updated: "Feeding Fee Updated",
+      paid: "Feeding Fee Payment",
+      marked: "Feeding Status Changed"
     };
 
-    await Notification.create({
+    // 1️⃣ Create in-app notification
+    const notif = await Notification.create({
       title: `${actionMap[action]}: ${studentName}`,
       sender,
       school,
       message: `Feeding fee ${action} for ${studentName}`,
       type: "feedingfee",
       audience: "parent",
-      studentId: studentId,
-      recipientRoles: ["parent"],
+      studentId,
+      recipientRoles: ["parent"]
     });
-  } catch (notifErr) {
-    console.error(`⚠️ createFeedingFeeNotification: failed to create notification`, notifErr);
-    // Don't throw - notification failure shouldn't break the main operation
+
+    // 2️⃣ Find all parent user IDs
+    const student = await Student.findById(studentId)
+      .select("parent parentIds")
+      .lean();
+
+    let parentUsers = [];
+
+    if (student?.parent) parentUsers.push(String(student.parent));
+    if (Array.isArray(student?.parentIds)) {
+      parentUsers.push(...student.parentIds.map(p => String(p)));
+    }
+
+    parentUsers = [...new Set(parentUsers)];
+
+    // 3️⃣ SEND PUSH TO ALL PARENTS
+    if (parentUsers.length > 0) {
+      await sendPush(
+        parentUsers,
+        `${actionMap[action]}: ${studentName}`,
+        `Feeding fee ${action} for ${studentName}`,
+        { type: "feedingfee", studentId }
+      );
+    }
+
+    return notif;
+
+  } catch (err) {
+    console.error("⚠️ Feeding Fee Push Notification Error:", err);
   }
 }
 

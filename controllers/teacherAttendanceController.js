@@ -6,6 +6,44 @@ const Notification = require('../models/Notification');
 const geofenceValidator = require('../middlewares/geofenceValidator');
 const { startOfDay, endOfDay, eachWeekOfInterval, format, addDays } = require('date-fns');
 const DeviceBinding = require('../models/DeviceBinding');
+const PushToken = require("../models/PushToken");
+const { Expo } = require("expo-server-sdk");
+const expo = new Expo();
+
+
+// 🔔 Helper for sending push notifications
+async function sendPush(userIds, title, body, extra = {}) {
+  if (!Array.isArray(userIds) || userIds.length === 0) return;
+
+  const tokens = await PushToken.find({
+    userId: { $in: userIds },
+    disabled: false
+  }).lean();
+
+  const validTokens = tokens
+    .map(t => t.token)
+    .filter(token => Expo.isExpoPushToken(token));
+
+  if (!validTokens.length) return;
+
+  const messages = validTokens.map(token => ({
+    to: token,
+    sound: "default",
+    title,
+    body,
+    data: { type: "teacher-attendance", ...extra }
+  }));
+
+  const chunks = expo.chunkPushNotifications(messages);
+  for (const chunk of chunks) {
+    try {
+      await expo.sendPushNotificationsAsync(chunk);
+    } catch (e) {
+      console.error("Push chunk error:", e);
+    }
+  }
+}
+
 
 // ─────────────────────────────────────────────────────────────
 // WRAPPER: Apply Geofence Validation Middleware
@@ -247,15 +285,55 @@ const clockAttendance = async (req, res) => {
     const actionType = type === 'in' ? 'clocked in' : 'clocked out';
     const statusMessage = attendance.status === 'Late' ? ' (Late)' : '';
     
-    await Notification.create({
-      sender: req.user._id,
-      school: req.user.school,
-      title: `Teacher ${actionType.charAt(0).toUpperCase() + actionType.slice(1)}`,
-      message: `${teacherName} ${actionType}${statusMessage}`,
-      type: "attendance",
-      audience: "teacher",
-      recipientRoles: ["teacher", "admin"],
-    });
+    // 🔔 IN-APP NOTIFICATION (teachers + admins)
+await Notification.create({
+  sender: req.user._id,
+  school: req.user.school,
+  title: `Teacher ${actionType.charAt(0).toUpperCase() + actionType.slice(1)}`,
+  message: `${teacherName} ${actionType}${statusMessage}`,
+  type: "teacher-attendance",
+  audience: "teacher",
+  recipientRoles: ["teacher", "admin"],
+  recipientUsers: [] // optional — depends on your system
+});
+
+// 🔔 PUSH NOTIFICATION TARGETS
+// Admins who belong to same school
+const adminUsers = await Teacher.aggregate([
+  { $match: { role: "admin", school: teacher.school._id } },
+  {
+    $lookup: {
+      from: "users",
+      localField: "user",
+      foreignField: "_id",
+      as: "user"
+    }
+  },
+  { $unwind: "$user" },
+  { $project: { _id: 0, userId: "$user._id" } }
+]);
+
+const adminIds = adminUsers.map(a => String(a.userId));
+
+// Teacher also receives push
+const teacherUserId = teacher.user?._id ? String(teacher.user._id) : null;
+const pushRecipients = [
+  ...(teacherUserId ? [teacherUserId] : []),
+  ...adminIds
+];
+
+// 🔔 SEND PUSH
+await sendPush(
+  pushRecipients,
+  `Attendance ${type === "in" ? "Clock In" : "Clock Out"}`,
+  `${teacherName} ${actionType}${statusMessage}`,
+  {
+    teacherId: String(teacher._id),
+    action: type,
+    time: clockTime
+  }
+);
+
 
     // ✅ Extract distance info from geofence middleware
     const { geofenceStatus, geofenceData } = req;

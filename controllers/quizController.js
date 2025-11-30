@@ -8,7 +8,42 @@ const mongoose = require('mongoose');
 const Subject = require('../models/Subject');
 const Teacher = require('../models/Teacher');
 const Student = require('../models/Student');
+const PushToken = require("../models/PushToken");
+const { Expo } = require("expo-server-sdk");
+const expo = new Expo();
 
+
+// ---------------------------------------------------------
+// 🔔 REUSABLE PUSH SENDER (same as Announcements controller)
+// ---------------------------------------------------------
+async function sendPush(userIds, title, body, data = {}) {
+  if (!Array.isArray(userIds) || userIds.length === 0) return;
+
+  const tokens = await PushToken.find({
+    userId: { $in: userIds },
+    disabled: false,
+  }).lean();
+
+  const valid = tokens
+    .map(p => p.token)
+    .filter(t => Expo.isExpoPushToken(t));
+
+  if (valid.length === 0) return;
+
+  const messages = valid.map(token => ({
+    to: token,
+    sound: "default",
+    title,
+    body,
+    data
+  }));
+
+  const chunks = expo.chunkPushNotifications(messages);
+
+  for (const chunk of chunks) {
+    await expo.sendPushNotificationsAsync(chunk);
+  }
+}
 
 
 
@@ -434,7 +469,7 @@ const createQuiz = async (req, res) => {
 };
 
 // ---------------------------
-// 2. Publish/Unpublish QuizSession (Optimized)
+// 2. Publish/Unpublish QuizSession (Optimized + Push Added)
 // ---------------------------
 const publishQuiz = async (req, res) => {
   const session = await mongoose.startSession();
@@ -466,10 +501,13 @@ const publishQuiz = async (req, res) => {
     }
 
     quiz.isPublished = publish;
+
     if (publish) {
       quiz.publishedAt = new Date();
       
-      // 🎯 Background notification processing
+      // ===============================
+      // 📌 CREATE IN-APP NOTIFICATION
+      // ===============================
       processInBackground(async () => {
         try {
           await Notification.create({
@@ -486,6 +524,43 @@ const publishQuiz = async (req, res) => {
           console.error('Notification creation failed:', notifError);
         }
       });
+
+      // ===============================
+      // 🔔 SEND PUSH NOTIFICATIONS
+      // ===============================
+      processInBackground(async () => {
+        try {
+          // Get all students in the class
+          const students = await Student.find({
+            class: quiz.class,
+            school: req.user.school
+          }).select("user parent parentIds").lean();
+
+          let recipients = [];
+
+          students.forEach(s => {
+            if (s.user) recipients.push(String(s.user));          // student userId
+            if (s.parent) recipients.push(String(s.parent));      // parent (single)
+            if (Array.isArray(s.parentIds)) {
+              recipients.push(...s.parentIds.map(id => String(id))); // multiple parents
+            }
+          });
+
+          recipients = [...new Set(recipients)]; // remove duplicates
+
+          if (recipients.length > 0) {
+            await sendPush(
+              recipients,
+              "New Quiz Published",
+              `${quiz.title} is now available`,
+              { quizId: quiz._id, type: "quiz-published" }
+            );
+          }
+        } catch (err) {
+          console.error("⚠️ Quiz publish push failed:", err.message);
+        }
+      });
+
     } else {
       quiz.publishedAt = null;
     }
@@ -493,7 +568,9 @@ const publishQuiz = async (req, res) => {
     await quiz.save({ session });
     await session.commitTransaction();
 
-    // 🎯 Cache invalidation
+    // ===============================
+    // 🧹 CACHE INVALIDATION
+    // ===============================
     processInBackground(() => {
       cache.del(CACHE_KEYS.QUIZ_CLASS(quiz.class.toString(), 'teacher', req.user._id));
       cache.delPattern(CACHE_KEYS.QUIZ_CLASS(quiz.class.toString(), 'student', ''));
@@ -505,6 +582,7 @@ const publishQuiz = async (req, res) => {
       message: `Quiz ${publish ? 'published' : 'unpublished'} successfully`,
       quiz 
     });
+
   } catch (error) {
     await session.abortTransaction();
     console.error('Quiz publish/unpublish failed:', error);
@@ -513,6 +591,7 @@ const publishQuiz = async (req, res) => {
     session.endSession();
   }
 };
+
 
 // ---------------------------
 // 3. Get QuizSession with Caching (Fixed & Safe)
@@ -2500,7 +2579,7 @@ const saveQuizProgress = async (req, res) => {
 };
 
 // ---------------------------
-// PUT /api/quizzes/results/:resultId/grade-question - OPTIMIZED
+// PUT /api/quizzes/results/:resultId/grade-question - OPTIMIZED + PUSH ADDED
 // ---------------------------
 const gradeQuestion = async (req, res) => {
   const session = await mongoose.startSession();
@@ -2510,7 +2589,6 @@ const gradeQuestion = async (req, res) => {
     const { resultId } = req.params;
     const { questionId, earnedPoints, feedback } = req.body;
 
-    // Validate IDs
     if (!mongoose.Types.ObjectId.isValid(resultId)) {
       await session.abortTransaction();
       return res.status(400).json({ message: "Invalid result ID" });
@@ -2520,23 +2598,18 @@ const gradeQuestion = async (req, res) => {
       return res.status(400).json({ message: "Question ID is required" });
     }
 
-    // Validate score
     const numericPoints = Number(earnedPoints);
     if (isNaN(numericPoints) || numericPoints < 0) {
       await session.abortTransaction();
       return res.status(400).json({ message: "earnedPoints must be a valid non-negative number" });
     }
 
-    // Fetch result with transaction
     const quizResult = await QuizResult.findById(resultId)
       .populate({
         path: "studentId",
         populate: { path: "class user", select: "name email class" }
       })
-      .populate({
-        path: "quizId",
-        select: "title subjectName"
-      })
+      .populate({ path: "quizId", select: "title subjectName teacher" })
       .session(session);
 
     if (!quizResult) {
@@ -2544,12 +2617,9 @@ const gradeQuestion = async (req, res) => {
       return res.status(404).json({ message: "Result not found" });
     }
 
-    // Locate question
     const question =
       quizResult.answers.id(questionId) ||
-      quizResult.answers.find(
-        (q) => String(q.questionId) === String(questionId)
-      );
+      quizResult.answers.find((q) => String(q.questionId) === String(questionId));
 
     if (!question) {
       await session.abortTransaction();
@@ -2564,7 +2634,6 @@ const gradeQuestion = async (req, res) => {
     }
 
     const maxPoints = Math.max(0, question.points);
-
     if (numericPoints < 0 || numericPoints > maxPoints) {
       await session.abortTransaction();
       return res.status(400).json({
@@ -2572,12 +2641,11 @@ const gradeQuestion = async (req, res) => {
       });
     }
 
-    // Apply grading
+    // Grade update
     question.earnedPoints = numericPoints;
     question.feedback = typeof feedback === "string" ? feedback.trim() : "";
     question.manualReviewRequired = false;
 
-    // Auto correctness logic
     if (numericPoints === 0) question.isCorrect = false;
     else if (numericPoints === question.points) question.isCorrect = true;
     else question.isCorrect = null;
@@ -2588,7 +2656,6 @@ const gradeQuestion = async (req, res) => {
     question.markModified("isCorrect");
     question.markModified("points");
 
-    // Recalculate totals
     const totalEarned = quizResult.answers.reduce(
       (sum, q) => sum + (typeof q.earnedPoints === "number" ? q.earnedPoints : 0),
       0
@@ -2596,7 +2663,7 @@ const gradeQuestion = async (req, res) => {
 
     const totalPossible = quizResult.answers.reduce((sum, q) => {
       const type = (q.questionType || "").toLowerCase();
-      if (typeof q.points === "number" && !isNaN(q.points)) {
+      if (typeof q.points === "number") {
         return sum + Math.max(0, q.points);
       }
       return sum + (type === "essay" || type === "short-answer" ? 5 : 1);
@@ -2604,11 +2671,8 @@ const gradeQuestion = async (req, res) => {
 
     quizResult.totalPoints = totalPossible;
     quizResult.score = totalEarned;
-
     quizResult.percentage =
-      totalPossible > 0
-        ? parseFloat(((totalEarned / totalPossible) * 100).toFixed(2))
-        : 0;
+      totalPossible > 0 ? parseFloat(((totalEarned / totalPossible) * 100).toFixed(2)) : 0;
 
     quizResult.status = "graded";
     quizResult.autoGraded = false;
@@ -2625,19 +2689,19 @@ const gradeQuestion = async (req, res) => {
     });
 
     // --------------------------------------------------------------------
-    // 🔔 CREATE NOTIFICATION FOR STUDENT + PARENT (Background)
+    // 🔔 CREATE IN-APP NOTIFICATION + PUSH NOTIFICATION
     // --------------------------------------------------------------------
     processInBackground(async () => {
       try {
+        const quiz = quizResult.quizId;
         const student = quizResult.studentId?.user || null;
         const classObj = quizResult.studentId?.class || null;
-        const quiz = quizResult.quizId;
 
         const studentUserId = student?._id;
         const studentName = student?.name || "Your child";
         const quizTitle = quiz?.title || "Quiz";
 
-        // Find parents linked to this student
+        // Parents
         const parentUsers = await User.find({
           school: req.user.school,
           $or: [
@@ -2648,6 +2712,7 @@ const gradeQuestion = async (req, res) => {
 
         const parentIds = parentUsers.map(p => p._id);
 
+        // 1️⃣ In-app notification
         await Notification.create({
           title: `Quiz Updated: ${quizTitle}`,
           message: `A question was graded for ${quizTitle}.`,
@@ -2660,12 +2725,22 @@ const gradeQuestion = async (req, res) => {
           recipientUsers: [studentUserId, ...parentIds],
           recipientRoles: ["student", "parent"],
         });
+
+        // 2️⃣ PUSH Notification — EXACT logic as Announcements + PublishQuiz
+        const receivers = [studentUserId, ...parentIds].map(String);
+
+        await sendPush(
+          receivers,
+          "Quiz Graded",
+          `${quizTitle}: A question has been graded`,
+          { quizId: quiz._id, type: "quiz-graded" }
+        );
+
       } catch (notifErr) {
-        console.error("⚠️ Notification create failed:", notifErr.message);
+        console.error("⚠️ Notification/PUSH failed:", notifErr.message);
       }
     });
 
-    // Response
     return res.json({
       success: true,
       message: "Question graded successfully",
@@ -2691,6 +2766,7 @@ const gradeQuestion = async (req, res) => {
     session.endSession();
   }
 };
+
 
 
 // 🎯 ADD autoSubmitQuiz TO YOUR EXPORTS AT THE BOTTOM OF THE FILE

@@ -86,13 +86,12 @@ exports.register = async (req, res) => {
 // ------------------------------
 exports.login = async (req, res) => {
   try {
-    const { email, password, role: selectedRole } = req.body;
+    const { email, password, role: selectedRole, pushToken } = req.body;
     if (!email || !password)
       return sendError(res, 400, "Email and password are required");
 
     const normalizedEmail = String(email).toLowerCase().trim();
 
-    // Select password explicitly because user model has select: false
     const user = await User.findOne({ email: normalizedEmail })
       .select("+password")
       .populate("school", "name location")
@@ -100,16 +99,12 @@ exports.login = async (req, res) => {
 
     if (!user) return sendError(res, 401, "Invalid email or password");
 
-    // comparePassword is defined on schema methods; because we used .lean()
-    // we need to fetch a Mongoose doc for comparePassword, or do bcrypt compare directly.
-    // To avoid a second DB hit, fetch the non-lean doc only for password check.
     const userForCompare = await User.findById(user._id).select("+password");
     if (!userForCompare) return sendError(res, 401, "Invalid email or password");
 
     const isMatch = await userForCompare.comparePassword(password);
     if (!isMatch) return sendError(res, 401, "Invalid email or password");
 
-    // Only enforce role check if front-end supplied desired role
     if (selectedRole && user.role !== selectedRole) {
       return sendError(
         res,
@@ -118,9 +113,22 @@ exports.login = async (req, res) => {
       );
     }
 
+    // ------------------------------------------------------------
+    // 📱 SAVE EXPO PUSH TOKEN (NEW + REQUIRED)
+    // ------------------------------------------------------------
+    if (pushToken && typeof pushToken === "string") {
+      try {
+        const userDoc = await User.findById(user._id);
+        userDoc.pushToken = pushToken;
+        await userDoc.save();
+        console.log("✅ Expo Push Token saved:", pushToken);
+      } catch (tokenErr) {
+        console.error("⚠️ Failed to save push token:", tokenErr.message);
+      }
+    }
+
     const token = generateToken(user);
 
-    // Build response object - avoid sending password/hash
     const userResponse = {
       id: user._id,
       name: user.name,
@@ -135,7 +143,6 @@ exports.login = async (req, res) => {
         : null,
     };
 
-    // Load children only for parents
     if (user.role === "parent" && Array.isArray(user.childIds) && user.childIds.length) {
       const children = await Student.find({
         _id: { $in: user.childIds },
@@ -161,6 +168,7 @@ exports.login = async (req, res) => {
     return sendError(res, 500, "Login failed");
   }
 };
+
 
 // ------------------------------
 // ADMIN: Issue Reset Token

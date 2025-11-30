@@ -4,16 +4,41 @@ const Student = require('../models/Student');
 const User = require('../models/User');
 const mongoose = require('mongoose');
 const Teacher = require('../models/Teacher');
+const PushToken = require("../models/PushToken");
+const { Expo } = require("expo-server-sdk");
+const expo = new Expo();
 
-/**
- * Admin/Teacher: Create Announcement
- * - Only admin/teacher routes should reach here (router protects/restricts)
- * - Teachers MUST provide classId and must teach that class
- * - Admins can create school-level or class-specific announcements
- * - Teachers and Admins automatically create Notification documents:
- *    - Teacher -> Notification.recipientUsers = specific students & parents in that class
- *    - Admin   -> Notification.recipientRoles = ['student','parent'] (school-wide)
- */
+
+// 🔔 Reusable Push Sender
+async function sendPush(userIds, title, body) {
+  if (!Array.isArray(userIds) || userIds.length === 0) return;
+
+  const tokens = await PushToken.find({
+    userId: { $in: userIds },
+    disabled: false,
+  }).lean();
+
+  const validTokens = tokens
+    .map(t => t.token)
+    .filter(token => Expo.isExpoPushToken(token));
+
+  if (validTokens.length === 0) return;
+
+  const messages = validTokens.map(token => ({
+    to: token,
+    sound: "default",
+    title,
+    body,
+    data: { type: "announcement" }
+  }));
+
+  const chunks = expo.chunkPushNotifications(messages);
+  for (const chunk of chunks) {
+    await expo.sendPushNotificationsAsync(chunk);
+  }
+}
+
+
 exports.createAnnouncement = async (req, res) => {
   try {
     const { title, message, targetRoles, classId } = req.body;
@@ -24,9 +49,9 @@ exports.createAnnouncement = async (req, res) => {
       return res.status(400).json({ message: 'School info missing in user token.' });
     }
 
-    // ------------------------------------------------------
-    // 🔐 TEACHER VALIDATION (must teach the class)
-    // ------------------------------------------------------
+    // -----------------------------
+    // TEACHER VALIDATION
+    // -----------------------------
     if (creator.role === 'teacher') {
       if (!classId) {
         return res.status(400).json({ message: 'Teachers must specify a classId.' });
@@ -42,35 +67,28 @@ exports.createAnnouncement = async (req, res) => {
 
       const teacherClasses = [];
       if (teacherDoc.assignedClass) teacherClasses.push(String(teacherDoc.assignedClass));
-      if (Array.isArray(teacherDoc.assignedClasses)) {
-        teacherClasses.push(...teacherDoc.assignedClasses.map(c => String(c)));
-      }
+      if (Array.isArray(teacherDoc.assignedClasses)) teacherClasses.push(...teacherDoc.assignedClasses.map(String));
 
       if (!teacherClasses.includes(String(classId))) {
         return res.status(403).json({ message: 'You cannot create an announcement for this class.' });
       }
     }
 
-    // ------------------------------------------------------
-    // 🎯 TARGET ROLES RESOLUTION (FIXED)
-    // ------------------------------------------------------
+    // -----------------------------
+    // ROLE RESOLUTION
+    // -----------------------------
     let resolvedRoles = [];
-
     if (creator.role === "teacher") {
-      // Teachers should NOT use ["student", "parent"] as that causes ALL students & parents
-      // in the school to receive the announcement based on roleMatch
-      resolvedRoles = [];
-    } 
-    
-    else if (creator.role === "admin") {
+      resolvedRoles = []; 
+    } else if (creator.role === "admin") {
       resolvedRoles = classId
-        ? ["student", "parent"]           // class-based announcement
-        : ["student", "parent", "teacher"]; // school-wide
+        ? ["student", "parent"]
+        : ["student", "parent", "teacher"];
     }
 
-    // ------------------------------------------------------
-    // 📢 CREATE ANNOUNCEMENT
-    // ------------------------------------------------------
+    // -----------------------------
+    // CREATE ANNOUNCEMENT
+    // -----------------------------
     const newAnnouncement = new Announcement({
       title: title || (creator.role === 'teacher' ? 'Class Announcement' : 'Announcement'),
       message,
@@ -82,33 +100,28 @@ exports.createAnnouncement = async (req, res) => {
 
     await newAnnouncement.save();
 
-    // ------------------------------------------------------
-    // 🔔 TEACHER NOTIFICATION (STRICT CLASS ONLY - ENHANCED)
-    // ------------------------------------------------------
+    // -----------------------------
+    // NOTIFICATION CREATION
+    // -----------------------------
+    let recipientUsers = [];
+
     if (creator.role === 'teacher') {
-      // Get ONLY students from the specific class
       const students = await Student.find({
         class: classId,
         school: schoolId
       }).select("user parent parentIds").lean();
 
-      let recipients = [];
-
       students.forEach(s => {
-        if (s.user) recipients.push(new mongoose.Types.ObjectId(s.user));
-        if (s.parent) recipients.push(new mongoose.Types.ObjectId(s.parent));
+        if (s.user) recipientUsers.push(String(s.user));
+        if (s.parent) recipientUsers.push(String(s.parent));
         if (Array.isArray(s.parentIds)) {
-          recipients.push(...s.parentIds.map(id => new mongoose.Types.ObjectId(id)));
+          s.parentIds.forEach(pid => recipientUsers.push(String(pid)));
         }
       });
 
-      // Remove duplicates and ensure valid ObjectIds
-      recipients = [...new Set(recipients.map(id => id.toString()))]
-        .filter(id => mongoose.Types.ObjectId.isValid(id))
-        .map(id => new mongoose.Types.ObjectId(id));
+      recipientUsers = [...new Set(recipientUsers)];
 
-      // Create notification ONLY for these specific users
-      if (recipients.length > 0) {
+      if (recipientUsers.length > 0) {
         await Notification.create({
           title: "New Class Announcement",
           sender: creator._id,
@@ -117,17 +130,22 @@ exports.createAnnouncement = async (req, res) => {
           type: "announcement",
           audience: "class",
           class: classId,
-          recipientUsers: recipients,
-          recipientRoles: [],   // ⛔ prevents global broadcast
-          announcementId: newAnnouncement._id  // ✅ Link to announcement
+          recipientUsers,
+          recipientRoles: [],
+          announcementId: newAnnouncement._id
         });
       }
     }
 
-    // ------------------------------------------------------
-    // 🔔 ADMIN NOTIFICATION (CLASS OR SCHOOL-WIDE)
-    // ------------------------------------------------------
     if (creator.role === 'admin') {
+      // Admin broadcasts by roles
+      const users = await User.find({
+        school: schoolId,
+        role: { $in: resolvedRoles },
+      }).select("_id");
+
+      recipientUsers = users.map(u => String(u._id));
+
       await Notification.create({
         title: classId ? "New Class Announcement" : "New School Announcement",
         sender: creator._id,
@@ -141,9 +159,20 @@ exports.createAnnouncement = async (req, res) => {
       });
     }
 
-    // ------------------------------------------------------
+    // -----------------------------
+    // 🔔 PUSH NOTIFICATION
+    // -----------------------------
+    if (recipientUsers.length > 0) {
+      await sendPush(
+        recipientUsers,
+        "New Announcement",
+        title || "You have a new announcement"
+      );
+    }
+
+    // -----------------------------
     // RESPONSE
-    // ------------------------------------------------------
+    // -----------------------------
     return res.status(201).json({
       message: 'Announcement created successfully',
       announcement: newAnnouncement,
@@ -154,6 +183,7 @@ exports.createAnnouncement = async (req, res) => {
     res.status(500).json({ message: 'Error creating announcement', error: err.message });
   }
 };
+
 
 /**
  * Students/Parents:
@@ -584,55 +614,41 @@ exports.getAnnouncementById = async (req, res) => {
 exports.updateAnnouncement = async (req, res) => {
   try {
     const { id } = req.params;
-    const updates = req.body; // expect { title?, message?, targetRoles?, class? (admins only) }
+    const updates = req.body;
     const user = req.user;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ message: 'Invalid announcement id.' });
     }
 
-    // Ensure announcement belongs to the same school
     const announcement = await Announcement.findOne({ _id: id, school: user.school, isDeleted: { $ne: true } });
     if (!announcement) return res.status(404).json({ message: 'Announcement not found.' });
 
-    // Ownership checks: teacher may only update their own announcement
-    if (user.role === 'teacher') {
-      if (String(announcement.sentBy) !== String(user._id)) {
-        return res.status(403).json({ message: 'You are not allowed to edit this announcement.' });
-      }
-
-      // Teachers cannot reassign announcement to another class (disallow changing class)
-      if (updates.class && String(updates.class) !== String(announcement.class)) {
-        return res.status(403).json({ message: 'Teachers cannot change the class for an announcement.' });
-      }
+    if (user.role === 'teacher' && String(announcement.sentBy) !== String(user._id)) {
+      return res.status(403).json({ message: 'You are not allowed to edit this announcement.' });
     }
 
-    // Admins can change anything. Teachers can change title, message, targetRoles (already constrained above).
-    const allowedForAll = ['title', 'message', 'targetRoles'];
-    const allowedForAdminOnly = ['class', 'sentBy']; // sentBy typically shouldn't be changed; just listed for clarity
+    if (updates.class && user.role !== 'admin') {
+      return res.status(403).json({ message: 'Teachers cannot change the class.' });
+    }
 
-    // Apply updates safely
-    for (const key of Object.keys(updates)) {
+    const allowedForAll = ['title', 'message', 'targetRoles'];
+    const allowedForAdminOnly = ['class'];
+
+    Object.keys(updates).forEach(key => {
       if (allowedForAll.includes(key) || (user.role === 'admin' && allowedForAdminOnly.includes(key))) {
         announcement[key] = updates[key];
-      } else if (key === 'class' && user.role !== 'admin') {
-        // already blocked above, but safe-guard
-        continue;
-      } else {
-        // ignore unknown/forbidden keys
-        continue;
       }
-    }
+    });
 
     announcement.updatedAt = new Date();
-
     await announcement.save();
 
-    // 🔔 CREATE NOTIFICATION FOR ANNOUNCEMENT UPDATE
-    await Notification.create({
+    // CREATE NOTIFICATION
+    const notif = await Notification.create({
       title: "Announcement Updated",
-      sender: req.user._id,
-      school: req.user.school,
+      sender: user._id,
+      school: user.school,
       message: `Announcement updated: ${announcement.title}`,
       type: "announcement",
       audience: announcement.class ? "class" : "all",
@@ -640,6 +656,39 @@ exports.updateAnnouncement = async (req, res) => {
       recipientRoles: announcement.class ? ["student", "parent"] : ["student", "parent", "teacher"],
       announcementId: announcement._id
     });
+
+    // GET RECIPIENT USERS (from announcement)
+    let recipientUsers = [];
+
+    if (announcement.class) {
+      const students = await Student.find({
+        class: announcement.class,
+        school: user.school
+      }).select("user parent parentIds");
+
+      students.forEach(s => {
+        if (s.user) recipientUsers.push(String(s.user));
+        if (s.parent) recipientUsers.push(String(s.parent));
+        if (Array.isArray(s.parentIds))
+          s.parentIds.forEach(pid => recipientUsers.push(String(pid)));
+      });
+    } else {
+      const users = await User.find({
+        school: user.school,
+        role: { $in: ["student", "parent", "teacher"] }
+      }).select("_id");
+
+      recipientUsers = users.map(u => String(u._id));
+    }
+
+    recipientUsers = [...new Set(recipientUsers)];
+
+    // 🔔 PUSH
+    await sendPush(
+      recipientUsers,
+      "Announcement Updated",
+      `Updated: ${announcement.title}`
+    );
 
     const populated = await Announcement.findById(announcement._id)
       .populate('sentBy', 'name role')
@@ -652,6 +701,7 @@ exports.updateAnnouncement = async (req, res) => {
     res.status(500).json({ message: 'Error updating announcement', error: err.message });
   }
 };
+
 
 /**
  * Soft-delete an announcement (admin or owning teacher)
@@ -668,23 +718,20 @@ exports.softDeleteAnnouncement = async (req, res) => {
     const announcement = await Announcement.findOne({ _id: id, school: user.school, isDeleted: { $ne: true } });
     if (!announcement) return res.status(404).json({ message: 'Announcement not found.' });
 
-    // Ownership checks: teacher may only delete their own announcement
     if (user.role === 'teacher' && String(announcement.sentBy) !== String(user._id)) {
       return res.status(403).json({ message: 'You are not allowed to delete this announcement.' });
     }
 
-    // Soft-delete flags
     announcement.isDeleted = true;
     announcement.deletedAt = new Date();
     announcement.deletedBy = user._id;
-
     await announcement.save();
 
-    // 🔔 CREATE NOTIFICATION FOR ANNOUNCEMENT DELETION (Optional)
+    // NOTIFICATION
     await Notification.create({
       title: "Announcement Deleted",
-      sender: req.user._id,
-      school: req.user.school,
+      sender: user._id,
+      school: user.school,
       message: `Announcement deleted: ${announcement.title}`,
       type: "announcement",
       audience: announcement.class ? "class" : "all",
@@ -693,9 +740,44 @@ exports.softDeleteAnnouncement = async (req, res) => {
       announcementId: announcement._id
     });
 
-    res.json({ message: 'Announcement soft-deleted', announcementId: announcement._id });
+    // FIND RECIPIENTS FOR PUSH
+    let recipientUsers = [];
+
+    if (announcement.class) {
+      const students = await Student.find({
+        class: announcement.class,
+        school: user.school
+      }).select("user parent parentIds");
+
+      students.forEach(s => {
+        if (s.user) recipientUsers.push(String(s.user));
+        if (s.parent) recipientUsers.push(String(s.parent));
+        if (Array.isArray(s.parentIds)) {
+          s.parentIds.forEach(pid => recipientUsers.push(String(pid)));
+        }
+      });
+    } 
+    else {
+      const users = await User.find({
+        school: user.school,
+        role: { $in: ["student", "parent", "teacher"] }
+      }).select("_id");
+
+      recipientUsers = users.map(u => String(u._id));
+    }
+
+    recipientUsers = [...new Set(recipientUsers)];
+
+    // 🔔 PUSH
+    await sendPush(
+      recipientUsers,
+      "Announcement Deleted",
+      announcement.title
+    );
+
+    res.json({ message: "Announcement soft-deleted", announcementId: announcement._id });
   } catch (err) {
-    console.error('Error soft-deleting announcement:', err);
-    res.status(500).json({ message: 'Error deleting announcement', error: err.message });
+    console.error("Error soft-deleting announcement:", err);
+    res.status(500).json({ message: "Error deleting announcement", error: err.message });
   }
 };

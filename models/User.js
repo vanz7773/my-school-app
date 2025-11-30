@@ -1,4 +1,3 @@
-// models/User.js
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 
@@ -55,6 +54,15 @@ const userSchema = new mongoose.Schema(
     profilePicture: {
       type: String,
       default: null,
+    },
+
+    /* -----------------------------------------------------
+       🔔 Expo Push Notification Token (NEW FIELD)
+    ----------------------------------------------------- */
+    pushToken: {
+      type: String,
+      default: null,
+      index: true, // 🔥 fast lookup when sending push notifications
     },
 
     // Parent → children relationship
