@@ -29,17 +29,38 @@ const expo = new Expo();
 // ------------------------------
 router.post("/register-token", protect, async (req, res) => {
   try {
-    const userId = req.user._id; // user comes from protect middleware
+    const userId = req.user._id;
+    const school = req.user.school;
     const { token, deviceInfo } = req.body;
 
+    console.log("📨 Incoming push token registration:", {
+      token,
+      userId,
+      school,
+      deviceInfo
+    });
+
     if (!token) {
-      return res.status(400).json({ success: false, message: "Token is required" });
+      return res.status(400).json({
+        success: false,
+        message: "Token is required",
+      });
+    }
+
+    // Validate Expo token format
+    if (!Expo.isExpoPushToken(token)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid Expo push token",
+      });
     }
 
     const record = await PushToken.findOneAndUpdate(
-      { token },
+      { userId, token },            // FIXED QUERY
       {
         userId,
+        school,                     // ← CRITICAL FIX
+        token,
         deviceInfo,
         disabled: false,
         lastSeen: new Date(),
@@ -51,16 +72,24 @@ router.post("/register-token", protect, async (req, res) => {
       }
     );
 
+    console.log("✅ Push token saved:", record);
+
     res.json({
       success: true,
       message: "Push token registered",
       token: record.token,
     });
+
   } catch (error) {
-    console.error("Push token error:", error);
-    res.status(500).json({ success: false, message: "Server error" });
+    console.error("❌ Push token error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: error.message || "Server error",
+    });
   }
 });
+
 
 
 
