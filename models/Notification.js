@@ -8,6 +8,7 @@ const VALID_TYPES = [
   'reset-approved',
   'reset-rejected',
   'attendance',
+  'teacher-attendance',   // ✅ ADDED
   'assignment',
   'fee',
   'agenda',
@@ -41,14 +42,14 @@ const notificationSchema = new mongoose.Schema(
       type: String,
       enum: VALID_TYPES,
       default: 'general',
-      index: true, // ⚡ index speeds up filtering
+      index: true,
     },
 
     audience: {
       type: String,
       enum: VALID_AUDIENCES,
       default: 'all',
-      index: true, // ⚡ often queried
+      index: true,
     },
 
     // ------------------------------------------------------
@@ -62,7 +63,7 @@ const notificationSchema = new mongoose.Schema(
     },
 
     // ------------------------------------------------------
-    // DIRECT USER TARGETS (student/parent/teacher/admin)
+    // DIRECT USER TARGETS
     // ------------------------------------------------------
     recipientUsers: [
       {
@@ -89,7 +90,6 @@ const notificationSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       index: true,
-      required: false,
     },
 
     // ------------------------------------------------------
@@ -99,11 +99,11 @@ const notificationSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'School',
       required: true,
-      index: true, // ⚡ all queries start with school
+      index: true,
     },
 
     // ------------------------------------------------------
-    // OPTIONAL RESOURCE LINKING (reset requests / assignment / agenda)
+    // OPTIONAL RESOURCE LINKING
     // ------------------------------------------------------
     relatedResource: {
       type: mongoose.Schema.Types.ObjectId,
@@ -130,7 +130,7 @@ const notificationSchema = new mongoose.Schema(
       {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
-        index: true, // ⚡ mark-all-read & isRead faster
+        index: true,
       },
     ],
   },
@@ -139,26 +139,17 @@ const notificationSchema = new mongoose.Schema(
 
 /* ------------------------------------------------------
    HIGH-PERFORMANCE INDEXES
-   MongoDB will optimize multi-field queries massively.
 ------------------------------------------------------ */
-
-// 🔥 Fastest query path for "notifications for a user inside a school"
 notificationSchema.index({ school: 1, recipientUsers: 1 });
 notificationSchema.index({ school: 1, audience: 1 });
 notificationSchema.index({ school: 1, recipientRoles: 1 });
 notificationSchema.index({ school: 1, type: 1 });
-
-// 🔥 Speed up "class notifications"
 notificationSchema.index({ school: 1, class: 1 });
-
-// 🔥 Speed up "readBy" + school operations
 notificationSchema.index({ school: 1, readBy: 1 });
-
-// 🔥 Reduce full-collection scans on sort
 notificationSchema.index({ school: 1, createdAt: -1 });
 
 /* ------------------------------------------------------
-   EXPORT MODEL SAFELY (avoids overwrite in dev)
+   EXPORT MODEL SAFELY
 ------------------------------------------------------ */
 module.exports =
   mongoose.models.Notification ||
