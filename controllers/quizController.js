@@ -1725,10 +1725,6 @@ const submitQuiz = async (req, res) => {
 };
 
 
-
-
-
-
 // ---------------------------
 // 15. Get Results for Student/Parent (Optimized)
 // ---------------------------

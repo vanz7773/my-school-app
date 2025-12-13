@@ -70,7 +70,7 @@ const geofenceValidator = async (req, res, next) => {
         id: school._id.toString(),
         name: school.name,
         location: school.location,
-        radius: school.geofenceRadius || 80,
+        radius: school.geofenceRadius || 30,
       };
 
       polygonCache.set(schoolId, schoolData);
@@ -121,7 +121,7 @@ const geofenceValidator = async (req, res, next) => {
       return res.status(403).json({
         status: 'fail',
         message: `You must be within the school compound to clock in or out. 
-                  You're approximately ${Math.round(distanceFromCenter)} meters away.`,
+        You're approximately ${Math.round(distanceFromCenter)} meters away.`,
       });
     }
 
