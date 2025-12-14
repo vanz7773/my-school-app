@@ -70,7 +70,7 @@ const geofenceValidator = async (req, res, next) => {
         id: school._id.toString(),
         name: school.name,
         location: school.location,
-        radius: school.geofenceRadius || 30,
+        radius: school.geofenceRadius || 80,
       };
 
       polygonCache.set(schoolId, schoolData);
