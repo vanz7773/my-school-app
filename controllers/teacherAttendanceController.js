@@ -95,14 +95,14 @@ const calculateTermWeeks = (startDate, endDate) => {
 
 // ─────────────────────────────────────────────────────────────
 // Helper: Mark absentees for today (Option A – controller-only)
-// SAFE + IDEMPOTENT
+// OPTIMIZED + IDEMPOTENT + SCALABLE
 // ─────────────────────────────────────────────────────────────
 const markAbsenteesForTodayIfNeeded = async () => {
   const now = new Date();
 
-  // 🕔 School closing time (ADJUST HERE)
-  const SCHOOL_END_HOUR = 15;    // 3 PM
-  const SCHOOL_END_MINUTE = 30; // 3:30 PM
+  // 🕔 School closing time
+  const SCHOOL_END_HOUR = 15;
+  const SCHOOL_END_MINUTE = 30;
 
   const cutoff = new Date(now);
   cutoff.setHours(SCHOOL_END_HOUR, SCHOOL_END_MINUTE, 0, 0);
@@ -113,49 +113,63 @@ const markAbsenteesForTodayIfNeeded = async () => {
   const todayStart = startOfDay(now);
 
   // ⛔ Skip weekends
-  const day = todayStart.getDay(); // 0 = Sunday, 6 = Saturday
+  const day = todayStart.getDay();
   if (day === 0 || day === 6) return;
 
   console.log("🕔 Auto-marking absentees for today");
 
-  // Get active terms today
-  const activeTerms = await Term.find({
-    startDate: { $lte: todayStart },
-    endDate: { $gte: todayStart }
-  });
+  // 1️⃣ Get all active terms
+  const activeTerms = await Term.find(
+    {
+      startDate: { $lte: todayStart },
+      endDate: { $gte: todayStart }
+    },
+    { _id: 1, school: 1 }
+  ).lean();
+
+  if (activeTerms.length === 0) return;
+
+  // 2️⃣ Build bulk operations
+  const bulkOps = [];
 
   for (const term of activeTerms) {
-    const teachers = await Teacher.find({ school: term.school });
+    // Fetch only teacher IDs (lean + projection)
+    const teachers = await Teacher.find(
+      { school: term.school },
+      { _id: 1, school: 1 }
+    ).lean();
 
     for (const teacher of teachers) {
-      await Attendance.findOneAndUpdate(
-        {
-          teacher: teacher._id,
-          date: todayStart
-        },
-        {
-          $setOnInsert: {
+      bulkOps.push({
+        updateOne: {
+          filter: {
             teacher: teacher._id,
-            school: teacher.school,
-            term: term._id,
-            date: todayStart,
-            signInTime: null,
-            signOutTime: null,
-            status: "Absent"
-          }
-        },
-        {
+            date: todayStart
+          },
+          update: {
+            $setOnInsert: {
+              teacher: teacher._id,
+              school: teacher.school,
+              term: term._id,
+              date: todayStart,
+              signInTime: null,
+              signOutTime: null,
+              status: "Absent"
+            }
+          },
           upsert: true
         }
-      );
+      });
     }
   }
 
-  console.log("✅ Absentees marked successfully");
+  // 3️⃣ Execute once
+  if (bulkOps.length > 0) {
+    await Attendance.bulkWrite(bulkOps, { ordered: false });
+  }
+
+  console.log(`✅ Absentees processed: ${bulkOps.length}`);
 };
-
-
-
 
 // ─────────────────────────────────────────────────────────────
 // CLOCK IN / OUT (PRODUCTION CLEAN VERSION)
