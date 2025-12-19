@@ -95,6 +95,7 @@ const calculateTermWeeks = (startDate, endDate) => {
 
 // ─────────────────────────────────────────────────────────────
 // Helper: Mark absentees for today (Option A – controller-only)
+// SAFE + IDEMPOTENT
 // ─────────────────────────────────────────────────────────────
 const markAbsenteesForTodayIfNeeded = async () => {
   const now = new Date();
@@ -110,19 +111,10 @@ const markAbsenteesForTodayIfNeeded = async () => {
   if (now < cutoff) return;
 
   const todayStart = startOfDay(now);
-  const todayEnd = endOfDay(now);
 
   // ⛔ Skip weekends
   const day = todayStart.getDay(); // 0 = Sunday, 6 = Saturday
   if (day === 0 || day === 6) return;
-
-  // 🔐 Prevent running multiple times in one day
-  const alreadyMarked = await Attendance.findOne({
-    date: { $gte: todayStart, $lte: todayEnd },
-    status: "Absent"
-  });
-
-  if (alreadyMarked) return;
 
   console.log("🕔 Auto-marking absentees for today");
 
@@ -136,27 +128,32 @@ const markAbsenteesForTodayIfNeeded = async () => {
     const teachers = await Teacher.find({ school: term.school });
 
     for (const teacher of teachers) {
-      const existing = await Attendance.findOne({
-        teacher: teacher._id,
-        date: { $gte: todayStart, $lte: todayEnd }
-      });
-
-      if (!existing) {
-        await Attendance.create({
+      await Attendance.findOneAndUpdate(
+        {
           teacher: teacher._id,
-          school: teacher.school,
-          term: term._id,
-          date: todayStart,
-          signInTime: null,
-          signOutTime: null,
-          status: "Absent"
-        });
-      }
+          date: todayStart
+        },
+        {
+          $setOnInsert: {
+            teacher: teacher._id,
+            school: teacher.school,
+            term: term._id,
+            date: todayStart,
+            signInTime: null,
+            signOutTime: null,
+            status: "Absent"
+          }
+        },
+        {
+          upsert: true
+        }
+      );
     }
   }
 
   console.log("✅ Absentees marked successfully");
 };
+
 
 
 
