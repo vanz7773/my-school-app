@@ -23,12 +23,18 @@ const teacherAttendanceSchema = new mongoose.Schema({
     type: Date, 
     required: true 
   },
-  signInTime: { type: Date },
-  signOutTime: { type: Date },
+  signInTime: { 
+    type: Date, 
+    default: null 
+  },
+  signOutTime: { 
+    type: Date, 
+    default: null 
+  },
   status: {
     type: String,
-    enum: ['On Time', 'Late'],
-    default: 'On Time'
+    enum: ['On Time', 'Late', 'Absent'], // ✅ UPDATED
+    default: 'Absent'                    // ✅ SAFE DEFAULT
   },
   location: {
     type: {
@@ -49,7 +55,9 @@ const teacherAttendanceSchema = new mongoose.Schema({
 // ─────────────────────────────────────────────────────────────
 teacherAttendanceSchema.index({ teacher: 1, date: 1 }, { unique: true });
 
-// Optional: Normalize date before saving to avoid duplicates
+// ─────────────────────────────────────────────────────────────
+// Normalize date before saving (critical for auto-absence)
+// ─────────────────────────────────────────────────────────────
 teacherAttendanceSchema.pre('save', function(next) {
   if (this.date) {
     const d = new Date(this.date);
