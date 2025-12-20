@@ -180,8 +180,12 @@ exports.downloadClassTemplate = async (req, res) => {
     if (!school.sbaMaster?.[classLevelKey]) {
       console.log("📄 School master missing, cloning global template");
       const globalTemplate = await SbaTemplate.findOne({ key: classLevelKey }).lean();
-      if (!globalTemplate)
-        return res.status(500).json({ message: "Global SBA template not found" });
+      if (!globalTemplate) {
+  return res.status(404).json({
+    message: "SBA template has not been uploaded yet. Please contact the administrator."
+  });
+}
+
 
       let buffer;
       if (globalTemplate.path) {
