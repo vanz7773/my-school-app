@@ -19,6 +19,8 @@ const axios = require("axios");
 const PushToken = require("../models/PushToken");
 const { Expo } = require("expo-server-sdk");
 const expo = new Expo();
+const StudentAttendance = require("../models/StudentAttendance");
+
 
 async function sendPush(userIds, title, body) {
   if (!Array.isArray(userIds) || userIds.length === 0) return;
