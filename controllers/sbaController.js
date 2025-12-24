@@ -162,37 +162,53 @@ exports.downloadClassTemplate = async (req, res) => {
     if (!school) return res.status(404).json({ message: "School not found" });
 
     // Term / Academic Year info
-    let classTeacherName = "N/A";
-    if (classDocFinal.classTeacher) {
-      const ct = await User.findById(classDocFinal.classTeacher).lean();
-      classTeacherName = ct?.name || "N/A";
-    }
+let classTeacherName = "N/A";
+if (classDocFinal.classTeacher) {
+  const ct = await User.findById(classDocFinal.classTeacher).lean();
+  classTeacherName = ct?.name || "N/A";
+}
 
-    let termName = "N/A",
-      academicYear = "N/A";
-    try {
-      let termDoc = null;
-      if (classDocFinal.termId)
-        termDoc = await Term.findById(classDocFinal.termId).lean();
-      if (!termDoc) {
-        const today = new Date();
-        termDoc = await Term.findOne({
-          school: classDocFinal.school,
-          startDate: { $lte: today },
-          endDate: { $gte: today },
-        }).lean();
-      }
-      if (!termDoc)
-        termDoc = await Term.findOne({ school: classDocFinal.school })
-          .sort({ startDate: -1 })
-          .lean();
-      if (termDoc) {
-        termName = termDoc.term || "N/A";
-        academicYear = termDoc.academicYear || "N/A";
-      }
-    } catch (e) {
-      console.error(e);
-    }
+let termName = "N/A",
+  academicYear = "N/A";
+
+let resolvedTermId = null; // ✅ IMPORTANT: expose resolved termId
+
+try {
+  let termDoc = null;
+
+  // 1️⃣ Use class term if available
+  if (classDocFinal.termId) {
+    termDoc = await Term.findById(classDocFinal.termId).lean();
+  }
+
+  // 2️⃣ Fallback to active term by date
+  if (!termDoc) {
+    const today = new Date();
+    termDoc = await Term.findOne({
+      school: classDocFinal.school,
+      startDate: { $lte: today },
+      endDate: { $gte: today },
+    }).lean();
+  }
+
+  // 3️⃣ Final fallback: most recent term
+  if (!termDoc) {
+    termDoc = await Term.findOne({ school: classDocFinal.school })
+      .sort({ startDate: -1 })
+      .lean();
+  }
+
+  // ✅ Apply resolved term
+  if (termDoc) {
+    termName = termDoc.term || "N/A";
+    academicYear = termDoc.academicYear || "N/A";
+    resolvedTermId = termDoc._id; // ✅ THIS FIXES ATTENDANCE
+  }
+
+} catch (e) {
+  console.error("❌ Error resolving term:", e);
+}
+
 
     const bucket = admin.storage().bucket();
     const classLevelKey = getClassLevelKey(classDocFinal.name);
@@ -325,7 +341,7 @@ console.log("🔍 === END TEMPLATE ANALYSIS ===");
 // ===============================
 // 📊 Inject Attendance per Student (CORRECTED POSITION)
 // ===============================
-if (classDocFinal.termId) {
+if (resolvedTermId) {
   const reportSheet = xpWorkbook.sheet("REPORT");
   
   if (!reportSheet) {
@@ -336,18 +352,15 @@ if (classDocFinal.termId) {
     // Based on template analysis: "ATTENDANCE:" is at B30
     // Let's find where to write the actual attendance values
     
-    // Method 1: Look for the pattern - attendance might be in column D (based on your original code)
-    // Let's examine cells around B30 to understand the structure
     console.log("🔍 Examining cells around B30:");
-    for (let col = 1; col <= 6; col++) { // Check columns A-F
-      const colLetter = String.fromCharCode(64 + col); // A=1, B=2, etc.
+    for (let col = 1; col <= 6; col++) {
+      const colLetter = String.fromCharCode(64 + col); // A, B, C...
       const cellAddr = `${colLetter}30`;
       const cellValue = reportSheet.cell(cellAddr).value();
       console.log(`   ${cellAddr}: "${cellValue}"`);
     }
     
-    // Check if there's a pattern for multiple students
-    // Let's look at rows 30, 70, 110, etc. (40 row intervals as in your original code)
+    // Check row pattern (40-row intervals)
     console.log("🔍 Checking attendance row pattern:");
     const attendanceRows = [30, 70, 110, 150, 190, 230, 270, 310, 350, 390];
     
@@ -355,78 +368,65 @@ if (classDocFinal.termId) {
       const headerCell = reportSheet.cell(`B${row}`).value();
       if (headerCell && headerCell.toString().includes("ATTENDANCE")) {
         console.log(`   Found "ATTENDANCE" at B${row}`);
-        
-        // Check which column might be for the attendance value
-        // Usually it's column D (4th column) based on Excel templates
-        const potentialValueCell = reportSheet.cell(`D${row}`);
-        console.log(`   Cell D${row} current value: "${potentialValueCell.value()}"`);
+        console.log(`   Cell D${row} current value: "${reportSheet.cell(`D${row}`).value()}"`);
       }
     }
     
-    // Now write attendance data
     console.log(`📊 Writing attendance for ${students.length} students`);
     
-    // Based on the pattern, it seems each student has attendance at D30, D70, D110, etc.
-    // This matches your original assumption of 40 row intervals starting at row 30
     const firstAttendanceRow = 30;
     const rowInterval = 40;
-    const attendanceColumn = "D"; // This seems to be the correct column
+    const attendanceColumn = "D";
     
     for (let i = 0; i < students.length; i++) {
       const student = students[i];
       
-      // Get attendance
       const totalAttendance = await getStudentTermAttendance(
         student._id,
-        classDocFinal.termId,
+        resolvedTermId,              // ✅ FIXED
         classDocFinal.school
       );
       
       const targetRow = firstAttendanceRow + (i * rowInterval);
       const targetCell = `${attendanceColumn}${targetRow}`;
       
-      console.log(`📝 Student ${i+1}: ${student.user?.name || student._id}`);
+      console.log(`📝 Student ${i + 1}: ${student.user?.name || student._id}`);
       console.log(`   Writing to ${targetCell}: ${totalAttendance} days`);
       
-      // Write the attendance
       reportSheet.cell(targetCell).value(totalAttendance);
-      
-      // Set number format
       reportSheet.cell(targetCell).style("numberFormat", "0");
       
-      // Also, let's check if we should write the student name in a nearby cell for verification
-      // Usually student names might be in column C or E
       const nameCellC = reportSheet.cell(`C${targetRow}`).value();
       const nameCellE = reportSheet.cell(`E${targetRow}`).value();
-      console.log(`   Nearby cells: C${targetRow} = "${nameCellC}", E${targetRow} = "${nameCellE}"`);
+      console.log(`   Nearby cells: C${targetRow}="${nameCellC}", E${targetRow}="${nameCellE}"`);
     }
     
-    // Also check if there's a TOTAL ATTENDANCE cell somewhere
+    // TOTAL ATTENDANCE (optional summary)
     console.log("🔍 Looking for TOTAL ATTENDANCE summary cell...");
     for (let r = 1; r <= 50; r++) {
       for (let c = 1; c <= 10; c++) {
         const colLetter = String.fromCharCode(64 + c);
         const cell = reportSheet.cell(`${colLetter}${r}`);
         const value = cell.value();
+        
         if (value && value.toString().toLowerCase().includes("total attendance")) {
           console.log(`✅ Found TOTAL ATTENDANCE at ${colLetter}${r}: "${value}"`);
           
-          // Calculate and write total attendance for all students
           let totalAllAttendance = 0;
           for (let i = 0; i < students.length; i++) {
-            const student = students[i];
-            const studentAttendance = await getStudentTermAttendance(
-              student._id,
-              classDocFinal.termId,
+            totalAllAttendance += await getStudentTermAttendance(
+              students[i]._id,
+              resolvedTermId,          // ✅ FIXED
               classDocFinal.school
             );
-            totalAllAttendance += studentAttendance;
           }
           
-          // Write to the cell to the right of the label
-          const totalCell = reportSheet.cell(`${String.fromCharCode(64 + c + 1)}${r}`);
+          const totalCell = reportSheet.cell(
+            `${String.fromCharCode(64 + c + 1)}${r}`
+          );
           totalCell.value(totalAllAttendance);
           totalCell.style("numberFormat", "0");
+          
           console.log(`   Written total attendance: ${totalAllAttendance}`);
         }
       }
@@ -435,8 +435,9 @@ if (classDocFinal.termId) {
     console.log("✅ Attendance writing completed!");
   }
 } else {
-  console.log("⚠️ No termId found, skipping attendance injection");
+  console.log("⚠️ No resolvedTermId found, skipping attendance injection");
 }
+
 
 
     // 🧹 Remove unused sheets if not class teacher
