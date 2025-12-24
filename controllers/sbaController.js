@@ -294,8 +294,9 @@ if (classDocFinal.termId) {
     xpWorkbook.sheet("HOME");
 
   if (reportSheet) {
-    const attendanceStartRow = 14; // first student row
-    const attendanceColumn = "H";  // BETWEEN "ATTENDANCE:" and "OUT OF"
+    const firstStudentRow = 30; // D30
+    const rowInterval = 40;     // D30 → D70 → D110 ...
+    const attendanceColumn = "D";
 
     for (let i = 0; i < students.length; i++) {
       const student = students[i];
@@ -306,12 +307,18 @@ if (classDocFinal.termId) {
         classDocFinal.school
       );
 
-      reportSheet
-        .cell(`${attendanceColumn}${attendanceStartRow + i}`)
-        .value(totalAttendance);
+      const targetRow = firstStudentRow + (i * rowInterval);
+      const targetCell = `${attendanceColumn}${targetRow}`;
+
+      reportSheet.cell(targetCell).value(totalAttendance);
+
+      console.log(
+        `📘 Attendance set at ${targetCell} → ${student.user?.name}: ${totalAttendance}`
+      );
     }
   }
 }
+
 
 
     // 🧹 Remove unused sheets if not class teacher
