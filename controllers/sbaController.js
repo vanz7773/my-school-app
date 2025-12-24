@@ -294,12 +294,20 @@ if (classDocFinal.termId) {
     xpWorkbook.sheet("HOME");
 
   if (!reportSheet) {
-    console.warn("⚠️ Attendance target sheet not found");
+    console.warn("⚠️ Attendance target sheet not found. Available sheets:", 
+      xpWorkbook.sheets().map(s => s.name()));
   } else {
+    console.log(`✅ Found attendance sheet: ${reportSheet.name()}`);
+    
+    // Test: Write a test value to verify sheet is writable
+    reportSheet.cell("A1").value("TEST - ATTENDANCE MODULE WORKING");
+    
     const firstStudentRow = 30; // D30
     const rowInterval = 40;     // D30 → D70 → D110
     const attendanceColumn = "D";
 
+    console.log(`📊 Processing ${students.length} students for attendance`);
+    
     for (let i = 0; i < students.length; i++) {
       const student = students[i];
 
@@ -311,8 +319,22 @@ if (classDocFinal.termId) {
 
       const targetRow = firstStudentRow + (i * rowInterval);
       const targetCell = `${attendanceColumn}${targetRow}`;
+      
+      // Check what's currently in the cell
+      const currentValue = reportSheet.cell(targetCell).value();
+      console.log(`📝 Student ${i+1}: ${student.user?.name}`);
+      console.log(`   Cell ${targetCell} current value: ${currentValue}`);
+      console.log(`   Attendance to write: ${totalAttendance}`);
 
+      // Write the attendance
       reportSheet.cell(targetCell).value(totalAttendance);
+      
+      // Force number format
+      reportSheet.cell(targetCell).style("numberFormat", "0");
+      
+      // Verify it was written
+      const writtenValue = reportSheet.cell(targetCell).value();
+      console.log(`   After writing: ${writtenValue}`);
 
       console.log(
         `✅ Attendance written → ${student.user?.name}: ${targetCell} = ${totalAttendance}`
