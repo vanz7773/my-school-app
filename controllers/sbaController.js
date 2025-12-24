@@ -19,6 +19,9 @@ const axios = require("axios");
 const PushToken = require("../models/PushToken");
 const { Expo } = require("expo-server-sdk");
 const expo = new Expo();
+const StudentAttendance = require("../models/StudentAttendance");
+const mongoose = require("mongoose");
+
 
 async function sendPush(userIds, title, body) {
   if (!Array.isArray(userIds) || userIds.length === 0) return;
@@ -100,6 +103,25 @@ function getClassLevelKey(className) {
   return cleaned;
 }
 
+async function getStudentTermAttendance(studentId, termId, schoolId) {
+  const result = await StudentAttendance.aggregate([
+    {
+      $match: {
+        student: new mongoose.Types.ObjectId(studentId),
+        termId: new mongoose.Types.ObjectId(termId),
+        school: new mongoose.Types.ObjectId(schoolId)
+      }
+    },
+    {
+      $group: {
+        _id: "$student",
+        totalAttendance: { $sum: "$totalPresent" }
+      }
+    }
+  ]);
+
+  return result[0]?.totalAttendance || 0;
+}
 
 // =========================================================
 // ✅ SBA CONTROLLER ROUTES
@@ -261,6 +283,36 @@ exports.downloadClassTemplate = async (req, res) => {
         namesSheet.cell(`E${startRow + i}`).value(stu.user?.name || "N/A");
       });
     }
+
+// ===============================
+// 📊 Inject Attendance per Student
+// ===============================
+if (classDocFinal.termId) {
+  const reportSheet =
+    xpWorkbook.sheet("REPORT") ||
+    xpWorkbook.sheet("SUMMARY") ||
+    xpWorkbook.sheet("HOME");
+
+  if (reportSheet) {
+    const attendanceStartRow = 14; // first student row
+    const attendanceColumn = "H";  // BETWEEN "ATTENDANCE:" and "OUT OF"
+
+    for (let i = 0; i < students.length; i++) {
+      const student = students[i];
+
+      const totalAttendance = await getStudentTermAttendance(
+        student._id,
+        classDocFinal.termId,
+        classDocFinal.school
+      );
+
+      reportSheet
+        .cell(`${attendanceColumn}${attendanceStartRow + i}`)
+        .value(totalAttendance);
+    }
+  }
+}
+
 
     // 🧹 Remove unused sheets if not class teacher
     if (!isClassTeacher) {
