@@ -712,6 +712,53 @@ const getStudentTermAttendance = async (req, res) => {
   }
 };
 
+// -------------------- getStudentTermTotalAttendance --------------------
+const getStudentTermTotalAttendance = async (req, res) => {
+  try {
+    const { studentId, termId } = req.query;
+    const schoolId = req.user.school;
+
+    if (!studentId || !termId) {
+      return res.status(400).json({
+        message: "studentId and termId are required"
+      });
+    }
+
+    // 🎯 Single optimized aggregation
+    const result = await StudentAttendance.aggregate([
+      {
+        $match: {
+          student: new mongoose.Types.ObjectId(studentId),
+          termId: new mongoose.Types.ObjectId(termId),
+          school: new mongoose.Types.ObjectId(schoolId)
+        }
+      },
+      {
+        $group: {
+          _id: "$student",
+          totalAttendance: { $sum: "$totalPresent" }
+        }
+      }
+    ]);
+
+    res.json({
+      success: true,
+      studentId,
+      termId,
+      totalAttendance: result[0]?.totalAttendance || 0
+    });
+
+  } catch (error) {
+    console.error("❌ getStudentTermTotalAttendance error:", error);
+    res.status(500).json({
+      message: "Failed to fetch student term attendance",
+      error: error.message
+    });
+  }
+};
+
+
+
 // -------------------- initializeWeek - OPTIMIZED --------------------
 const initializeWeek = async (req, res) => {
   try {
@@ -1025,6 +1072,7 @@ module.exports = {
   getWeeklySummary,
   getDailyBreakdown,
   getStudentTermAttendance,
+  getStudentTermTotalAttendance,
   initializeWeek,
   getWeeklyAttendance,
   getMyAttendance
