@@ -19,6 +19,8 @@ const axios = require("axios");
 const PushToken = require("../models/PushToken");
 const { Expo } = require("expo-server-sdk");
 const expo = new Expo();
+const StudentAttendance = require("../models/StudentAttendance");
+
 
 async function sendPush(userIds, title, body) {
   if (!Array.isArray(userIds) || userIds.length === 0) return;
@@ -99,6 +101,26 @@ function getClassLevelKey(className) {
   // fallback — allow any other class names as-is
   return cleaned;
 }
+function findCellByText(sheet, searchText) {
+  const used = sheet.usedRange();
+  if (!used) return null;
+
+  const start = used.startCell();
+  const end = used.endCell();
+
+  for (let r = start.rowNumber(); r <= end.rowNumber(); r++) {
+    for (let c = start.columnNumber(); c <= end.columnNumber(); c++) {
+      const val = sheet.cell(r, c).value();
+      if (
+        typeof val === "string" &&
+        val.trim().toUpperCase() === searchText.toUpperCase()
+      ) {
+        return { row: r, col: c };
+      }
+    }
+  }
+  return null;
+}
 
 
 // =========================================================
@@ -138,6 +160,27 @@ exports.downloadClassTemplate = async (req, res) => {
 
     const school = await School.findById(classDocFinal.school).lean();
     if (!school) return res.status(404).json({ message: "School not found" });
+
+    // 🔹 ADDED: Fetch TOTAL attendance per student (term-wide)
+    const attendanceTotals = await StudentAttendance.aggregate([
+      {
+        $match: {
+          class: targetClassId,
+          termId: classDocFinal.termId,
+          school: classDocFinal.school
+        }
+      },
+      {
+        $group: {
+          _id: "$student",
+          totalDaysPresent: { $sum: "$totalPresent" }
+        }
+      }
+    ]);
+
+    const attendanceMap = new Map(
+      attendanceTotals.map(a => [String(a._id), a.totalDaysPresent])
+    );
 
     // Term / Academic Year info
     let classTeacherName = "N/A";
@@ -180,8 +223,11 @@ exports.downloadClassTemplate = async (req, res) => {
     if (!school.sbaMaster?.[classLevelKey]) {
       console.log("📄 School master missing, cloning global template");
       const globalTemplate = await SbaTemplate.findOne({ key: classLevelKey }).lean();
-      if (!globalTemplate)
-        return res.status(500).json({ message: "Global SBA template not found" });
+      if (!globalTemplate) {
+        return res.status(404).json({
+          message: "SBA template has not been uploaded yet. Please contact the administrator."
+        });
+      }
 
       let buffer;
       if (globalTemplate.path) {
@@ -222,17 +268,56 @@ exports.downloadClassTemplate = async (req, res) => {
         path: schoolPath,
         url: `https://storage.googleapis.com/${bucket.name}/${schoolPath}`,
       };
-      console.log("✅ School master initialized");
     }
 
-    // Download master file (direct from Firebase)
+    // Download master file
     const masterFile = bucket.file(school.sbaMaster[classLevelKey].path);
     const [masterBuffer] = await masterFile.download();
 
-    // 🧠 Load workbook using XlsxPopulate (preserves hyperlinks + formulas)
     const xpWorkbook = await XlsxPopulate.fromDataAsync(masterBuffer);
 
-    // Fill sheets using XlsxPopulate
+    // ===============================
+    // 🔹 ADDED: PREFILL ATTENDANCE ON REPORT SHEET
+    // ===============================
+    const reportSheet =
+      xpWorkbook.sheet("REPORT") || xpWorkbook.sheet("Report");
+
+    if (reportSheet) {
+      const used = reportSheet.usedRange();
+      if (used) {
+        const start = used.startCell();
+        const end = used.endCell();
+
+        for (let r = start.rowNumber(); r <= end.rowNumber(); r++) {
+          for (let c = start.columnNumber(); c <= end.columnNumber(); c++) {
+            const val = reportSheet.cell(r, c).value();
+            if (
+              typeof val === "string" &&
+              val.toUpperCase().includes("ATTENDANCE")
+            ) {
+              const valueCol = c + 1;     // blank cell after ATTENDANCE:
+              const outOfValueCol = c + 4; // blank cell after OUT OF
+
+              const totalPossibleDays = attendanceTotals.length * 5;
+
+              students.forEach(stu => {
+  const row = studentRowMap.get(String(stu._id));
+  if (!row) return;
+
+  const present = attendanceMap.get(String(stu._id)) || 0;
+
+  reportSheet.cell(row, valueCol).value(present);
+  reportSheet.cell(row, outOfValueCol).value(totalPossibleDays);
+});
+
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // Fill HOME sheet
     const homeSheet = xpWorkbook.sheet("HOME") || xpWorkbook.sheet("Home");
     if (homeSheet) {
       homeSheet.cell("B9").value(school.name || "N/A");
@@ -263,7 +348,6 @@ exports.downloadClassTemplate = async (req, res) => {
       const allSheets = xpWorkbook.sheets();
       const normalizedSubject = (subject || "").trim().toUpperCase();
 
-      // 1️⃣ Build keep list
       const keepList = allSheets
         .filter((s) => {
           const sheetName = s.name().trim().toUpperCase();
@@ -276,39 +360,19 @@ exports.downloadClassTemplate = async (req, res) => {
         })
         .map((s) => s.name());
 
-      console.log("🎯 Keeping sheets:", keepList);
-
-      // 2️⃣ Find fallback active sheet
       const fallbackSheet =
         allSheets.find((s) => keepList.includes(s.name()) && !s.hidden()) ||
         allSheets.find((s) => !s.hidden());
 
       if (fallbackSheet) xpWorkbook.activeSheet(fallbackSheet.name());
 
-      // 3️⃣ Delete everything else safely
       allSheets.forEach((s) => {
-        const sheetName = s.name();
-        if (!keepList.includes(sheetName)) {
-          if (xpWorkbook.activeSheet().name() === sheetName) {
-            const nextVisible = xpWorkbook
-              .sheets()
-              .find((x) => keepList.includes(x.name()) && !x.hidden());
-            if (nextVisible) xpWorkbook.activeSheet(nextVisible.name());
-          }
-          xpWorkbook.deleteSheet(sheetName);
-          console.log(`🗑️ Deleted sheet: ${sheetName}`);
+        if (!keepList.includes(s.name())) {
+          xpWorkbook.deleteSheet(s.name());
         }
       });
-
-      // 4️⃣ Handle missing subject sheet gracefully
-      if (!xpWorkbook.sheet(subject)) {
-        console.warn(`⚠️ Subject sheet "${subject}" not found in template`);
-      }
-
-      console.log("📝 Pruned workbook for subject teacher (only subject + core sheets kept)");
     }
 
-    // ✨ Output final file directly (no ExcelJS rewrite!)
     const finalBuffer = await xpWorkbook.outputAsync("nodebuffer");
 
     const filename = isClassTeacher
@@ -333,6 +397,7 @@ exports.downloadClassTemplate = async (req, res) => {
     if (tempFilePath && fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
   }
 };
+
 
 
 // 2️⃣ Upload class template - UPDATED to preserve exact structure
