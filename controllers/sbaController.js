@@ -300,13 +300,16 @@ exports.downloadClassTemplate = async (req, res) => {
 
               const totalPossibleDays = attendanceTotals.length * 5;
 
-              students.forEach((stu, i) => {
-                const row = r + 1 + i;
-                const present = attendanceMap.get(String(stu._id)) || 0;
+              students.forEach(stu => {
+  const row = studentRowMap.get(String(stu._id));
+  if (!row) return;
 
-                reportSheet.cell(row, valueCol).value(present);
-                reportSheet.cell(row, outOfValueCol).value(totalPossibleDays);
-              });
+  const present = attendanceMap.get(String(stu._id)) || 0;
+
+  reportSheet.cell(row, valueCol).value(present);
+  reportSheet.cell(row, outOfValueCol).value(totalPossibleDays);
+});
+
               break;
             }
           }
