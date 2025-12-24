@@ -285,7 +285,7 @@ exports.downloadClassTemplate = async (req, res) => {
     }
 
 // ===============================
-// 📊 Inject Attendance per Student
+// 📊 Inject Attendance per Student (FINAL POSITION)
 // ===============================
 if (classDocFinal.termId) {
   const reportSheet =
@@ -293,9 +293,11 @@ if (classDocFinal.termId) {
     xpWorkbook.sheet("SUMMARY") ||
     xpWorkbook.sheet("HOME");
 
-  if (reportSheet) {
+  if (!reportSheet) {
+    console.warn("⚠️ Attendance target sheet not found");
+  } else {
     const firstStudentRow = 30; // D30
-    const rowInterval = 40;     // D30 → D70 → D110 ...
+    const rowInterval = 40;     // D30 → D70 → D110
     const attendanceColumn = "D";
 
     for (let i = 0; i < students.length; i++) {
@@ -313,11 +315,12 @@ if (classDocFinal.termId) {
       reportSheet.cell(targetCell).value(totalAttendance);
 
       console.log(
-        `📘 Attendance set at ${targetCell} → ${student.user?.name}: ${totalAttendance}`
+        `✅ Attendance written → ${student.user?.name}: ${targetCell} = ${totalAttendance}`
       );
     }
   }
 }
+
 
 
 
