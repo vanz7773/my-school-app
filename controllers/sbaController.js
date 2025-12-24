@@ -323,208 +323,120 @@ console.log("🔍 === END TEMPLATE ANALYSIS ===");
 
 
 // ===============================
-// 📊 NEW: Smart Attendance Injection
+// 📊 Inject Attendance per Student (CORRECTED POSITION)
 // ===============================
 if (classDocFinal.termId) {
-  console.log("🎯 Starting smart attendance injection...");
+  const reportSheet = xpWorkbook.sheet("REPORT");
   
-  // First, find which sheet actually contains student attendance
-  let targetSheet = null;
-  let targetCellPattern = null;
-  
-  // Check common sheet names
-  const potentialSheets = ["REPORT", "SUMMARY", "Home", "HOME", "ATTENDANCE", "Attendance"];
-  
-  for (const sheetName of potentialSheets) {
-    const sheet = xpWorkbook.sheet(sheetName);
-    if (sheet) {
-      console.log(`🔍 Checking sheet: ${sheetName}`);
-      
-      // Look for "Total Attendance" or similar in first 30 rows
-      for (let r = 1; r <= 30; r++) {
-        for (let c = 1; c <= 10; c++) {
-          const cell = sheet.cell(r, c);
-          const value = cell.value();
-          if (value && typeof value === 'string') {
-            const lowerValue = value.toLowerCase();
-            if (lowerValue.includes("attendance") || 
-                lowerValue.includes("days present") || 
-                lowerValue.includes("total present")) {
-              console.log(`✅ Found attendance header at ${sheetName}!${cell.address()}: "${value}"`);
-              targetSheet = sheet;
-              
-              // Determine where to write (usually 1 column to the right of the header)
-              const targetCol = c + 1;
-              targetCellPattern = { sheetName, headerRow: r, dataStartRow: r + 1, column: targetCol };
-              break;
-            }
-          }
-        }
-        if (targetSheet) break;
-      }
-      if (targetSheet) break;
-    }
-  }
-  
-  // If still not found, try to find student names and see where attendance might go
-  if (!targetSheet) {
-    console.log("🔍 Could not find attendance header, looking for student names pattern...");
+  if (!reportSheet) {
+    console.warn("⚠️ REPORT sheet not found");
+  } else {
+    console.log(`✅ Found REPORT sheet. Writing attendance...`);
     
-    // Check NAMES sheet for student list and attendance column
-    const namesSheet = xpWorkbook.sheet("NAMES");
-    if (namesSheet) {
-      console.log("📝 Found NAMES sheet, checking structure...");
-      
-      // Look for attendance column in NAMES sheet (typically after student names)
-      const usedRange = namesSheet.usedRange();
-      if (usedRange) {
-        const startRow = 9; // Usually starts at row 9
-        const nameCol = 5; // Column E usually has names
+    // Based on template analysis: "ATTENDANCE:" is at B30
+    // Let's find where to write the actual attendance values
+    
+    // Method 1: Look for the pattern - attendance might be in column D (based on your original code)
+    // Let's examine cells around B30 to understand the structure
+    console.log("🔍 Examining cells around B30:");
+    for (let col = 1; col <= 6; col++) { // Check columns A-F
+      const colLetter = String.fromCharCode(64 + col); // A=1, B=2, etc.
+      const cellAddr = `${colLetter}30`;
+      const cellValue = reportSheet.cell(cellAddr).value();
+      console.log(`   ${cellAddr}: "${cellValue}"`);
+    }
+    
+    // Check if there's a pattern for multiple students
+    // Let's look at rows 30, 70, 110, etc. (40 row intervals as in your original code)
+    console.log("🔍 Checking attendance row pattern:");
+    const attendanceRows = [30, 70, 110, 150, 190, 230, 270, 310, 350, 390];
+    
+    for (const row of attendanceRows) {
+      const headerCell = reportSheet.cell(`B${row}`).value();
+      if (headerCell && headerCell.toString().includes("ATTENDANCE")) {
+        console.log(`   Found "ATTENDANCE" at B${row}`);
         
-        // Find which column might be for attendance
-        for (let c = nameCol + 1; c <= Math.min(nameCol + 5, usedRange.endCell().columnNumber()); c++) {
-          const headerCell = namesSheet.cell(startRow - 1, c); // Row above names
-          const headerValue = headerCell.value();
-          if (headerValue && headerValue.toString().toLowerCase().includes("attendance")) {
-            console.log(`✅ Found attendance column in NAMES sheet at column ${c}`);
-            targetSheet = namesSheet;
-            targetCellPattern = { 
-              sheetName: "NAMES", 
-              headerRow: startRow - 1, 
-              dataStartRow: startRow, 
-              column: c 
-            };
-            break;
-          }
-        }
+        // Check which column might be for the attendance value
+        // Usually it's column D (4th column) based on Excel templates
+        const potentialValueCell = reportSheet.cell(`D${row}`);
+        console.log(`   Cell D${row} current value: "${potentialValueCell.value()}"`);
       }
     }
-  }
-  
-  // If we found a target, write attendance
-  if (targetSheet && targetCellPattern) {
-    console.log(`🎯 Writing attendance to ${targetCellPattern.sheetName}, column ${targetCellPattern.column}`);
+    
+    // Now write attendance data
+    console.log(`📊 Writing attendance for ${students.length} students`);
+    
+    // Based on the pattern, it seems each student has attendance at D30, D70, D110, etc.
+    // This matches your original assumption of 40 row intervals starting at row 30
+    const firstAttendanceRow = 30;
+    const rowInterval = 40;
+    const attendanceColumn = "D"; // This seems to be the correct column
     
     for (let i = 0; i < students.length; i++) {
       const student = students[i];
+      
+      // Get attendance
       const totalAttendance = await getStudentTermAttendance(
         student._id,
         classDocFinal.termId,
         classDocFinal.school
       );
       
-      const targetRow = targetCellPattern.dataStartRow + i;
-      const targetCell = targetSheet.cell(targetRow, targetCellPattern.column);
+      const targetRow = firstAttendanceRow + (i * rowInterval);
+      const targetCell = `${attendanceColumn}${targetRow}`;
       
-      console.log(`📝 ${student.user?.name}: Row ${targetRow}, Col ${targetCellPattern.column} = ${totalAttendance}`);
+      console.log(`📝 Student ${i+1}: ${student.user?.name || student._id}`);
+      console.log(`   Writing to ${targetCell}: ${totalAttendance} days`);
       
-      // Clear any existing formula first
-      if (targetCell.formula()) {
-        targetCell.clear();
-      }
-      
-      // Write the value
-      targetCell.value(totalAttendance);
+      // Write the attendance
+      reportSheet.cell(targetCell).value(totalAttendance);
       
       // Set number format
-      targetCell.style("numberFormat", "0");
+      reportSheet.cell(targetCell).style("numberFormat", "0");
+      
+      // Also, let's check if we should write the student name in a nearby cell for verification
+      // Usually student names might be in column C or E
+      const nameCellC = reportSheet.cell(`C${targetRow}`).value();
+      const nameCellE = reportSheet.cell(`E${targetRow}`).value();
+      console.log(`   Nearby cells: C${targetRow} = "${nameCellC}", E${targetRow} = "${nameCellE}"`);
     }
     
-    console.log("✅ Attendance written successfully!");
-  } else {
-    console.warn("⚠️ Could not determine where to write attendance. Trying fallback methods...");
-    
-    // Fallback 1: Try writing to REPORT sheet at common positions
-    const reportSheet = xpWorkbook.sheet("REPORT");
-    if (reportSheet) {
-      console.log("🔄 Fallback 1: Trying REPORT sheet with dynamic position finding...");
-      
-      // Find first student row by looking for first student name
-      let firstStudentRow = null;
-      for (let r = 20; r <= 100; r++) {
-        const cellValue = reportSheet.cell(r, 1).value(); // Check column A
-        if (cellValue && typeof cellValue === 'string' && 
-            students.some(s => s.user?.name === cellValue)) {
-          firstStudentRow = r;
-          console.log(`📝 Found first student "${cellValue}" at row ${r}`);
-          break;
-        }
-      }
-      
-      if (firstStudentRow) {
-        // Look for "Attendance" in the header row (row above first student)
-        let attendanceCol = null;
-        for (let c = 1; c <= 10; c++) {
-          const headerCell = reportSheet.cell(firstStudentRow - 1, c);
-          const headerValue = headerCell.value();
-          if (headerValue && headerValue.toString().toLowerCase().includes("attendance")) {
-            attendanceCol = c;
-            console.log(`✅ Found attendance column at column ${c}`);
-            break;
+    // Also check if there's a TOTAL ATTENDANCE cell somewhere
+    console.log("🔍 Looking for TOTAL ATTENDANCE summary cell...");
+    for (let r = 1; r <= 50; r++) {
+      for (let c = 1; c <= 10; c++) {
+        const colLetter = String.fromCharCode(64 + c);
+        const cell = reportSheet.cell(`${colLetter}${r}`);
+        const value = cell.value();
+        if (value && value.toString().toLowerCase().includes("total attendance")) {
+          console.log(`✅ Found TOTAL ATTENDANCE at ${colLetter}${r}: "${value}"`);
+          
+          // Calculate and write total attendance for all students
+          let totalAllAttendance = 0;
+          for (let i = 0; i < students.length; i++) {
+            const student = students[i];
+            const studentAttendance = await getStudentTermAttendance(
+              student._id,
+              classDocFinal.termId,
+              classDocFinal.school
+            );
+            totalAllAttendance += studentAttendance;
           }
-        }
-        
-        // If not found, default to column D
-        attendanceCol = attendanceCol || 4; // Column D
-        
-        for (let i = 0; i < students.length; i++) {
-          const student = students[i];
-          const totalAttendance = await getStudentTermAttendance(
-            student._id,
-            classDocFinal.termId,
-            classDocFinal.school
-          );
           
-          const targetRow = firstStudentRow + i;
-          const targetCell = reportSheet.cell(targetRow, attendanceCol);
-          
-          targetCell.value(totalAttendance);
-          targetCell.style("numberFormat", "0");
-          
-          console.log(`✅ ${student.user?.name}: Row ${targetRow}, Col ${attendanceCol} = ${totalAttendance}`);
+          // Write to the cell to the right of the label
+          const totalCell = reportSheet.cell(`${String.fromCharCode(64 + c + 1)}${r}`);
+          totalCell.value(totalAllAttendance);
+          totalCell.style("numberFormat", "0");
+          console.log(`   Written total attendance: ${totalAllAttendance}`);
         }
       }
     }
     
-    // Fallback 2: Write to a test location to verify the sheet is being modified
-    const testSheet = xpWorkbook.sheet(0); // First sheet
-    if (testSheet) {
-      console.log("🔄 Fallback 2: Writing test values to verify sheet modification...");
-      
-      // Write test header
-      testSheet.cell("Z1").value("ATTENDANCE TEST");
-      
-      // Write each student's attendance in a test area
-      for (let i = 0; i < students.length; i++) {
-        const student = students[i];
-        const totalAttendance = await getStudentTermAttendance(
-          student._id,
-          classDocFinal.termId,
-          classDocFinal.school
-        );
-        
-        const testRow = i + 2;
-        testSheet.cell(`Z${testRow}`).value(student.user?.name);
-        testSheet.cell(`AA${testRow}`).value(totalAttendance);
-        
-        console.log(`🧪 Test written: ${student.user?.name} = ${totalAttendance} at AA${testRow}`);
-      }
-    }
+    console.log("✅ Attendance writing completed!");
   }
-  
-  // Save a test file for debugging
-  try {
-    const debugBuffer = await xpWorkbook.outputAsync("nodebuffer");
-    const debugPath = path.join("uploads", `debug_attendance_${Date.now()}.xlsx`);
-    fs.writeFileSync(debugPath, debugBuffer);
-    console.log(`💾 DEBUG FILE SAVED: ${debugPath}`);
-    console.log("📖 Please open this file to check if attendance was written correctly");
-  } catch (err) {
-    console.error("Could not save debug file:", err.message);
-  }
+} else {
+  console.log("⚠️ No termId found, skipping attendance injection");
 }
-
-
 
 
     // 🧹 Remove unused sheets if not class teacher
