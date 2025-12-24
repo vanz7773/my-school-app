@@ -231,6 +231,7 @@ exports.downloadClassTemplate = async (req, res) => {
       if (globalTemplate.path) {
         [buffer] = await bucket.file(globalTemplate.path).download();
       } else if (globalTemplate.url) {
+        const axios = require("axios");
         const resp = await axios.get(globalTemplate.url, { responseType: "arraybuffer" });
         buffer = resp.data;
       } else {
