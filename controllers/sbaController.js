@@ -161,7 +161,9 @@ exports.downloadClassTemplate = async (req, res) => {
     const school = await School.findById(classDocFinal.school).lean();
     if (!school) return res.status(404).json({ message: "School not found" });
 
-    // 🔹 ADDED: Fetch TOTAL attendance per student (term-wide)
+    // ===============================
+    // 🔹 TOTAL TERM ATTENDANCE (per student)
+    // ===============================
     const attendanceTotals = await StudentAttendance.aggregate([
       {
         $match: {
@@ -263,6 +265,7 @@ exports.downloadClassTemplate = async (req, res) => {
           },
         },
       });
+
       school.sbaMaster = school.sbaMaster || {};
       school.sbaMaster[classLevelKey] = {
         path: schoolPath,
@@ -273,11 +276,32 @@ exports.downloadClassTemplate = async (req, res) => {
     // Download master file
     const masterFile = bucket.file(school.sbaMaster[classLevelKey].path);
     const [masterBuffer] = await masterFile.download();
-
     const xpWorkbook = await XlsxPopulate.fromDataAsync(masterBuffer);
 
+    // ======================================================
+    // 🔑 MAP studentId → actual Excel row (from NAMES sheet)
+    // ======================================================
+    const studentRowMap = new Map();
+
+    const namesSheet = xpWorkbook.sheet("NAMES");
+    if (namesSheet) {
+      const startRow = 9;
+      for (let i = 0; i < students.length; i++) {
+        const row = startRow + i;
+        const nameInSheet = namesSheet.cell(`E${row}`).value();
+
+        const matchedStudent = students.find(
+          s => s.user?.name?.trim() === String(nameInSheet).trim()
+        );
+
+        if (matchedStudent) {
+          studentRowMap.set(String(matchedStudent._id), row);
+        }
+      }
+    }
+
     // ===============================
-    // 🔹 ADDED: PREFILL ATTENDANCE ON REPORT SHEET
+    // 🔹 PREFILL ATTENDANCE ON REPORT SHEET
     // ===============================
     const reportSheet =
       xpWorkbook.sheet("REPORT") || xpWorkbook.sheet("Report");
@@ -291,25 +315,19 @@ exports.downloadClassTemplate = async (req, res) => {
         for (let r = start.rowNumber(); r <= end.rowNumber(); r++) {
           for (let c = start.columnNumber(); c <= end.columnNumber(); c++) {
             const val = reportSheet.cell(r, c).value();
-            if (
-              typeof val === "string" &&
-              val.toUpperCase().includes("ATTENDANCE")
-            ) {
-              const valueCol = c + 1;     // blank cell after ATTENDANCE:
-              const outOfValueCol = c + 4; // blank cell after OUT OF
-
+            if (typeof val === "string" && val.toUpperCase().includes("ATTENDANCE")) {
+              const valueCol = c + 1;
+              const outOfValueCol = c + 4;
               const totalPossibleDays = attendanceTotals.length * 5;
 
               students.forEach(stu => {
-  const row = studentRowMap.get(String(stu._id));
-  if (!row) return;
+                const row = studentRowMap.get(String(stu._id));
+                if (!row) return;
 
-  const present = attendanceMap.get(String(stu._id)) || 0;
-
-  reportSheet.cell(row, valueCol).value(present);
-  reportSheet.cell(row, outOfValueCol).value(totalPossibleDays);
-});
-
+                const present = attendanceMap.get(String(stu._id)) || 0;
+                reportSheet.cell(row, valueCol).value(present);
+                reportSheet.cell(row, outOfValueCol).value(totalPossibleDays);
+              });
               break;
             }
           }
@@ -335,46 +353,30 @@ exports.downloadClassTemplate = async (req, res) => {
       home2Sheet.cell("Q14").value(academicYear || "N/A");
     }
 
-    const namesSheet = xpWorkbook.sheet("NAMES");
-    if (namesSheet) {
-      const startRow = 9;
-      students.forEach((stu, i) => {
-        namesSheet.cell(`E${startRow + i}`).value(stu.user?.name || "N/A");
-      });
-    }
-
-    // 🧹 Remove unused sheets if not class teacher
+    // Remove unused sheets if not class teacher
     if (!isClassTeacher) {
       const allSheets = xpWorkbook.sheets();
       const normalizedSubject = (subject || "").trim().toUpperCase();
 
       const keepList = allSheets
-        .filter((s) => {
-          const sheetName = s.name().trim().toUpperCase();
-          return (
-            sheetName === "NAMES" ||
-            sheetName === "HOME" ||
-            sheetName === "HOME2" ||
-            sheetName === normalizedSubject
-          );
+        .filter(s => {
+          const n = s.name().trim().toUpperCase();
+          return n === "NAMES" || n === "HOME" || n === "HOME2" || n === normalizedSubject;
         })
-        .map((s) => s.name());
+        .map(s => s.name());
 
       const fallbackSheet =
-        allSheets.find((s) => keepList.includes(s.name()) && !s.hidden()) ||
-        allSheets.find((s) => !s.hidden());
+        allSheets.find(s => keepList.includes(s.name()) && !s.hidden()) ||
+        allSheets.find(s => !s.hidden());
 
       if (fallbackSheet) xpWorkbook.activeSheet(fallbackSheet.name());
 
-      allSheets.forEach((s) => {
-        if (!keepList.includes(s.name())) {
-          xpWorkbook.deleteSheet(s.name());
-        }
+      allSheets.forEach(s => {
+        if (!keepList.includes(s.name())) xpWorkbook.deleteSheet(s.name());
       });
     }
 
     const finalBuffer = await xpWorkbook.outputAsync("nodebuffer");
-
     const filename = isClassTeacher
       ? `${classDocFinal.name}_FULL_SBA.xlsx`
       : `${subject}_SBA.xlsx`;
@@ -397,6 +399,7 @@ exports.downloadClassTemplate = async (req, res) => {
     if (tempFilePath && fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
   }
 };
+
 
 
 
