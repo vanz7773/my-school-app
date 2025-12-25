@@ -85,5 +85,4 @@ classSchema.index(
   { school: 1, name: 1, stream: 1 },
   { unique: true }
 );
-
 module.exports = mongoose.model("Class", classSchema);
