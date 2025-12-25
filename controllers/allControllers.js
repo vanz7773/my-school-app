@@ -1037,7 +1037,7 @@ async recordPayment(req, res) {
 
   async updateOrCreateBill(req, res) {
   const session = await mongoose.startSession();
-  let committed = false; // ✅ Track commit state
+  let committed = false;
 
   try {
     await session.startTransaction();
@@ -1048,32 +1048,20 @@ async recordPayment(req, res) {
 
     const { studentId, templateId, items, term, academicYear, billId } = req.body;
 
-    // Validate required fields
-    if (!studentId || !templateId || !items || !Array.isArray(items) || !term || !academicYear) {
-      throw new Error('Missing required fields: studentId, templateId, items array, term, or academicYear');
+    if (!studentId || !templateId || !Array.isArray(items) || !term || !academicYear) {
+      throw new Error('Missing required fields');
     }
 
-    // Validate items structure
-    const invalidItems = items.filter(item =>
-      !item.name || typeof item.amount !== 'number' || item.amount < 0
-    );
-    if (invalidItems.length > 0) {
-      throw new Error('Invalid items: Each item must have a name and positive amount');
-    }
-
-    // Find student
     const student = await Student.findOne({
       _id: studentId,
       school: req.user.school
     })
       .populate({ path: 'user', select: 'name' })
-      // 🟦 STEP 1 — UPDATED: Added stream and displayName
-      .populate('class', 'name stream displayName')
+      .populate('class', 'name stream displayName') // ✅ REQUIRED
       .session(session);
 
     if (!student) throw new Error('Student not found');
 
-    // Validate template
     const template = await FeeTemplate.findOne({
       _id: templateId,
       school: req.user.school
@@ -1081,9 +1069,9 @@ async recordPayment(req, res) {
 
     if (!template) throw new Error('Fee template not found');
 
-    // Calculate totals
-    const totalAmount = items.reduce((sum, item) => sum + (item.amount || 0), 0);
-    const totalPaid = items.reduce((sum, item) => sum + (item.paid || 0), 0);
+    const totalAmount = items.reduce((s, i) => s + i.amount, 0);
+    const totalPaid = items.reduce((s, i) => s + (i.paid || 0), 0);
+
     const status =
       totalPaid >= totalAmount ? 'Paid' : totalPaid > 0 ? 'Partial' : 'Unpaid';
 
@@ -1091,13 +1079,12 @@ async recordPayment(req, res) {
       name: item.name,
       amount: item.amount,
       paid: item.paid || 0,
-      balance: (item.amount || 0) - (item.paid || 0)
+      balance: item.amount - (item.paid || 0)
     }));
 
     let bill;
 
     if (billId) {
-      // Update existing bill
       bill = await TermBill.findByIdAndUpdate(
         billId,
         {
@@ -1105,108 +1092,83 @@ async recordPayment(req, res) {
           totalAmount,
           totalPaid,
           status,
+          class: student.class?._id || null, // ✅ FIX 1
           isManualUpdate: true
         },
         { new: true, session }
-      )
-        .populate({
-          path: 'student',
-          populate: [
-            { path: 'user', select: 'name' },
-            // 🟦 STEP 1 — UPDATED: Added stream and displayName
-            { path: 'class', select: 'name stream displayName' }
-          ]
-        })
-        .populate('template', 'name')
-        .session(session);
+      );
     } else {
-      // Create new bill
       const newBill = await TermBill.create(
-        [
-          {
-            school: req.user.school,
-            student: studentId,
-            template: templateId,
-            items: billItems,
-            totalAmount,
-            totalPaid,
-            term,
-            academicYear,
-            status,
-            isManualUpdate: true
-          }
-        ],
+        [{
+          school: req.user.school,
+          student: student._id,
+          class: student.class?._id || null, // ✅ FIX 2 (CRITICAL)
+          template: template._id,
+          items: billItems,
+          totalAmount,
+          totalPaid,
+          term,
+          academicYear,
+          status,
+          isManualUpdate: true
+        }],
         { session }
       );
+
       bill = newBill[0];
     }
 
-    // Populate if needed
-    if (!bill.student?.name) {
-      bill = await TermBill.findById(bill._id)
-  .populate({
-    path: 'student',
-    populate: [
-      { path: 'user', select: 'name' },
-      // 🟦 STEP 1 — UPDATED: Added stream and displayName
-      { path: 'class', select: 'name stream displayName' }
-    ]
-  })
-  .populate('template', 'name')
-  .lean();   // ✅ removes session + circular refs
-    }
+    bill = await TermBill.findById(bill._id)
+      .populate({
+        path: 'student',
+        populate: [
+          { path: 'user', select: 'name' },
+          { path: 'class', select: 'name stream displayName' }
+        ]
+      })
+      .populate('class', 'name stream displayName') // ✅ ENSURE CLASS
+      .populate('template', 'name')
+      .lean();
 
-// Construct response
-const { className, classDisplayName } = resolveClassNames(student.class);
+    // ✅ SAFE CLASS NAME RESOLUTION
+    const { className, classDisplayName } = safeResolveClassNames(
+      bill.class || student.class
+    );
 
-const responseBill = {
-  ...transformBill(bill),
-  student: {
-    _id: student._id,
-    name: student.user?.name || 'N/A'
-  },
-  class: {
-    ...student.class,
-    name: className,
-    displayName: classDisplayName,
-  }
-};
+    const responseBill = {
+      ...transformBill(bill),
+      student: {
+        _id: student._id,
+        name: student.user?.name || 'N/A'
+      },
+      class: {
+        _id: bill.class?._id || student.class?._id || null,
+        name: className,
+        displayName: classDisplayName
+      }
+    };
 
-    // Commit transaction
     await session.commitTransaction();
-    committed = true; // ✅ Mark commit completed
-
-    // Emit socket event
-    const io = req.app.get('io');
-    if (io) {
-      io.to(req.user.school.toString()).emit('bill-updated', {
-        studentId,
-        billId: bill._id,
-        action: billId ? 'updated' : 'created'
-      });
-    }
+    committed = true;
 
     res.status(billId ? 200 : 201).json({
       success: true,
-      message: billId ? 'Bill updated successfully' : 'Bill created successfully',
       bill: responseBill
     });
 
   } catch (error) {
-    // ✅ Safe abort: only abort if not committed yet
     if (!committed && session.inTransaction()) {
       await session.abortTransaction();
     }
 
-    console.error('Bill update/create error:', error);
+    console.error('❌ updateOrCreateBill:', error);
 
     res.status(500).json({
       message: 'Error processing bill',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: error.message
     });
-
   } finally {
-    await session.endSession(); // Always end session
+    await session.endSession();
   }
 },
 
