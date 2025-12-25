@@ -50,33 +50,45 @@ const transformBill = (bill) => {
     return 'Unknown';
   };
 
-  // 🟦 STEP 2 — UPDATED transformBill
-  const { className, classDisplayName } = resolveClassNames(
-    bill.class || bill.student?.class
-  );
+  // 🟦 STEP 2 — UPDATED transformBill (SAFE MERGE)
+const { className, classDisplayName } = resolveClassNames(
+  bill.class || bill.student?.class
+);
 
-  return {
-    ...bill._doc ? bill._doc : bill,
-    items: bill.items?.map(item => ({
-      ...item,
-      amount: transformNumber(item.amount),
-      paid: transformNumber(item.paid),
-      balance: transformNumber(item.balance)
-    })) || [],
-    totalAmount: transformNumber(bill.totalAmount),
-    totalPaid: transformNumber(bill.totalPaid),
-    student: {
-      ...(typeof bill.student === 'object' ? bill.student : { _id: bill.student }),
-      name: getStudentName(bill.student)
-    },
-    class: {
-      ...(typeof bill.class === 'object' ? bill.class : { _id: bill.class }),
-      name: className,
-      displayName: classDisplayName
-    }
-  };
+return {
+  ...(bill._doc ? bill._doc : bill),
+
+  items: bill.items?.map(item => ({
+    ...item,
+    amount: transformNumber(item.amount),
+    paid: transformNumber(item.paid),
+    balance: transformNumber(item.balance),
+  })) || [],
+
+  totalAmount: transformNumber(bill.totalAmount),
+  totalPaid: transformNumber(bill.totalPaid),
+
+  student: {
+    ...(typeof bill.student === 'object'
+      ? bill.student
+      : { _id: bill.student }),
+    name: getStudentName(bill.student),
+  },
+
+  // ✅ FIX: preserve original class object
+  class: bill.class
+    ? {
+        ...bill.class,              // keep _id, stream, populated fields
+        name: className,             // normalized base name
+        displayName: classDisplayName, // normalized display name
+      }
+    : {
+        name: className,
+        displayName: classDisplayName,
+      },
 };
-
+};
+  
 // Consistent currency formatting
 const formatCurrency = (amount) => {
   try {
@@ -415,14 +427,26 @@ module.exports = {
           populatedBill.class || studentData.class
         );
 
-        bills.push(transformBill({
-          ...populatedBill.toObject(),
-          student: { _id: studentData._id, name: studentName },
-          class: { 
-            name: className,
-            displayName: classDisplayName 
-          }
-        }));
+        const billObj = populatedBill.toObject();
+
+bills.push(transformBill({
+  ...billObj,
+  student: {
+    ...billObj.student,
+    name: studentName,
+  },
+  class: billObj.class
+    ? {
+        ...billObj.class,
+        name: className,
+        displayName: classDisplayName,
+      }
+    : {
+        name: className,
+        displayName: classDisplayName,
+      }
+}));
+
 
       } catch (err) {
         console.error(`Error processing student ${student._id}:`, err);
@@ -959,7 +983,11 @@ async recordPayment(req, res) {
       });
     }
 
-    // Response payload
+// Response payload
+    const { className, classDisplayName } = resolveClassNames(
+      updatedBill.student?.class
+    );
+
     const responseData = {
       ...updatedBill.toObject(),
       student: {
@@ -967,8 +995,9 @@ async recordPayment(req, res) {
         name: updatedBill.student.user?.name || 'N/A',
       },
       class: {
-        _id: updatedBill.student.class?._id,
-        name: updatedBill.student.class?.name || 'N/A',
+        ...updatedBill.student?.class,
+        name: className,
+        displayName: classDisplayName,
       },
       items: updatedBill.items.map(item => ({
         _id: item._id,
@@ -1133,18 +1162,21 @@ async recordPayment(req, res) {
   .lean();   // ✅ removes session + circular refs
     }
 
-    // Construct response
-    const responseBill = {
-      ...transformBill(bill),
-      student: {
-        _id: student._id,
-        name: student.user?.name || 'N/A'
-      },
-      class: {
-        _id: student.class?._id,
-        name: student.class?.name || 'N/A'
-      }
-    };
+// Construct response
+const { className, classDisplayName } = resolveClassNames(student.class);
+
+const responseBill = {
+  ...transformBill(bill),
+  student: {
+    _id: student._id,
+    name: student.user?.name || 'N/A'
+  },
+  class: {
+    ...student.class,
+    name: className,
+    displayName: classDisplayName,
+  }
+};
 
     // Commit transaction
     await session.commitTransaction();
