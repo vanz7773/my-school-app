@@ -5,6 +5,24 @@ const PDFDocument = require('pdfkit');
 const User = require('../models/User');
 const Student = require('../models/Student');
 
+// 🟦 STEP 1 — ADD HELPER FUNCTION
+const resolveClassNames = (classDoc) => {
+  if (!classDoc) {
+    return {
+      className: 'Unassigned',
+      classDisplayName: 'Unassigned',
+    };
+  }
+
+  const name = classDoc.name || 'Unassigned';
+  const stream = classDoc.stream || null;
+
+  const classDisplayName =
+    classDoc.displayName ||
+    (stream ? `${name}${stream}` : name);
+
+  return { className: name, classDisplayName };
+};
 
 // Enhanced utility function to transform bills with better name handling
 const transformBill = (bill) => {
@@ -32,6 +50,11 @@ const transformBill = (bill) => {
     return 'Unknown';
   };
 
+  // 🟦 STEP 2 — UPDATED transformBill
+  const { className, classDisplayName } = resolveClassNames(
+    bill.class || bill.student?.class
+  );
+
   return {
     ...bill._doc ? bill._doc : bill,
     items: bill.items?.map(item => ({
@@ -48,7 +71,8 @@ const transformBill = (bill) => {
     },
     class: {
       ...(typeof bill.class === 'object' ? bill.class : { _id: bill.class }),
-      name: bill.class?.name || bill.student?.class?.name || 'Unassigned'
+      name: className,
+      displayName: classDisplayName
     }
   };
 };
@@ -172,18 +196,24 @@ module.exports = {
         }
       });
 
-      const previewData = students.map(student => ({
-        studentId: student._id,
-        studentName: student.user?.name || student.admissionNumber || 'Unknown',
-        className: student.class?.name || 'Unassigned',
-        items: template.items.map(item => ({
-          name: item.name,
-          amount: item.amount,
-          isMandatory: item.isMandatory
-        })),
-        totalAmount: template.items.reduce((sum, item) => sum + item.amount, 0),
-        currency: template.currency
-      }));
+      // 🟦 STEP 3 — UPDATED previewBills
+      const previewData = students.map(student => {
+        const { className, classDisplayName } = resolveClassNames(student.class);
+        
+        return {
+          studentId: student._id,
+          studentName: student.user?.name || student.admissionNumber || 'Unknown',
+          className,
+          classDisplayName,
+          items: template.items.map(item => ({
+            name: item.name,
+            amount: item.amount,
+            isMandatory: item.isMandatory
+          })),
+          totalAmount: template.items.reduce((sum, item) => sum + item.amount, 0),
+          currency: template.currency
+        };
+      });
 
       res.json({
         success: true,
@@ -374,15 +404,19 @@ module.exports = {
 
         const studentData = populatedBill.student || student;
         const studentName = studentData?.user?.name || studentData?.admissionNumber || 'Unknown Student';
-        const className =
-          populatedBill.class?.name ||
-          studentData.class?.name ||
-          'Unassigned Class';
+        
+        // 🟦 STEP 4 — UPDATED generateBills
+        const { className, classDisplayName } = resolveClassNames(
+          populatedBill.class || studentData.class
+        );
 
         bills.push(transformBill({
           ...populatedBill.toObject(),
           student: { _id: studentData._id, name: studentName },
-          class: { name: className }
+          class: { 
+            name: className,
+            displayName: classDisplayName 
+          }
         }));
 
       } catch (err) {
@@ -436,7 +470,6 @@ module.exports = {
     session.endSession();
   }
 },
-
 
   // Parent views children's fees
   async getParentBills(req, res) {
@@ -497,10 +530,16 @@ module.exports = {
         else if (paidAmount > 0) paymentStatus = 'Partial';
         else paymentStatus = 'Unpaid';
 
+        // 🟦 STEP 5 — UPDATED getParentBills
+        const { className, classDisplayName } = resolveClassNames(
+          transformed.student?.class
+        );
+
         return {
           ...transformed,
           studentName: transformed.student?.name || 'Unknown',
-          className: transformed.student?.class?.name || 'Unassigned',
+          className,
+          classDisplayName,
           studentId: transformed.student?._id,
           totalAmount,
           paidAmount,
@@ -598,9 +637,14 @@ module.exports = {
        .moveDown(1);
 
     // Student information
+    // 🟦 STEP 7 — UPDATED generateReceipt
+    const { classDisplayName: receiptClassDisplay } = resolveClassNames(
+      transformedBill.student.class
+    );
+    
     doc.fontSize(12)
        .text(`Student: ${transformedBill.student.name}`, { continued: true })
-       .text(`Class: ${transformedBill.student.class?.name || 'N/A'}`, { align: 'right' })
+       .text(`Class: ${receiptClassDisplay || 'N/A'}`, { align: 'right' })
        .moveDown(1);
 
     // Payment summary
@@ -751,10 +795,16 @@ module.exports = {
           else if (paidAmount > 0) paymentStatus = 'Partial';
           else paymentStatus = 'Unpaid';
 
+          // 🟦 BONUS: Updated getTermBills for consistency
+          const { className, classDisplayName } = resolveClassNames(
+            transformedBill.student?.class
+          );
+
           return {
             ...transformedBill,
             studentName: transformedBill.student?.name || 'Unknown',
-            className: transformedBill.student?.class?.name || 'Unassigned',
+            className,
+            classDisplayName,
             studentId: transformedBill.student?._id,
             totalAmount,
             paidAmount,
@@ -900,30 +950,30 @@ async recordPayment(req, res) {
     }
 
     // Response payload
-const responseData = {
-  ...updatedBill.toObject(),
-  student: {
-    _id: updatedBill.student._id,
-    name: updatedBill.student.user?.name || 'N/A',
-  },
-  class: {
-    _id: updatedBill.student.class?._id,
-    name: updatedBill.student.class?.name || 'N/A',
-  },
-  items: updatedBill.items.map(item => ({
-    _id: item._id,
-    name: item.name,
-    amount: item.amount,
-    paid: item.paid,
-    balance: item.balance
-  })),
-  payments: updatedBill.payments.map(p => ({
-    _id: p._id,
-    amount: p.amount,
-    method: p.method,
-    date: p.date
-  }))
-};
+    const responseData = {
+      ...updatedBill.toObject(),
+      student: {
+        _id: updatedBill.student._id,
+        name: updatedBill.student.user?.name || 'N/A',
+      },
+      class: {
+        _id: updatedBill.student.class?._id,
+        name: updatedBill.student.class?.name || 'N/A',
+      },
+      items: updatedBill.items.map(item => ({
+        _id: item._id,
+        name: item.name,
+        amount: item.amount,
+        paid: item.paid,
+        balance: item.balance
+      })),
+      payments: updatedBill.payments.map(p => ({
+        _id: p._id,
+        amount: p.amount,
+        method: p.method,
+        date: p.date
+      }))
+    };
 
     res.status(201).json({
       success: true,
@@ -950,8 +1000,6 @@ const responseData = {
     await session.endSession();
   }
 },
-
-
 
 
   async updateOrCreateBill(req, res) {
@@ -1123,11 +1171,8 @@ const responseData = {
   }
 },
 
-
 // Student views their own fees
-// ✅ Get student (or parent’s children) bills
-// ✅ Get student (or parent’s children) bills — supports childId filter
-// ✅ Updated getStudentBills — now strictly filters by requested child or logged-in student
+// ✅ Get student (or parent's children) bills — supports childId filter
 async getStudentBills(req, res) {
   try {
     const { childId } = req.query;
@@ -1251,16 +1296,19 @@ async getStudentBills(req, res) {
       else if (paidAmount > 0) paymentStatus = "Partial";
       else paymentStatus = "Unpaid";
 
+      // 🟦 STEP 6 — UPDATED getStudentBills
+      const { className, classDisplayName } = resolveClassNames(
+        transformed.student?.class || transformed.class
+      );
+
       return {
         ...transformed,
         studentName:
           transformed.student?.user?.name ||
           transformed.student?.name ||
           "Unknown",
-        className:
-          transformed.student?.class?.name ||
-          transformed.class?.name ||
-          "Unassigned",
+        className,
+        classDisplayName,
         studentId: transformed.student?._id?.toString(),
         totalAmount,
         paidAmount,
@@ -1303,7 +1351,7 @@ async getStudentBills(req, res) {
 
 
 
-// ✅ Generate receipt (student or parent’s child)
+// ✅ Generate receipt (student or parent's child)
 async generateStudentReceipt(req, res) {
   try {
     const { paymentId, childId } = req.params;
@@ -1418,9 +1466,14 @@ async generateStudentReceipt(req, res) {
       .text('STUDENT PAYMENT RECEIPT', { align: 'center', underline: true })
       .moveDown(1);
 
+    // 🟦 STEP 7 — UPDATED generateStudentReceipt
+    const { classDisplayName: studentReceiptClassDisplay } = resolveClassNames(
+      transformedBill.student.class
+    );
+    
     doc.fontSize(12)
       .text(`Student: ${transformedBill.student.user?.name}`, { continued: true })
-      .text(`Class: ${transformedBill.student.class?.name || 'N/A'}`, {
+      .text(`Class: ${studentReceiptClassDisplay || 'N/A'}`, {
         align: 'right',
       })
       .moveDown(1);
@@ -1549,9 +1602,14 @@ async generateFeeStatement(req, res) {
     doc.moveDown(1);
 
     // Student info
+    // 🟦 STEP 7 — UPDATED generateFeeStatement
+    const { classDisplayName: statementClassDisplay } = resolveClassNames(
+      transformed.class
+    );
+    
     doc.fontSize(12)
       .text(`Student: ${transformed.student?.name || 'Unknown'}`)
-      .text(`Class: ${transformed.class?.name || 'N/A'}`)
+      .text(`Class: ${statementClassDisplay || 'N/A'}`)
       .text(`Term: ${term} (${academicYear})`)
       .moveDown(1);
 
