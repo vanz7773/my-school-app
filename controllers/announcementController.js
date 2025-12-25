@@ -38,6 +38,26 @@ async function sendPush(userIds, title, body) {
   }
 }
 
+// ==============================
+// Helper: Resolve class names safely
+// ==============================
+function resolveClassNames(cls) {
+  if (!cls) {
+    return {
+      className: "Unassigned",
+      classDisplayName: null,
+    };
+  }
+
+  const className = cls.name || "Unassigned";
+
+  const classDisplayName =
+    cls.displayName ||
+    (cls.stream ? `${cls.name}${cls.stream}` : null);
+
+  return { className, classDisplayName };
+}
+
 
 exports.createAnnouncement = async (req, res) => {
   try {
@@ -260,11 +280,12 @@ exports.getMyAnnouncements = async (req, res) => {
       targetStudent = await Student.findOne({
         user: userId,
         school: schoolId
-      }).populate("class user", "name").lean();
+      }).populate("class user", "name stream displayName").lean();
 
       if (!targetStudent) {
         return res.status(404).json({ message: "Student record not found." });
       }
+
       classIds = [String(targetStudent.class._id)];
     }
 
@@ -284,11 +305,12 @@ exports.getMyAnnouncements = async (req, res) => {
           { parent: userId },
           { parentIds: { $in: [userId] } }
         ]
-      }).populate("class user", "name").lean();
+      }).populate("class user", "name stream displayName").lean();
 
       if (!targetStudent) {
         return res.status(403).json({ message: "Unauthorized childId" });
       }
+
       classIds = [String(targetStudent.class._id)];
     }
 
@@ -311,56 +333,34 @@ exports.getMyAnnouncements = async (req, res) => {
     }
 
     // ----------------------------------------------------------
-    // 🔍 BUILD STRICT FILTER
+    // 🔍 BUILD FILTER
     // ----------------------------------------------------------
     let filter = {
       school: schoolId,
       isDeleted: { $ne: true }
     };
 
-    // ----------------------------------------------------------
-    // 🎯 STUDENT: Only their class OR school-wide for students
-    // ----------------------------------------------------------
     if (userRole === "student") {
       filter.$or = [
-        { class: { $in: classIds } },  // Class-specific
-        { 
-          class: null, 
-          targetRoles: { $in: ["student", "all", "everyone"] } 
-        }  // School-wide for students
+        { class: { $in: classIds } },
+        { class: null, targetRoles: { $in: ["student", "all", "everyone"] } }
       ];
     }
 
-    // ----------------------------------------------------------
-    // 👪 PARENT: Only selected child's class OR school-wide for parents
-    // ----------------------------------------------------------
     if (userRole === "parent") {
       filter.$or = [
-        { class: { $in: classIds } },  // Child's class
-        { 
-          class: null, 
-          targetRoles: { $in: ["parent", "all", "everyone"] } 
-        }  // School-wide for parents
+        { class: { $in: classIds } },
+        { class: null, targetRoles: { $in: ["parent", "all", "everyone"] } }
       ];
     }
 
-    // ----------------------------------------------------------
-    // 🧑‍🏫 TEACHER: Classes they teach + teacher-targeted announcements
-    // ----------------------------------------------------------
     if (userRole === "teacher") {
       filter.$or = [
-        { class: { $in: classIds } },  // Their classes
-        { sentBy: userId },  // Announcements they created
-        { 
-          targetRoles: { $in: ["teacher", "all", "everyone"] } 
-        }  // Teacher-targeted announcements
+        { class: { $in: classIds } },
+        { sentBy: userId },
+        { targetRoles: { $in: ["teacher", "all", "everyone"] } }
       ];
     }
-
-    // ----------------------------------------------------------
-    // 👑 ADMIN: sees everything (NO restrictions)
-    // ----------------------------------------------------------
-    // No additional filters needed for admin
 
     // ----------------------------------------------------------
     // 📥 FETCH ANNOUNCEMENTS
@@ -368,13 +368,14 @@ exports.getMyAnnouncements = async (req, res) => {
     let announcements = await Announcement.find(filter)
       .sort({ createdAt: -1 })
       .populate("sentBy", "name role")
-      .populate("class", "name")
+      .populate("class", "name stream displayName")
       .lean();
 
     // ----------------------------------------------------------
     // 🔔 NOTIFICATION ENRICHMENT
     // ----------------------------------------------------------
     const announcementIds = announcements.map(a => a._id);
+
     const notifications = await Notification.find({
       school: schoolId,
       type: "announcement",
@@ -396,7 +397,7 @@ exports.getMyAnnouncements = async (req, res) => {
     }));
 
     // ----------------------------------------------------------
-    // 🔔 AUTO-MARK AS READ
+    // 🔔 AUTO MARK AS READ
     // ----------------------------------------------------------
     await Notification.updateMany(
       {
@@ -408,31 +409,42 @@ exports.getMyAnnouncements = async (req, res) => {
     );
 
     // ----------------------------------------------------------
-    // 📋 STUDENT ENRICHMENT
+    // 🧩 CLASS NAME NORMALIZATION (FIX FOR BASIC 9A)
+    // ----------------------------------------------------------
+    announcements = announcements.map(a => {
+      const { className, classDisplayName } = resolveClassNames(a.class);
+
+      return {
+        ...a,
+        className,
+        classDisplayName
+      };
+    });
+
+    // ----------------------------------------------------------
+    // 📋 STUDENT ENRICHMENT (NO className overwrite)
     // ----------------------------------------------------------
     if (userRole === "student") {
       announcements = announcements.map(a => ({
         ...a,
         childId: targetStudent._id,
-        childName: targetStudent.user?.name || "You",
-        className: targetStudent.class?.name
+        childName: targetStudent.user?.name || "You"
       }));
     }
 
     // ----------------------------------------------------------
-    // 📋 PARENT ENRICHMENT
+    // 📋 PARENT ENRICHMENT (NO className overwrite)
     // ----------------------------------------------------------
     if (userRole === "parent") {
       announcements = announcements.map(a => ({
         ...a,
         childId: targetStudent._id,
-        childName: targetStudent.user?.name,
-        className: targetStudent.class?.name
+        childName: targetStudent.user?.name
       }));
     }
 
     // ----------------------------------------------------------
-    // RESPONSE
+    // ✅ RESPONSE
     // ----------------------------------------------------------
     return res.json({
       success: true,
@@ -448,6 +460,7 @@ exports.getMyAnnouncements = async (req, res) => {
     });
   }
 };
+
 
 /**
  * Admin/Teacher: list announcements for the school (with optional filters).
