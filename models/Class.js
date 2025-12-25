@@ -2,9 +2,24 @@ const mongoose = require("mongoose");
 
 const classSchema = new mongoose.Schema(
   {
+    // 📘 Academic level (e.g. BASIC 9, KG 2)
     name: {
       type: String,
       required: [true, "Class name is required"],
+      trim: true,
+    },
+
+    // 🅰️ Optional stream (A, B, C…)
+    stream: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
+    },
+
+    // 🏷️ Display name shown in UI (e.g. BASIC 9A)
+    displayName: {
+      type: String,
       trim: true,
     },
 
@@ -52,7 +67,23 @@ const classSchema = new mongoose.Schema(
   }
 );
 
-// 🔒 Ensure uniqueness of class name per school
-classSchema.index({ name: 1, school: 1 }, { unique: true });
+/**
+ * 🔒 UNIQUE RULE (VERY IMPORTANT)
+ * A class is unique by:
+ *   school + name + stream
+ *
+ * This allows:
+ *   BASIC 9
+ *   BASIC 9A
+ *   BASIC 9B
+ *   BASIC 9C
+ *
+ * And prevents:
+ *   Duplicate BASIC 9A
+ */
+classSchema.index(
+  { school: 1, name: 1, stream: 1 },
+  { unique: true }
+);
 
 module.exports = mongoose.model("Class", classSchema);
