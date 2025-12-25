@@ -75,11 +75,12 @@ return {
     name: getStudentName(bill.student),
   },
 
-  class: {
-    name: className,
-    displayName: classDisplayName,
-  },
-};
+ class: {
+  ...(bill.student?.class || {}),
+  name: className,
+  displayName: classDisplayName,
+},
+ };
 };
   
 // Consistent currency formatting
@@ -1648,8 +1649,9 @@ async generateFeeStatement(req, res) {
     // Student info
     // 🟦 STEP 7 — UPDATED generateFeeStatement
     const { classDisplayName: statementClassDisplay } = resolveClassNames(
-      transformed.class
-    );
+  transformed.student?.class
+);
+
     
     doc.fontSize(12)
       .text(`Student: ${transformed.student?.name || 'Unknown'}`)
