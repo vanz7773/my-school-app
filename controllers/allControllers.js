@@ -92,6 +92,27 @@ const formatCurrency = (amount) => {
   }
 };
 
+// ✅ SAFE CLASS NAME RESOLVER
+function safeResolveClassNames(classDoc) {
+  if (!classDoc) {
+    return {
+      className: 'Unassigned',
+      classDisplayName: 'Unassigned',
+    };
+  }
+
+  // Handle populated or plain object safely
+  const name = classDoc.name || 'Unassigned';
+  const displayName = classDoc.displayName || name;
+
+  return {
+    className: name,
+    classDisplayName: displayName,
+  };
+}
+
+
+
 module.exports = {
   // School admin creates fee structure
   async createFeeTemplate(req, res) {
