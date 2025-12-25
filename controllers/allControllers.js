@@ -50,9 +50,9 @@ const transformBill = (bill) => {
     return 'Unknown';
   };
 
-  // 🟦 STEP 2 — UPDATED transformBill (SAFE MERGE)
+// 🟦 STEP 2 — FINAL (feeding-fee-style)
 const { className, classDisplayName } = resolveClassNames(
-  bill.class || bill.student?.class
+  bill.student?.class
 );
 
 return {
@@ -69,23 +69,16 @@ return {
   totalPaid: transformNumber(bill.totalPaid),
 
   student: {
-    ...(typeof bill.student === 'object'
+    ...(typeof bill.student === "object"
       ? bill.student
       : { _id: bill.student }),
     name: getStudentName(bill.student),
   },
 
-  // ✅ FIX: preserve original class object
-  class: bill.class
-    ? {
-        ...bill.class,              // keep _id, stream, populated fields
-        name: className,             // normalized base name
-        displayName: classDisplayName, // normalized display name
-      }
-    : {
-        name: className,
-        displayName: classDisplayName,
-      },
+  class: {
+    name: className,
+    displayName: classDisplayName,
+  },
 };
 };
   
