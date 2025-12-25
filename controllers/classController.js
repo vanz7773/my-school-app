@@ -5,7 +5,7 @@ const School = require('../models/School');
 // ✅ Create class (admin only)
 exports.createClass = async (req, res) => {
   try {
-    const { name, teachers } = req.body;
+    const { name, stream, teachers } = req.body;
     const schoolId = req.user.school;
 
     if (!schoolId) {
@@ -17,9 +17,19 @@ exports.createClass = async (req, res) => {
       return res.status(400).json({ message: 'School not found' });
     }
 
-    const existing = await Class.findOne({ name, school: schoolId });
+    // ✅ UPDATED uniqueness check (school + name + stream)
+    const existing = await Class.findOne({
+      school: schoolId,
+      name,
+      stream: stream || null
+    });
+
     if (existing) {
-      return res.status(400).json({ message: 'Class with this name already exists in your school' });
+      return res.status(400).json({
+        message: stream
+          ? `Class ${name}${stream} already exists in your school`
+          : `Class ${name} already exists in your school`
+      });
     }
 
     let validTeachers = [];
@@ -31,7 +41,9 @@ exports.createClass = async (req, res) => {
       });
 
       if (foundTeachers.length !== teachers.length) {
-        return res.status(400).json({ message: 'Some teacher IDs are invalid or not from your school' });
+        return res.status(400).json({
+          message: 'Some teacher IDs are invalid or not from your school'
+        });
       }
 
       validTeachers = foundTeachers.map(t => t._id);
@@ -39,6 +51,8 @@ exports.createClass = async (req, res) => {
 
     const newClass = new Class({
       name,
+      stream: stream || null,
+      displayName: stream ? `${name}${stream}` : name,
       school: schoolId,
       teachers: validTeachers,
       classTeacher: null,
@@ -57,11 +71,14 @@ exports.createClass = async (req, res) => {
       class: populatedClass,
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error creating class', error: err.message });
+    res.status(500).json({
+      message: 'Error creating class',
+      error: err.message
+    });
   }
 };
 
-// ✅ Get all classes for a school (admin only, with populated teachers & students)
+// ✅ Get all classes for a school (admin only)
 exports.getAllClasses = async (req, res) => {
   try {
     const schoolId = req.user.school;
@@ -74,30 +91,46 @@ exports.getAllClasses = async (req, res) => {
       .populate('teachers', 'name email')
       .populate('classTeacher', 'name email')
       .populate('students', 'name email')
-      .sort({ name: 1 });
+      .sort({ name: 1, stream: 1 });
 
     res.status(200).json({ success: true, classes });
   } catch (err) {
-    res.status(500).json({ message: 'Error fetching classes', error: err.message });
+    res.status(500).json({
+      message: 'Error fetching classes',
+      error: err.message
+    });
   }
 };
 
-// ✅ Get classes assigned to a teacher (teacher only, no students)
+// ✅ Get classes assigned to a teacher (teacher only)
 exports.getTeacherClasses = async (req, res) => {
   try {
     const { teacherId } = req.params;
     const schoolId = req.user.school;
 
-    const teacher = await User.findOne({ _id: teacherId, role: 'teacher', school: schoolId });
-    if (!teacher) return res.status(404).json({ message: 'Teacher not found' });
+    const teacher = await User.findOne({
+      _id: teacherId,
+      role: 'teacher',
+      school: schoolId
+    });
 
-    const classes = await Class.find({ school: schoolId, teachers: teacher._id })
-      .select('_id name')
-      .sort({ name: 1 });
+    if (!teacher) {
+      return res.status(404).json({ message: 'Teacher not found' });
+    }
+
+    const classes = await Class.find({
+      school: schoolId,
+      teachers: teacher._id
+    })
+      .select('_id name stream displayName')
+      .sort({ name: 1, stream: 1 });
 
     res.status(200).json({ success: true, classes });
   } catch (err) {
-    res.status(500).json({ message: 'Error fetching teacher classes', error: err.message });
+    res.status(500).json({
+      message: 'Error fetching teacher classes',
+      error: err.message
+    });
   }
 };
 
@@ -105,7 +138,7 @@ exports.getTeacherClasses = async (req, res) => {
 exports.updateClass = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, teachers } = req.body;
+    const { name, stream, teachers } = req.body;
     const schoolId = req.user.school;
 
     if (!schoolId) {
@@ -117,19 +150,46 @@ exports.updateClass = async (req, res) => {
       return res.status(404).json({ message: 'Class not found or unauthorized' });
     }
 
-    if (name && name !== classToUpdate.name) {
-      const existingClass = await Class.findOne({ name, school: schoolId, _id: { $ne: id } });
+    // ✅ UPDATED uniqueness logic (handles name OR stream change)
+    if (name !== undefined || stream !== undefined) {
+      const nextName = name ?? classToUpdate.name;
+      const nextStream = stream ?? classToUpdate.stream ?? null;
+
+      const existingClass = await Class.findOne({
+        school: schoolId,
+        name: nextName,
+        stream: nextStream,
+        _id: { $ne: id }
+      });
+
       if (existingClass) {
-        return res.status(400).json({ message: 'Class with this name already exists in your school' });
+        return res.status(400).json({
+          message: nextStream
+            ? `Class ${nextName}${nextStream} already exists in your school`
+            : `Class ${nextName} already exists in your school`
+        });
       }
-      classToUpdate.name = name;
+
+      classToUpdate.name = nextName;
+      classToUpdate.stream = nextStream;
+      classToUpdate.displayName = nextStream
+        ? `${nextName}${nextStream}`
+        : nextName;
     }
 
     if (teachers && Array.isArray(teachers)) {
-      const foundTeachers = await User.find({ _id: { $in: teachers }, role: 'teacher', school: schoolId });
+      const foundTeachers = await User.find({
+        _id: { $in: teachers },
+        role: 'teacher',
+        school: schoolId
+      });
+
       if (foundTeachers.length !== teachers.length) {
-        return res.status(400).json({ message: 'Some teacher IDs are invalid or not from your school' });
+        return res.status(400).json({
+          message: 'Some teacher IDs are invalid or not from your school'
+        });
       }
+
       classToUpdate.teachers = foundTeachers.map(t => t._id);
     }
 
@@ -146,7 +206,10 @@ exports.updateClass = async (req, res) => {
       class: updatedClass,
     });
   } catch (err) {
-    res.status(500).json({ message: 'Error updating class', error: err.message });
+    res.status(500).json({
+      message: 'Error updating class',
+      error: err.message
+    });
   }
 };
 
@@ -157,12 +220,17 @@ exports.deleteClass = async (req, res) => {
     const schoolId = req.user.school;
 
     const found = await Class.findOne({ _id: id, school: schoolId });
-    if (!found) return res.status(404).json({ message: 'Class not found or unauthorized' });
+    if (!found) {
+      return res.status(404).json({ message: 'Class not found or unauthorized' });
+    }
 
     await Class.findByIdAndDelete(id);
     res.json({ message: 'Class deleted' });
   } catch (err) {
-    res.status(500).json({ message: 'Error deleting class', error: err.message });
+    res.status(500).json({
+      message: 'Error deleting class',
+      error: err.message
+    });
   }
 };
 
@@ -173,27 +241,26 @@ exports.assignClassTeacher = async (req, res) => {
     const { teacherId } = req.body;
     const schoolId = req.user.school;
 
-    // Find class
     const classDoc = await Class.findOne({ _id: classId, school: schoolId });
     if (!classDoc) {
       return res.status(404).json({ message: 'Class not found' });
     }
 
-    // Find teacher
     const teacher = await User.findOne({
       _id: teacherId,
       role: 'teacher',
       school: schoolId
     });
+
     if (!teacher) {
       return res.status(400).json({ message: 'Teacher not found in your school' });
     }
 
-    // 🔥 AUTO-REMOVE teacher from previous class (if any)
+    // 🔥 AUTO-REMOVE teacher from previous class
     const previousClass = await Class.findOne({
       school: schoolId,
       classTeacher: teacherId,
-      _id: { $ne: classId }  // Ignore the class we're assigning to
+      _id: { $ne: classId }
     });
 
     if (previousClass) {
@@ -201,11 +268,9 @@ exports.assignClassTeacher = async (req, res) => {
       await previousClass.save();
     }
 
-    // Assign to new class
     classDoc.classTeacher = teacherId;
     await classDoc.save();
 
-    // Populate after save
     const updatedClass = await Class.findById(classDoc._id)
       .populate('teachers', 'name email')
       .populate('classTeacher', 'name email')
@@ -214,11 +279,10 @@ exports.assignClassTeacher = async (req, res) => {
     res.status(200).json({
       success: true,
       message: previousClass
-        ? `Teacher moved from ${previousClass.name} to ${classDoc.name}`
+        ? `Teacher moved from ${previousClass.displayName || previousClass.name} to ${classDoc.displayName || classDoc.name}`
         : 'Class teacher assigned successfully',
       class: updatedClass
     });
-
   } catch (err) {
     console.error('Error assigning class teacher:', err);
     res.status(500).json({
