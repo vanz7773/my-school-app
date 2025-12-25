@@ -20,6 +20,27 @@ async function resolveTeacherUserId(candidateId, schoolId) {
   return null;
 }
 
+// ==============================
+// Helper: Resolve class names safely
+// ==============================
+function resolveClassNames(cls) {
+  if (!cls) {
+    return {
+      className: "Unassigned",
+      classDisplayName: null,
+    };
+  }
+
+  const className = cls.name || "Unassigned";
+
+  const classDisplayName =
+    cls.displayName ||
+    (cls.stream ? `${cls.name}${cls.stream}` : null);
+
+  return { className, classDisplayName };
+}
+
+
 // ----------------------
 // Admin: Filter timetable by class/teacher/day (Scoped by school)
 exports.getFilteredTimetable = async (req, res) => {
@@ -39,7 +60,7 @@ exports.getFilteredTimetable = async (req, res) => {
     }
 
     const results = await Timetable.find(filter)
-      .populate('class', 'name')
+      .populate('class', 'name stream displayName')
       .populate('teacher', 'name email'); // teacher is a User id
     res.json({ success: true, results });
   } catch (err) {
@@ -53,15 +74,19 @@ exports.getFilteredTimetable = async (req, res) => {
 exports.getTeacherTimetable = async (req, res) => {
   try {
     // find Teacher profile
-    const teacher = await Teacher.findOne({ user: req.user._id, school: req.user.school });
-    if (!teacher) return res.status(404).json({ success: false, message: 'Teacher profile not found' });
+    const teacher = await Teacher.findOne({
+      user: req.user._id,
+      school: req.user.school
+    });
+    if (!teacher)
+      return res.status(404).json({ success: false, message: 'Teacher profile not found' });
 
-    // find classes where teacher is either classTeacher (User id) or listed in teachers array
+    // find classes where teacher is either classTeacher or subject teacher
     const classes = await Class.find({
       school: req.user.school,
       $or: [
-        { classTeacher: teacher.user }, // classTeacher stores User _id
-        { teachers: teacher.user }      // teachers array stores User _id
+        { classTeacher: teacher.user },
+        { teachers: teacher.user }
       ]
     }).select('_id');
 
@@ -70,73 +95,147 @@ exports.getTeacherTimetable = async (req, res) => {
     const results = await Timetable.find({
       school: req.user.school,
       $or: [
-        { teacher: teacher.user },         // direct teacher entries (User _id)
-        { class: { $in: classIds } }       // all entries for classes they teach/lead
+        { teacher: teacher.user },
+        { class: { $in: classIds } }
       ],
     })
-      .populate('class', 'name')
-      .populate('teacher', 'name email'); // teacher references User
+      // ✅ UPDATED populate
+      .populate('class', 'name stream displayName')
+      .populate('teacher', 'name email');
 
-    res.json({ success: true, timetable: results });
+    // ✅ NORMALIZE CLASS NAMES (BASIC 9A fix)
+    const timetable = results.map(entry => {
+      const { className, classDisplayName } = resolveClassNames(entry.class);
+
+      return {
+        ...entry.toObject(),
+        className,
+        classDisplayName
+      };
+    });
+
+    res.json({ success: true, timetable });
+
   } catch (err) {
     console.error('Error fetching teacher timetable:', err);
-    res.status(500).json({ success: false, message: 'Error fetching teacher timetable', error: err.message });
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching teacher timetable',
+      error: err.message
+    });
   }
 };
+
 
 // ----------------------
 // Student: View own class timetable (Scoped by school)
 exports.getStudentTimetable = async (req, res) => {
   try {
-    if (req.user.role !== 'student') return res.status(403).json({ success: false, message: 'Access denied' });
+    if (req.user.role !== 'student')
+      return res.status(403).json({ success: false, message: 'Access denied' });
 
-    const student = await Student.findOne({ user: req.user._id, school: req.user.school }).populate('class', '_id');
-    if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
+    const student = await Student.findOne({
+      user: req.user._id,
+      school: req.user.school
+    }).populate('class', '_id');
 
-    const results = await Timetable.find({ class: student.class._id, school: req.user.school })
+    if (!student)
+      return res.status(404).json({ success: false, message: 'Student not found' });
+
+    const results = await Timetable.find({
+      class: student.class._id,
+      school: req.user.school
+    })
       .populate('teacher', 'name email')
-      .populate('class', 'name');
+      // ✅ UPDATED: include stream + displayName
+      .populate('class', 'name stream displayName');
 
-    res.json({ success: true, timetable: results });
+    // ✅ NORMALIZE CLASS NAMES (BASIC 9A fix)
+    const timetable = results.map(entry => {
+      const { className, classDisplayName } = resolveClassNames(entry.class);
+
+      return {
+        ...entry.toObject(),
+        className,
+        classDisplayName
+      };
+    });
+
+    res.json({ success: true, timetable });
+
   } catch (err) {
     console.error('Error fetching student timetable:', err);
-    res.status(500).json({ success: false, message: 'Error fetching timetable', error: err.message });
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching timetable',
+      error: err.message
+    });
   }
 };
+
 
 // ----------------------
 // Parent: View all children’s timetables (Scoped by school)
 // NOTE: fix - ensure we populate the student's user to get a display name
 exports.getParentTimetables = async (req, res) => {
   try {
-    if (req.user.role !== 'parent') return res.status(403).json({ success: false, message: 'Access denied' });
+    if (req.user.role !== 'parent')
+      return res.status(403).json({ success: false, message: 'Access denied' });
 
-    const children = await Student.find({ parent: req.user._id, school: req.user.school })
-      .populate('class', 'name')
-      .populate('user', 'name'); // important: get student's display name
+    const children = await Student.find({
+      parent: req.user._id,
+      school: req.user.school
+    })
+      .populate('class', 'name stream displayName')
+      .populate('user', 'name');
 
-    if (!children.length) return res.status(404).json({ success: false, message: 'No linked children found' });
+    if (!children.length)
+      return res.status(404).json({ success: false, message: 'No linked children found' });
 
     const timetables = {};
+
     for (const child of children) {
-      const childTimetable = await Timetable.find({
+      const results = await Timetable.find({
         class: child.class._id,
         school: req.user.school
       })
         .populate('teacher', 'name email')
-        .populate('class', 'name');
+        .populate('class', 'name stream displayName');
 
-      // prefer student user.name if present, else fallback to student._id
-      const childName = (child.user && child.user.name) ? child.user.name : String(child._id);
-      timetables[childName] = childTimetable;
+      // ✅ NORMALIZE CLASS NAME (BASIC 9A FIX)
+      const normalizedTimetable = results.map(entry => {
+        const { className, classDisplayName } = resolveClassNames(entry.class);
+
+        return {
+          ...entry.toObject(),
+          className,
+          classDisplayName
+        };
+      });
+
+      // Prefer student user.name if present
+      const childName =
+        child.user?.name || String(child._id);
+
+      timetables[childName] = normalizedTimetable;
     }
 
-    res.json({ success: true, message: 'Parent timetables fetched successfully', timetables });
+    res.json({
+      success: true,
+      message: 'Parent timetables fetched successfully',
+      timetables
+    });
+
   } catch (err) {
     console.error('Error fetching parent timetables:', err);
-    res.status(500).json({ success: false, message: 'Error fetching parent timetables', error: err.message });
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching parent timetables',
+      error: err.message
+    });
   }
 };
+
 
 // ----------------------
 // Admin: Create new timetable entry
@@ -165,7 +264,7 @@ exports.createTimetableEntry = async (req, res) => {
     await newEntry.save();
 
     const populated = await Timetable.findById(newEntry._id)
-      .populate('class', 'name')
+      .populate('class', 'name stream displayName')
       .populate('teacher', 'name email');
 
     res.status(201).json({ success: true, message: 'Timetable entry created', timetable: populated });
@@ -206,7 +305,7 @@ exports.createClassTeacherTimetable = async (req, res) => {
     await newEntry.save();
 
     const populated = await Timetable.findById(newEntry._id)
-      .populate('class', 'name')
+      .populate('class', 'name stream displayName')
       .populate('teacher', 'name email');
 
     res.status(201).json({ success: true, message: 'Timetable entry created successfully', timetable: populated });
@@ -248,7 +347,7 @@ exports.updateTimetableEntry = async (req, res) => {
     await entry.save();
 
     const populated = await Timetable.findById(entry._id)
-      .populate('class', 'name')
+      .populate('class', 'name stream displayName')
       .populate('teacher', 'name email');
 
     res.json({ success: true, message: 'Timetable entry updated', timetable: populated });
@@ -361,10 +460,22 @@ exports.getTeacherClassTimetable = async (req, res) => {
       school: req.user.school,
       class: classId
     })
-      .populate("class", "name")
+      .populate("class", "name stream displayName")
       .populate("teacher", "name email");
 
-    res.json({ success: true, timetable: results });
+    // ✅ NORMALIZE CLASS NAME (BASIC 9A FIX)
+    const timetable = results.map(entry => {
+      const { className, classDisplayName } = resolveClassNames(entry.class);
+
+      return {
+        ...entry.toObject(),
+        className,
+        classDisplayName
+      };
+    });
+
+    res.json({ success: true, timetable });
+
   } catch (err) {
     console.error('Error fetching class timetable:', err);
     res.status(500).json({
@@ -374,3 +485,4 @@ exports.getTeacherClassTimetable = async (req, res) => {
     });
   }
 };
+
