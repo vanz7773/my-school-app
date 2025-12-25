@@ -69,6 +69,22 @@ async function getFeeConfigWithCache(schoolId) {
   
   return config;
 }
+// 🧩 Helper: Resolve class display name safely
+const resolveClassNames = (classDoc) => {
+  if (!classDoc) {
+    return {
+      className: "Unknown Class",
+      classDisplayName: "Unknown Class",
+    };
+  }
+
+  return {
+    className: classDoc.name,
+    classDisplayName:
+      classDoc.displayName ||
+      `${classDoc.name}${classDoc.stream || ""}`,
+  };
+};
 
 // --------------------------------------------------------------------
 // 🔧 Helper: Get class with caching
@@ -549,7 +565,7 @@ const calculateFeedingFeeCollection = async (req, res) => {
     for (const student of classStudents) {
       const studentId = String(student._id);
       const studentName = getFullStudentName(student);
-      const className = student.class?.name || "Unknown Class";
+      const { className, classDisplayName } = resolveClassNames(student.class);
 
       // 🧩 Use safe class-based system
       const amountPerDay = getAmountPerDay(student, feeConfig);
@@ -605,14 +621,18 @@ const calculateFeedingFeeCollection = async (req, res) => {
       totalAmount += calculatedAmount;
 
       breakdown.push({
-        studentId,
-        studentName,
-        className,
-        daysPaid,
-        amountPerDay,
-        total: calculatedAmount,
-        days: ensureDefaultDays(mergedDays),
-      });
+  studentId,
+  studentName,
+
+  className,
+  classDisplayName,
+
+  daysPaid,
+  amountPerDay,
+  total: calculatedAmount,
+  days: ensureDefaultDays(mergedDays),
+});
+
     }
 
     // 🧩 Recalculate manual records safely
@@ -1002,7 +1022,7 @@ const getFeedingFeeForStudent = async (req, res) => {
 
     for (const student of students) {
       const studentName = getFullStudentName(student);
-      const className = student.class?.name || "Unknown";
+      const { className, classDisplayName } = resolveClassNames(student.class);
       const amountPerDay = getAmountPerDay(student, feeConfig);
 
       console.log(`📊 Processing student ${studentName}, amountPerDay: ${amountPerDay}`);
@@ -1072,16 +1092,19 @@ const getFeedingFeeForStudent = async (req, res) => {
       }));
 
       results.push({
-        studentId: student._id,
-        studentName,
-        className,
-        presentDays,
-        amountPerDay,
-        total,
-        days,
-        records,
-        notification: notifMap[String(student._id)] || null,
-      });
+  studentId: student._id,
+  studentName,
+
+  className,              // BASIC 9 (raw)
+  classDisplayName,       // BASIC 9A (UI-safe)
+
+  presentDays,
+  amountPerDay,
+  total,
+  days,
+  records,
+  notification: notifMap[String(student._id)] || null,
+});
     }
 
     // 🔔 MARK NOTIFICATIONS AS READ
@@ -1206,14 +1229,20 @@ const getFeedingFeeSummary = async (req, res) => {
       totalAmount += studentTotal;
       studentCount++;
 
-      breakdown.push({
-        studentId,
-        studentName: getFullStudentName(student),
-        className: student.class?.name || "Unknown Class",
-        daysPaid,
-        amountPerDay,
-        total: studentTotal
-      });
+      const { className, classDisplayName } = resolveClassNames(student.class);
+
+breakdown.push({
+  studentId,
+  studentName: getFullStudentName(student),
+
+  className,
+  classDisplayName,
+
+  daysPaid,
+  amountPerDay,
+  total: studentTotal
+});
+
     }
 
     return res.json({
