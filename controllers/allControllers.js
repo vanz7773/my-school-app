@@ -92,24 +92,7 @@ const formatCurrency = (amount) => {
   }
 };
 
-// ✅ SAFE CLASS NAME RESOLVER
-function safeResolveClassNames(classDoc) {
-  if (!classDoc) {
-    return {
-      className: 'Unassigned',
-      classDisplayName: 'Unassigned',
-    };
-  }
 
-  // Handle populated or plain object safely
-  const name = classDoc.name || 'Unassigned';
-  const displayName = classDoc.displayName || name;
-
-  return {
-    className: name,
-    classDisplayName: displayName,
-  };
-}
 
 
 
@@ -900,14 +883,16 @@ async recordPayment(req, res) {
 
   try {
     await session.startTransaction();
+
     const { billId, amount, method, term, academicYear, studentId, itemsToPay } = req.body;
 
-    // Validate required fields
     if (!billId || !amount || amount <= 0 || !method || !term || !academicYear || !studentId) {
-      throw new Error('Missing required fields: billId, amount, method, term, academicYear, studentId');
+      throw new Error(
+        'Missing required fields: billId, amount, method, term, academicYear, studentId'
+      );
     }
 
-    // Check if bill exists
+    // 🔍 Fetch bill
     const bill = await TermBill.findOne({
       _id: billId,
       student: studentId,
@@ -918,26 +903,35 @@ async recordPayment(req, res) {
 
     if (!bill) throw new Error('Bill not found');
 
-    // Validate payment amount
     const remainingBalance = bill.totalAmount - bill.totalPaid;
-    if (amount > remainingBalance) throw new Error('Payment amount exceeds remaining balance');
+    if (amount > remainingBalance) {
+      throw new Error('Payment amount exceeds remaining balance');
+    }
 
-    // Create payment record
-    const payment = await Payment.create([{
-      bill: billId,
-      amount,
-      method,
-      term,
-      academicYear,
-      student: studentId,
-      school: req.user.school,
-      recordedBy: req.user._id
-    }], { session });
+    // 💳 Create payment
+    const payment = await Payment.create(
+      [{
+        bill: billId,
+        amount,
+        method,
+        term,
+        academicYear,
+        student: studentId,
+        school: req.user.school,
+        recordedBy: req.user._id
+      }],
+      { session }
+    );
 
-    // Apply payment to items
+    // 💰 Apply payment to items
     let amountLeft = amount;
     const updatedItems = bill.items.map(item => {
-      if (amountLeft <= 0 || (itemsToPay?.length && !itemsToPay.includes(item._id.toString()))) return item;
+      if (
+        amountLeft <= 0 ||
+        (itemsToPay?.length && !itemsToPay.includes(item._id.toString()))
+      ) {
+        return item;
+      }
 
       const paymentApplied = Math.min(amountLeft, item.balance);
       amountLeft -= paymentApplied;
@@ -949,19 +943,19 @@ async recordPayment(req, res) {
       };
     });
 
-    // Update bill totals
     const totalPaid = bill.totalPaid + amount;
     const newBalance = bill.totalAmount - totalPaid;
     const status = newBalance <= 0 ? 'Paid' : 'Partial';
 
-    // Update bill
-    let updatedBill = await TermBill.findByIdAndUpdate(
+    // 🧾 Update bill
+    await TermBill.findByIdAndUpdate(
       billId,
       {
         items: updatedItems,
         totalPaid,
         balance: newBalance,
         status,
+        class: bill.class || null, // ✅ ENSURE CLASS STAYS ON BILL
         $push: {
           payments: {
             _id: payment[0]._id,
@@ -971,23 +965,26 @@ async recordPayment(req, res) {
           }
         }
       },
-      { new: true, session }
-    )
-    .populate({
-      path: 'student',
-      populate: [
-        { path: 'user', select: 'name' },
-        // 🟦 STEP 1 — UPDATED: Added stream and displayName
-        { path: 'class', select: 'name stream displayName' }
-      ]
-    })
-    .populate('template', 'name')
-    .session(session);
+      { session }
+    );
+
+    // 🔄 Re-fetch populated + lean
+    const updatedBill = await TermBill.findById(billId)
+      .populate({
+        path: 'student',
+        populate: [
+          { path: 'user', select: 'name' },
+          { path: 'class', select: 'name stream displayName' }
+        ]
+      })
+      .populate('class', 'name stream displayName')
+      .populate('template', 'name')
+      .lean();
 
     await session.commitTransaction();
     transactionCommitted = true;
 
-    // Emit socket event
+    // 🔔 Emit socket event
     const io = req.app.get('io');
     if (io) {
       io.to(req.user.school.toString()).emit('payment-recorded', {
@@ -998,21 +995,21 @@ async recordPayment(req, res) {
       });
     }
 
-// Response payload
+    // 🟦 Use EXISTING resolver
     const { className, classDisplayName } = resolveClassNames(
-      updatedBill.student?.class
+      updatedBill.class || updatedBill.student?.class
     );
 
     const responseData = {
-      ...updatedBill.toObject(),
+      ...transformBill(updatedBill),
       student: {
-        _id: updatedBill.student._id,
-        name: updatedBill.student.user?.name || 'N/A',
+        _id: updatedBill.student?._id,
+        name: updatedBill.student?.user?.name || 'N/A'
       },
       class: {
-        ...updatedBill.student?.class,
+        _id: updatedBill.class?._id || null,
         name: className,
-        displayName: classDisplayName,
+        displayName: classDisplayName
       },
       items: updatedBill.items.map(item => ({
         _id: item._id,
@@ -1042,13 +1039,16 @@ async recordPayment(req, res) {
     });
 
   } catch (error) {
-    if (!transactionCommitted && session.inTransaction()) await session.abortTransaction();
+    if (!transactionCommitted && session.inTransaction()) {
+      await session.abortTransaction();
+    }
 
     console.error('Payment recording error:', error);
+
     const statusCode = error.message.includes('not found') ? 404 : 400;
     res.status(statusCode).json({
       message: error.message || 'Error recording payment',
-      error: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   } finally {
     await session.endSession();
@@ -1078,7 +1078,7 @@ async recordPayment(req, res) {
       school: req.user.school
     })
       .populate({ path: 'user', select: 'name' })
-      .populate('class', 'name stream displayName') // ✅ REQUIRED
+      .populate('class', 'name stream displayName')
       .session(session);
 
     if (!student) throw new Error('Student not found');
@@ -1113,7 +1113,7 @@ async recordPayment(req, res) {
           totalAmount,
           totalPaid,
           status,
-          class: student.class?._id || null, // ✅ FIX 1
+          class: student.class?._id || null,
           isManualUpdate: true
         },
         { new: true, session }
@@ -1123,7 +1123,7 @@ async recordPayment(req, res) {
         [{
           school: req.user.school,
           student: student._id,
-          class: student.class?._id || null, // ✅ FIX 2 (CRITICAL)
+          class: student.class?._id || null,
           template: template._id,
           items: billItems,
           totalAmount,
@@ -1147,12 +1147,12 @@ async recordPayment(req, res) {
           { path: 'class', select: 'name stream displayName' }
         ]
       })
-      .populate('class', 'name stream displayName') // ✅ ENSURE CLASS
+      .populate('class', 'name stream displayName')
       .populate('template', 'name')
       .lean();
 
-    // ✅ SAFE CLASS NAME RESOLUTION
-    const { className, classDisplayName } = safeResolveClassNames(
+    // ✅ USE EXISTING resolver (NO safeResolveClassNames)
+    const { className, classDisplayName } = resolveClassNames(
       bill.class || student.class
     );
 
@@ -1192,6 +1192,7 @@ async recordPayment(req, res) {
     await session.endSession();
   }
 },
+
 
 // Student views their own fees
 // ✅ Get student (or parent's children) bills — supports childId filter
