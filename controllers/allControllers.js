@@ -159,9 +159,10 @@ module.exports = {
           path: 'user',
           select: 'name'
         })
+        // 🟦 STEP 1 — UPDATED: Added stream and displayName
         .populate({
           path: 'class',
-          select: 'name',
+          select: 'name stream displayName',
           options: { lean: true }
         })
         .select('_id user class admissionNumber');
@@ -174,9 +175,10 @@ module.exports = {
           path: 'user',
           select: 'name'
         })
+        // 🟦 STEP 1 — UPDATED: Added stream and displayName
         .populate({
           path: 'class',
-          select: 'name',
+          select: 'name stream displayName',
           options: { lean: true }
         })
         .select('_id user class admissionNumber');
@@ -268,9 +270,10 @@ module.exports = {
     if (studentIds) query._id = { $in: studentIds };
     else if (classId) query.class = classId;
 
+    // 🟦 STEP 1 — UPDATED: Added stream and displayName
     studentsList = await Student.find(query)
       .populate({ path: 'user', select: 'name' })
-      .populate({ path: 'class', select: 'name' })
+      .populate({ path: 'class', select: 'name stream displayName' })
       .select('_id user class admissionNumber')
       .session(session);
 
@@ -396,10 +399,12 @@ module.exports = {
             path: 'student',
             populate: [
               { path: 'user', select: 'name' },
-              { path: 'class', select: 'name' }
+              // 🟦 STEP 1 — UPDATED: Added stream and displayName
+              { path: 'class', select: 'name stream displayName' }
             ]
           })
-          .populate('class', 'name')
+          // 🟦 STEP 1 — UPDATED: Added stream and displayName
+          .populate('class', 'name stream displayName')
           .session(session);
 
         const studentData = populatedBill.student || student;
@@ -487,9 +492,10 @@ module.exports = {
             path: 'user',
             select: 'name'
           },
+          // 🟦 STEP 1 — UPDATED: Added stream and displayName
           {
             path: 'class',
-            select: 'name'
+            select: 'name stream displayName'
           }
         ]
       });
@@ -510,9 +516,10 @@ module.exports = {
             path: 'user',
             select: 'name'
           },
+          // 🟦 STEP 1 — UPDATED: Added stream and displayName
           {
             path: 'class',
-            select: 'name'
+            select: 'name stream displayName'
           }
         ]
       })
@@ -596,7 +603,8 @@ module.exports = {
             path: 'student',
             populate: [
               { path: 'user', select: 'name' },
-              { path: 'class', select: 'name' }
+              // 🟦 STEP 1 — UPDATED: Added stream and displayName
+              { path: 'class', select: 'name stream displayName' }
             ]
           }
         ]
@@ -764,9 +772,10 @@ module.exports = {
             path: 'user',
             select: 'name'
           },
+          // 🟦 STEP 1 — UPDATED: Added stream and displayName
           {
             path: 'class',
-            select: 'name'
+            select: 'name stream displayName'
           }
         ],
         select: 'user class'
@@ -929,7 +938,8 @@ async recordPayment(req, res) {
       path: 'student',
       populate: [
         { path: 'user', select: 'name' },
-        { path: 'class', select: 'name' }
+        // 🟦 STEP 1 — UPDATED: Added stream and displayName
+        { path: 'class', select: 'name stream displayName' }
       ]
     })
     .populate('template', 'name')
@@ -1034,7 +1044,8 @@ async recordPayment(req, res) {
       school: req.user.school
     })
       .populate({ path: 'user', select: 'name' })
-      .populate('class', 'name')
+      // 🟦 STEP 1 — UPDATED: Added stream and displayName
+      .populate('class', 'name stream displayName')
       .session(session);
 
     if (!student) throw new Error('Student not found');
@@ -1079,7 +1090,8 @@ async recordPayment(req, res) {
           path: 'student',
           populate: [
             { path: 'user', select: 'name' },
-            { path: 'class', select: 'name' }
+            // 🟦 STEP 1 — UPDATED: Added stream and displayName
+            { path: 'class', select: 'name stream displayName' }
           ]
         })
         .populate('template', 'name')
@@ -1113,7 +1125,8 @@ async recordPayment(req, res) {
     path: 'student',
     populate: [
       { path: 'user', select: 'name' },
-      { path: 'class', select: 'name' }
+      // 🟦 STEP 1 — UPDATED: Added stream and displayName
+      { path: 'class', select: 'name stream displayName' }
     ]
   })
   .populate('template', 'name')
@@ -1188,7 +1201,8 @@ async getStudentBills(req, res) {
     if (user.role === "student") {
       const student = await Student.findOne({ user: user._id })
         .populate("user", "name")
-        .populate("class", "name");
+        // 🟦 STEP 1 — UPDATED: Added stream and displayName
+        .populate("class", "name stream displayName");
 
       if (!student) {
         return res.status(404).json({ message: "Student record not found" });
@@ -1209,7 +1223,8 @@ async getStudentBills(req, res) {
           ],
         })
           .populate("user", "name")
-          .populate("class", "name");
+          // 🟦 STEP 1 — UPDATED: Added stream and displayName
+          .populate("class", "name stream displayName");
 
         if (!targetChild) {
           return res.status(403).json({
@@ -1228,7 +1243,8 @@ async getStudentBills(req, res) {
           ],
         })
           .populate("user", "name")
-          .populate("class", "name");
+          // 🟦 STEP 1 — UPDATED: Added stream and displayName
+          .populate("class", "name stream displayName");
 
         if (!students.length) {
           return res.status(404).json({
@@ -1262,7 +1278,8 @@ async getStudentBills(req, res) {
         path: "student",
         populate: [
           { path: "user", select: "name" },
-          { path: "class", select: "name" },
+          // 🟦 STEP 1 — UPDATED: Added stream and displayName
+          { path: "class", select: "name stream displayName" },
         ],
       })
       .populate({
@@ -1428,7 +1445,8 @@ async generateStudentReceipt(req, res) {
             path: 'student',
             populate: [
               { path: 'user', select: 'name' },
-              { path: 'class', select: 'name' },
+              // 🟦 STEP 1 — UPDATED: Added stream and displayName
+              { path: 'class', select: 'name stream displayName' },
             ],
           },
         ],
@@ -1561,7 +1579,8 @@ async generateFeeStatement(req, res) {
         path: 'student',
         populate: [
           { path: 'user', select: 'name' },
-          { path: 'class', select: 'name' }
+          // 🟦 STEP 1 — UPDATED: Added stream and displayName
+          { path: 'class', select: 'name stream displayName' }
         ]
       })
       .populate('payments')
@@ -1695,7 +1714,8 @@ async getReceiptData(req, res) {
             path: 'student',
             populate: [
               { path: 'user', select: 'name' },
-              { path: 'class', select: 'name' }
+              // 🟦 STEP 1 — UPDATED: Added stream and displayName
+              { path: 'class', select: 'name stream displayName' }
             ]
           }
         ]
