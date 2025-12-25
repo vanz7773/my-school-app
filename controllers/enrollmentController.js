@@ -72,45 +72,68 @@ exports.getClassEnrollmentSummary = async (req, res) => {
       },
       
       // Project final structure
-      {
-        $project: {
-          classId: '$_id',
-          className: '$name',
-          boys: {
-            $size: {
-              $filter: {
-                input: '$students',
-                as: 'student',
-                cond: { $eq: [{ $toLower: '$$student.gender' }, 'male'] }
-              }
-            }
-          },
-          girls: {
-            $size: {
-              $filter: {
-                input: '$students',
-                as: 'student',
-                cond: { $eq: [{ $toLower: '$$student.gender' }, 'female'] }
-              }
-            }
-          },
-          total: { $add: [
-            { $size: { $filter: { input: '$students', as: 'student', cond: { $eq: [{ $toLower: '$$student.gender' }, 'male'] } } } },
-            { $size: { $filter: { input: '$students', as: 'student', cond: { $eq: [{ $toLower: '$$student.gender' }, 'female'] } } } }
-          ]},
-          students: {
-            $map: {
+      // Project final structure
+{
+  $project: {
+    classId: '$_id',
+
+    // ✅ ADD THESE TWO LINES
+    className: '$name',
+    classDisplayName: { $ifNull: ['$displayName', '$name'] },
+
+    boys: {
+      $size: {
+        $filter: {
+          input: '$students',
+          as: 'student',
+          cond: { $eq: [{ $toLower: '$$student.gender' }, 'male'] }
+        }
+      }
+    },
+    girls: {
+      $size: {
+        $filter: {
+          input: '$students',
+          as: 'student',
+          cond: { $eq: [{ $toLower: '$$student.gender' }, 'female'] }
+        }
+      }
+    },
+    total: {
+      $add: [
+        {
+          $size: {
+            $filter: {
               input: '$students',
               as: 'student',
-              in: {
-                name: { $ifNull: ['$$student.userName', 'Unnamed'] },
-                dateOfBirth: '$$student.dateOfBirth',
-                admissionNumber: '$$student.admissionNumber'
-              }
+              cond: { $eq: [{ $toLower: '$$student.gender' }, 'male'] }
+            }
+          }
+        },
+        {
+          $size: {
+            $filter: {
+              input: '$students',
+              as: 'student',
+              cond: { $eq: [{ $toLower: '$$student.gender' }, 'female'] }
             }
           }
         }
+      ]
+    },
+    students: {
+      $map: {
+        input: '$students',
+        as: 'student',
+        in: {
+          name: { $ifNull: ['$$student.userName', 'Unnamed'] },
+          dateOfBirth: '$$student.dateOfBirth',
+          admissionNumber: '$$student.admissionNumber'
+        }
       }
+    }
+  }
+}
     ]);
 
     // Calculate school-wide summary
