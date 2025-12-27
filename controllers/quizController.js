@@ -184,6 +184,26 @@ const resolveSubjectName = (quiz) => {
   return "Unknown Subject";
 };
 
+// ==============================
+// Helper: Resolve class names (Quizzes = class-based)
+// ==============================
+function resolveQuizClassNames(cls) {
+  if (!cls) {
+    return {
+      className: "Unassigned",
+      classDisplayName: null,
+    };
+  }
+
+  const className = cls.name || "Unassigned";
+
+  const classDisplayName =
+    cls.displayName ||
+    (cls.stream ? `${cls.name}${cls.stream}` : cls.name);
+
+  return { className, classDisplayName };
+}
+
 // 🎯 Optimized Database Operations
 const executeWithTimeout = async (operation, timeout = MAX_QUERY_TIMEOUT) => {
   const timeoutPromise = new Promise((_, reject) => 
@@ -830,10 +850,15 @@ const getQuizzesForClass = async (req, res) => {
         const id = q._id.toString();
         const completed = completedMap.has(id);
         const inProgress = !completed && inProgressMap.has(id);
+        
+        // 🔴 ADD: Normalize class name
+        const { className, classDisplayName } = resolveQuizClassNames(q.class);
 
         return {
           ...q,
           subject: q.subject?.name ?? "Unknown Subject",
+          className,                // 🔴 ADD: normalized className
+          classDisplayName,         // 🔴 ADD: UI-ready display name
           completed,
           inProgress,
           status: completed ? "Completed" : inProgress ? "In Progress" : "Available",
@@ -922,9 +947,14 @@ const getQuizzesForClass = async (req, res) => {
         averageScore: null
       };
 
+      // 🔴 ADD: Normalize class name
+      const { className, classDisplayName } = resolveQuizClassNames(q.class);
+
       return {
         ...q,
         subject: q.subject?.name ?? "Unknown Subject",
+        className,                // 🔴 ADD: normalized className
+        classDisplayName,         // 🔴 ADD: UI-ready display name
         submissionCount: stats.submissionCount,
         averageScore: stats.averageScore,
         inProgressCount: attemptsMap.get(id) || 0
@@ -966,17 +996,23 @@ const getQuizzesForSchool = async (req, res) => {
     }
 
     // ✅ Format quizzes to always include readable subject name
-    const formattedQuizzes = quizzes.map(q => ({
-      _id: q._id,
-      title: q.title,
-      class: q.class?.name || 'Unknown Class',
-      teacher: q.teacher?.name || 'Unknown Teacher',
-      subject: resolveSubjectName(q),
-      totalPoints: q.totalPoints || 0,
-      createdAt: q.createdAt,
-      dueDate: q.dueDate,
-      isPublished: q.isPublished,
-    }));
+    const formattedQuizzes = quizzes.map(q => {
+      // 🔴 ADD: Normalize class name
+      const { className, classDisplayName } = resolveQuizClassNames(q.class);
+
+      return {
+        _id: q._id,
+        title: q.title,
+        className,                // 🔴 ADD: normalized className (replaces q.class?.name)
+        classDisplayName,         // 🔴 ADD: UI-ready display name
+        teacher: q.teacher?.name || 'Unknown Teacher',
+        subject: resolveSubjectName(q),
+        totalPoints: q.totalPoints || 0,
+        createdAt: q.createdAt,
+        dueDate: q.dueDate,
+        isPublished: q.isPublished,
+      };
+    });
 
     res.json({ quizzes: formattedQuizzes });
   } catch (error) {
@@ -1797,6 +1833,10 @@ const getResultsForStudent = async (req, res) => {
         const info = studentInfoMap.get(r.studentId.toString());
         r.childName = info.name;
         r.className = info.className;
+        // 🔴 ADD: Get class display name
+        const classObj = { name: info.className }; // Simplified, adjust if you have stream data
+        const { classDisplayName } = resolveQuizClassNames(classObj);
+        r.classDisplayName = classDisplayName || info.className;
 
         r.answers = Array.isArray(r.answers) ? r.answers : [];
         const pendingEssay = r.answers.some(
@@ -1864,10 +1904,17 @@ const getResultsForStudent = async (req, res) => {
         if (child) {
           r.childName = child.user?.name || "Unknown Child";
           r.className = child.class?.name || "Unknown Class";
+          // 🔴 ADD: Get class display name
+          const { classDisplayName } = resolveQuizClassNames(child.class);
+          r.classDisplayName = classDisplayName || r.className;
         } else {
           const info = await resolveStudentInfo(r.studentId, user.school);
           r.childName = info.name;
           r.className = info.className;
+          // 🔴 ADD: Get class display name
+          const classObj = { name: info.className };
+          const { classDisplayName } = resolveQuizClassNames(classObj);
+          r.classDisplayName = classDisplayName || info.className;
         }
 
         r.answers = Array.isArray(r.answers) ? r.answers : [];
@@ -2151,9 +2198,13 @@ const getAllClassQuizResultsForTeacher = async (req, res) => {
 
       if (!groupedByClass[classId]) {
         const classDoc = teacherClasses.find((c) => c._id.toString() === classId);
+        // 🔴 ADD: Normalize class name
+        const { className, classDisplayName } = resolveQuizClassNames(classDoc);
+
         groupedByClass[classId] = {
           classId,
-          className: classDoc?.name || "Unknown Class",
+          className,                // 🔴 ADD: normalized className
+          classDisplayName,         // 🔴 ADD: UI-ready display name
           quizzes: {},
         };
       }
@@ -2194,6 +2245,7 @@ const getAllClassQuizResultsForTeacher = async (req, res) => {
       results: Object.values(groupedByClass).map((cls) => ({
         classId: cls.classId,
         className: cls.className,
+        classDisplayName: cls.classDisplayName,
         quizzes: Object.values(cls.quizzes),
       }))
     };
