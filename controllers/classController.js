@@ -123,9 +123,19 @@ exports.getTeacherClasses = async (req, res) => {
       teachers: teacher._id
     })
       .select('_id name stream displayName')
-      .sort({ name: 1, stream: 1 });
+      .sort({ name: 1, stream: 1 })
+      .lean();
 
-    res.status(200).json({ success: true, classes });
+    // ✅ NORMALIZE CLASS NAMES FOR FRONTEND
+    const normalized = classes.map(cls => ({
+      ...cls,
+      className: cls.name,
+      classDisplayName:
+        cls.displayName ||
+        (cls.stream ? `${cls.name}${cls.stream}` : cls.name),
+    }));
+
+    res.status(200).json({ success: true, classes: normalized });
   } catch (err) {
     res.status(500).json({
       message: 'Error fetching teacher classes',
