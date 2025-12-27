@@ -22,6 +22,25 @@ const expo = new Expo();
 const StudentAttendance = require("../models/StudentAttendance");
 const mongoose = require("mongoose");
 
+// ==============================
+// Helper: Resolve class names (SBA / Reports)
+// ==============================
+function resolveClassNames(classDoc) {
+  if (!classDoc) {
+    return {
+      className: "Unassigned",
+      classDisplayName: "Unassigned"
+    };
+  }
+
+  const className = classDoc.name || "Unassigned";
+
+  const classDisplayName =
+    classDoc.displayName ||
+    (classDoc.stream ? `${classDoc.name}${classDoc.stream}` : classDoc.name);
+
+  return { className, classDisplayName };
+}
 
 async function sendPush(userIds, title, body) {
   if (!Array.isArray(userIds) || userIds.length === 0) return;
@@ -54,7 +73,6 @@ async function sendPush(userIds, title, body) {
     }
   }
 }
-
 
 // ------------------ Multer setup ------------------
 const upload = multer({ dest: "uploads/" });
@@ -127,7 +145,6 @@ async function getStudentTermAttendance(studentId, termId, schoolId) {
 // ✅ SBA CONTROLLER ROUTES
 // =========================================================
 
-
 exports.downloadClassTemplate = async (req, res) => {
   let tempFilePath = null;
   try {
@@ -162,56 +179,56 @@ exports.downloadClassTemplate = async (req, res) => {
     if (!school) return res.status(404).json({ message: "School not found" });
 
     // Term / Academic Year info
-let classTeacherName = "N/A";
-if (classDocFinal.classTeacher) {
-  const ct = await User.findById(classDocFinal.classTeacher).lean();
-  classTeacherName = ct?.name || "N/A";
-}
+    let classTeacherName = "N/A";
+    if (classDocFinal.classTeacher) {
+      const ct = await User.findById(classDocFinal.classTeacher).lean();
+      classTeacherName = ct?.name || "N/A";
+    }
 
-let termName = "N/A",
-  academicYear = "N/A";
+    let termName = "N/A",
+      academicYear = "N/A";
 
-let resolvedTermId = null; // ✅ IMPORTANT: expose resolved termId
+    let resolvedTermId = null; // ✅ IMPORTANT: expose resolved termId
 
-try {
-  let termDoc = null;
+    try {
+      let termDoc = null;
 
-  // 1️⃣ Use class term if available
-  if (classDocFinal.termId) {
-    termDoc = await Term.findById(classDocFinal.termId).lean();
-  }
+      // 1️⃣ Use class term if available
+      if (classDocFinal.termId) {
+        termDoc = await Term.findById(classDocFinal.termId).lean();
+      }
 
-  // 2️⃣ Fallback to active term by date
-  if (!termDoc) {
-    const today = new Date();
-    termDoc = await Term.findOne({
-      school: classDocFinal.school,
-      startDate: { $lte: today },
-      endDate: { $gte: today },
-    }).lean();
-  }
+      // 2️⃣ Fallback to active term by date
+      if (!termDoc) {
+        const today = new Date();
+        termDoc = await Term.findOne({
+          school: classDocFinal.school,
+          startDate: { $lte: today },
+          endDate: { $gte: today },
+        }).lean();
+      }
 
-  // 3️⃣ Final fallback: most recent term
-  if (!termDoc) {
-    termDoc = await Term.findOne({ school: classDocFinal.school })
-      .sort({ startDate: -1 })
-      .lean();
-  }
+      // 3️⃣ Final fallback: most recent term
+      if (!termDoc) {
+        termDoc = await Term.findOne({ school: classDocFinal.school })
+          .sort({ startDate: -1 })
+          .lean();
+      }
 
-  // ✅ Apply resolved term
-  if (termDoc) {
-    termName = termDoc.term || "N/A";
-    academicYear = termDoc.academicYear || "N/A";
-    resolvedTermId = termDoc._id; // ✅ THIS FIXES ATTENDANCE
-  }
+      // ✅ Apply resolved term
+      if (termDoc) {
+        termName = termDoc.term || "N/A";
+        academicYear = termDoc.academicYear || "N/A";
+        resolvedTermId = termDoc._id; // ✅ THIS FIXES ATTENDANCE
+      }
 
-} catch (e) {
-  console.error("❌ Error resolving term:", e);
-}
-
+    } catch (e) {
+      console.error("❌ Error resolving term:", e);
+    }
 
     const bucket = admin.storage().bucket();
-    const classLevelKey = getClassLevelKey(classDocFinal.name);
+    const { className, classDisplayName } = resolveClassNames(classDocFinal);
+    const classLevelKey = getClassLevelKey(className); // Use className for logic
     const subject = teacher.subject;
 
     // Ensure school master exists
@@ -219,11 +236,10 @@ try {
       console.log("📄 School master missing, cloning global template");
       const globalTemplate = await SbaTemplate.findOne({ key: classLevelKey }).lean();
       if (!globalTemplate) {
-  return res.status(404).json({
-    message: "SBA template has not been uploaded yet. Please contact the administrator."
-  });
-}
-
+        return res.status(404).json({
+          message: "SBA template has not been uploaded yet. Please contact the administrator."
+        });
+      }
 
       let buffer;
       if (globalTemplate.path) {
@@ -274,12 +290,12 @@ try {
     // 🧠 Load workbook using XlsxPopulate (preserves hyperlinks + formulas)
     const xpWorkbook = await XlsxPopulate.fromDataAsync(masterBuffer);
 
-    // Fill sheets using XlsxPopulate
+    // Fill sheets using XlsxPopulate - use classDisplayName for display
     const homeSheet = xpWorkbook.sheet("HOME") || xpWorkbook.sheet("Home");
     if (homeSheet) {
       homeSheet.cell("B9").value(school.name || "N/A");
       homeSheet.cell("B12").value(classTeacherName || "N/A");
-      homeSheet.cell("K9").value(classDocFinal.name || "N/A");
+      homeSheet.cell("K9").value(classDisplayName);
       homeSheet.cell("I18").value(termName || "N/A");
       homeSheet.cell("K18").value(students.length || 0);
     }
@@ -287,7 +303,7 @@ try {
     const home2Sheet = xpWorkbook.sheet("HOME2") || xpWorkbook.sheet("Home2");
     if (home2Sheet) {
       home2Sheet.cell("F8").value(school.name || "N/A");
-      home2Sheet.cell("P8").value(classDocFinal.name || "N/A");
+      home2Sheet.cell("P8").value(classDisplayName);
       home2Sheet.cell("P11").value(termName || "N/A");
       home2Sheet.cell("Q14").value(academicYear || "N/A");
     }
@@ -300,145 +316,138 @@ try {
       });
     }
 
-// ===============================
-// 📊 FIRST: Let's examine the template structure
-// ===============================
-console.log("🔍 === TEMPLATE ANALYSIS ===");
-const allSheets = xpWorkbook.sheets();
-console.log(`Total sheets: ${allSheets.length}`);
-allSheets.forEach((sheet, index) => {
-  console.log(`Sheet ${index + 1}: "${sheet.name()}"`);
-  
-  // Check if this sheet contains student names
-  const usedRange = sheet.usedRange();
-  if (usedRange) {
-    const start = usedRange.startCell();
-    const end = usedRange.endCell();
-    console.log(`   Range: ${start.address()} to ${end.address()}`);
-    
-    // Look for "Attendance" headers in first 50 rows
-    for (let r = 1; r <= Math.min(50, end.rowNumber()); r++) {
-      for (let c = 1; c <= Math.min(10, end.columnNumber()); c++) {
-        const cell = sheet.cell(r, c);
-        const value = cell.value();
-        if (value && value.toString().toLowerCase().includes("attendance")) {
-          console.log(`   Found "Attendance" at ${cell.address()}: "${value}"`);
-        }
-        if (value && value.toString().toLowerCase().includes("total")) {
-          console.log(`   Found "Total" at ${cell.address()}: "${value}"`);
-        }
-      }
-    }
-  }
-});
-console.log("🔍 === END TEMPLATE ANALYSIS ===");
-
-
-
-
-
-
-// ===============================
-// 📊 Inject Attendance per Student (CORRECTED POSITION)
-// ===============================
-if (resolvedTermId) {
-  const reportSheet = xpWorkbook.sheet("REPORT");
-  
-  if (!reportSheet) {
-    console.warn("⚠️ REPORT sheet not found");
-  } else {
-    console.log(`✅ Found REPORT sheet. Writing attendance...`);
-    
-    // Based on template analysis: "ATTENDANCE:" is at B30
-    // Let's find where to write the actual attendance values
-    
-    console.log("🔍 Examining cells around B30:");
-    for (let col = 1; col <= 6; col++) {
-      const colLetter = String.fromCharCode(64 + col); // A, B, C...
-      const cellAddr = `${colLetter}30`;
-      const cellValue = reportSheet.cell(cellAddr).value();
-      console.log(`   ${cellAddr}: "${cellValue}"`);
-    }
-    
-    // Check row pattern (40-row intervals)
-    console.log("🔍 Checking attendance row pattern:");
-    const attendanceRows = [30, 70, 110, 150, 190, 230, 270, 310, 350, 390];
-    
-    for (const row of attendanceRows) {
-      const headerCell = reportSheet.cell(`B${row}`).value();
-      if (headerCell && headerCell.toString().includes("ATTENDANCE")) {
-        console.log(`   Found "ATTENDANCE" at B${row}`);
-        console.log(`   Cell D${row} current value: "${reportSheet.cell(`D${row}`).value()}"`);
-      }
-    }
-    
-    console.log(`📊 Writing attendance for ${students.length} students`);
-    
-    const firstAttendanceRow = 30;
-    const rowInterval = 40;
-    const attendanceColumn = "D";
-    
-    for (let i = 0; i < students.length; i++) {
-      const student = students[i];
+    // ===============================
+    // 📊 FIRST: Let's examine the template structure
+    // ===============================
+    console.log("🔍 === TEMPLATE ANALYSIS ===");
+    const allSheets = xpWorkbook.sheets();
+    console.log(`Total sheets: ${allSheets.length}`);
+    allSheets.forEach((sheet, index) => {
+      console.log(`Sheet ${index + 1}: "${sheet.name()}"`);
       
-      const totalAttendance = await getStudentTermAttendance(
-        student._id,
-        resolvedTermId,              // ✅ FIXED
-        classDocFinal.school
-      );
-      
-      const targetRow = firstAttendanceRow + (i * rowInterval);
-      const targetCell = `${attendanceColumn}${targetRow}`;
-      
-      console.log(`📝 Student ${i + 1}: ${student.user?.name || student._id}`);
-      console.log(`   Writing to ${targetCell}: ${totalAttendance} days`);
-      
-      reportSheet.cell(targetCell).value(totalAttendance);
-      reportSheet.cell(targetCell).style("numberFormat", "0");
-      
-      const nameCellC = reportSheet.cell(`C${targetRow}`).value();
-      const nameCellE = reportSheet.cell(`E${targetRow}`).value();
-      console.log(`   Nearby cells: C${targetRow}="${nameCellC}", E${targetRow}="${nameCellE}"`);
-    }
-    
-    // TOTAL ATTENDANCE (optional summary)
-    console.log("🔍 Looking for TOTAL ATTENDANCE summary cell...");
-    for (let r = 1; r <= 50; r++) {
-      for (let c = 1; c <= 10; c++) {
-        const colLetter = String.fromCharCode(64 + c);
-        const cell = reportSheet.cell(`${colLetter}${r}`);
-        const value = cell.value();
+      // Check if this sheet contains student names
+      const usedRange = sheet.usedRange();
+      if (usedRange) {
+        const start = usedRange.startCell();
+        const end = usedRange.endCell();
+        console.log(`   Range: ${start.address()} to ${end.address()}`);
         
-        if (value && value.toString().toLowerCase().includes("total attendance")) {
-          console.log(`✅ Found TOTAL ATTENDANCE at ${colLetter}${r}: "${value}"`);
-          
-          let totalAllAttendance = 0;
-          for (let i = 0; i < students.length; i++) {
-            totalAllAttendance += await getStudentTermAttendance(
-              students[i]._id,
-              resolvedTermId,          // ✅ FIXED
-              classDocFinal.school
-            );
+        // Look for "Attendance" headers in first 50 rows
+        for (let r = 1; r <= Math.min(50, end.rowNumber()); r++) {
+          for (let c = 1; c <= Math.min(10, end.columnNumber()); c++) {
+            const cell = sheet.cell(r, c);
+            const value = cell.value();
+            if (value && value.toString().toLowerCase().includes("attendance")) {
+              console.log(`   Found "Attendance" at ${cell.address()}: "${value}"`);
+            }
+            if (value && value.toString().toLowerCase().includes("total")) {
+              console.log(`   Found "Total" at ${cell.address()}: "${value}"`);
+            }
           }
-          
-          const totalCell = reportSheet.cell(
-            `${String.fromCharCode(64 + c + 1)}${r}`
-          );
-          totalCell.value(totalAllAttendance);
-          totalCell.style("numberFormat", "0");
-          
-          console.log(`   Written total attendance: ${totalAllAttendance}`);
         }
       }
+    });
+    console.log("🔍 === END TEMPLATE ANALYSIS ===");
+
+    // ===============================
+    // 📊 Inject Attendance per Student (CORRECTED POSITION)
+    // ===============================
+    if (resolvedTermId) {
+      const reportSheet = xpWorkbook.sheet("REPORT");
+      
+      if (!reportSheet) {
+        console.warn("⚠️ REPORT sheet not found");
+      } else {
+        console.log(`✅ Found REPORT sheet. Writing attendance...`);
+        
+        // Based on template analysis: "ATTENDANCE:" is at B30
+        // Let's find where to write the actual attendance values
+        
+        console.log("🔍 Examining cells around B30:");
+        for (let col = 1; col <= 6; col++) {
+          const colLetter = String.fromCharCode(64 + col); // A, B, C...
+          const cellAddr = `${colLetter}30`;
+          const cellValue = reportSheet.cell(cellAddr).value();
+          console.log(`   ${cellAddr}: "${cellValue}"`);
+        }
+        
+        // Check row pattern (40-row intervals)
+        console.log("🔍 Checking attendance row pattern:");
+        const attendanceRows = [30, 70, 110, 150, 190, 230, 270, 310, 350, 390];
+        
+        for (const row of attendanceRows) {
+          const headerCell = reportSheet.cell(`B${row}`).value();
+          if (headerCell && headerCell.toString().includes("ATTENDANCE")) {
+            console.log(`   Found "ATTENDANCE" at B${row}`);
+            console.log(`   Cell D${row} current value: "${reportSheet.cell(`D${row}`).value()}"`);
+          }
+        }
+        
+        console.log(`📊 Writing attendance for ${students.length} students`);
+        
+        const firstAttendanceRow = 30;
+        const rowInterval = 40;
+        const attendanceColumn = "D";
+        
+        for (let i = 0; i < students.length; i++) {
+          const student = students[i];
+          
+          const totalAttendance = await getStudentTermAttendance(
+            student._id,
+            resolvedTermId,              // ✅ FIXED
+            classDocFinal.school
+          );
+          
+          const targetRow = firstAttendanceRow + (i * rowInterval);
+          const targetCell = `${attendanceColumn}${targetRow}`;
+          
+          console.log(`📝 Student ${i + 1}: ${student.user?.name || student._id}`);
+          console.log(`   Writing to ${targetCell}: ${totalAttendance} days`);
+          
+          reportSheet.cell(targetCell).value(totalAttendance);
+          reportSheet.cell(targetCell).style("numberFormat", "0");
+          
+          const nameCellC = reportSheet.cell(`C${targetRow}`).value();
+          const nameCellE = reportSheet.cell(`E${targetRow}`).value();
+          console.log(`   Nearby cells: C${targetRow}="${nameCellC}", E${targetRow}="${nameCellE}"`);
+        }
+        
+        // TOTAL ATTENDANCE (optional summary)
+        console.log("🔍 Looking for TOTAL ATTENDANCE summary cell...");
+        for (let r = 1; r <= 50; r++) {
+          for (let c = 1; c <= 10; c++) {
+            const colLetter = String.fromCharCode(64 + c);
+            const cell = reportSheet.cell(`${colLetter}${r}`);
+            const value = cell.value();
+            
+            if (value && value.toString().toLowerCase().includes("total attendance")) {
+              console.log(`✅ Found TOTAL ATTENDANCE at ${colLetter}${r}: "${value}"`);
+              
+              let totalAllAttendance = 0;
+              for (let i = 0; i < students.length; i++) {
+                totalAllAttendance += await getStudentTermAttendance(
+                  students[i]._id,
+                  resolvedTermId,          // ✅ FIXED
+                  classDocFinal.school
+                );
+              }
+              
+              const totalCell = reportSheet.cell(
+                `${String.fromCharCode(64 + c + 1)}${r}`
+              );
+              totalCell.value(totalAllAttendance);
+              totalCell.style("numberFormat", "0");
+              
+              console.log(`   Written total attendance: ${totalAllAttendance}`);
+            }
+          }
+        }
+        
+        console.log("✅ Attendance writing completed!");
+      }
+    } else {
+      console.log("⚠️ No resolvedTermId found, skipping attendance injection");
     }
-    
-    console.log("✅ Attendance writing completed!");
-  }
-} else {
-  console.log("⚠️ No resolvedTermId found, skipping attendance injection");
-}
-
-
 
     // 🧹 Remove unused sheets if not class teacher
     if (!isClassTeacher) {
@@ -494,7 +503,7 @@ if (resolvedTermId) {
     const finalBuffer = await xpWorkbook.outputAsync("nodebuffer");
 
     const filename = isClassTeacher
-      ? `${classDocFinal.name}_FULL_SBA.xlsx`
+      ? `${classDisplayName}_FULL_SBA.xlsx`
       : `${subject}_SBA.xlsx`;
 
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
@@ -515,7 +524,6 @@ if (resolvedTermId) {
     if (tempFilePath && fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
   }
 };
-
 
 // 2️⃣ Upload class template - UPDATED to preserve exact structure
 exports.uploadClassTemplate = async (req, res) => {
@@ -547,7 +555,10 @@ exports.uploadClassTemplate = async (req, res) => {
     const classDoc = await Class.findById(classId).lean();
     if (!classDoc) return res.status(404).json({ message: "Class not found" });
 
-    console.log(`🏫 Class found: ${classDoc.name}`);
+    // ✅ Use resolveClassNames helper
+    const { className, classDisplayName } = resolveClassNames(classDoc);
+    
+    console.log(`🏫 Class found: ${className} (Display: ${classDisplayName})`);
     console.log(`👑 Class Teacher from classDoc: ${classDoc.classTeacher}`);
 
     const school = await School.findById(classDoc.school).lean();
@@ -590,12 +601,12 @@ exports.uploadClassTemplate = async (req, res) => {
     const isClassTeacher = isClassTeacherByUser || isClassTeacherByDocId || isClassTeacherByArray;
     const isSubjectTeacher = teacher.subject && teacher.assignedClasses?.includes(classId);
 
-    console.log(`ℹ️ Teacher roles for class ${classDoc.name}:`);
+    console.log(`ℹ️ Teacher roles for class ${className}:`);
     console.log(`   Is Class Teacher: ${isClassTeacher}`);
     console.log(`   Is Subject Teacher: ${isSubjectTeacher}`);
 
     const bucket = admin.storage().bucket();
-    const classLevelKey = getClassLevelKey(classDoc.name);
+    const classLevelKey = getClassLevelKey(className); // Use className for logic
     const subject = teacher.subject;
 
     if (!school.sbaMaster?.[classLevelKey])
@@ -608,24 +619,24 @@ exports.uploadClassTemplate = async (req, res) => {
 
     console.log("📊 Workbooks loaded successfully");
 
-    // Prefill HOME
+    // Prefill HOME - use classDisplayName for display
     const homeSheet =
       teacherWorkbook.sheet("HOME") || teacherWorkbook.sheet("Home") || teacherWorkbook.sheet("home");
     if (homeSheet) {
       homeSheet.cell("B9").value(school.name || "");
       homeSheet.cell("B12").value(classDoc.classTeacherName || teacherName || "");
-      homeSheet.cell("K9").value(classDoc.name || "");
+      homeSheet.cell("K9").value(classDisplayName);
       homeSheet.cell("I18").value(termName || "");
       homeSheet.cell("K18").value(classDoc.students?.length || 0);
       console.log("✅ HOME sheet prefilled");
     }
 
-    // Prefill HOME2
+    // Prefill HOME2 - use classDisplayName for display
     const home2Sheet =
       teacherWorkbook.sheet("HOME2") || teacherWorkbook.sheet("Home2") || teacherWorkbook.sheet("home2");
     if (home2Sheet) {
       home2Sheet.cell("F8").value(school.name || "");
-      home2Sheet.cell("P8").value(classDoc.name || "");
+      home2Sheet.cell("P8").value(classDisplayName);
       home2Sheet.cell("P11").value(termName || "");
       home2Sheet.cell("Q14").value(academicYear || "");
       console.log("✅ HOME2 sheet prefilled");
@@ -735,6 +746,7 @@ exports.uploadClassTemplate = async (req, res) => {
       url: school.sbaMaster[classLevelKey].url,
       teacherRoles: { isClassTeacher, isSubjectTeacher },
       teacherName,
+      class: classDisplayName, // ✅ Return classDisplayName for frontend
     });
   } catch (err) {
     console.error("❌ Error uploading class template:", err);
@@ -746,9 +758,6 @@ exports.uploadClassTemplate = async (req, res) => {
     }
   }
 };
-
-
-
 
 // 3️⃣ Upload global template (super-admin)
 exports.uploadGlobalTemplate = [
@@ -787,7 +796,7 @@ exports.uploadGlobalTemplate = [
   }
 ];
 
-// 4️⃣ Get teacher’s subject sheet (for JSON editing)
+// 4️⃣ Get teacher's subject sheet (for JSON editing)
 exports.getSubjectSheet = async (req, res) => {
   try {
     const { teacherId } = req.params;
@@ -805,7 +814,8 @@ exports.getSubjectSheet = async (req, res) => {
     if (!school) return res.status(404).json({ message: "School not found" });
 
     const bucket = admin.storage().bucket();
-    const classLevelKey = getClassLevelKey(classDoc.name);
+    const { className } = resolveClassNames(classDoc);
+    const classLevelKey = getClassLevelKey(className);
     const subject = teacher.subject;
     if (!school.sbaMaster?.[classLevelKey]) return res.status(400).json({ message: "Master SBA not initialized. Call download first." });
 
@@ -836,7 +846,6 @@ exports.getSubjectSheet = async (req, res) => {
   }
 };
 
-
 // 5️⃣ Save teacher's subject sheet
 exports.saveSubjectSheet = async (req, res) => {
   let tempFilePath = null;
@@ -856,7 +865,8 @@ exports.saveSubjectSheet = async (req, res) => {
     if (!school) return res.status(404).json({ message: "School not found" });
 
     const bucket = admin.storage().bucket();
-    const classLevelKey = getClassLevelKey(classDoc.name);
+    const { className } = resolveClassNames(classDoc);
+    const classLevelKey = getClassLevelKey(className);
     const subject = teacher.subject;
     if (!school.sbaMaster?.[classLevelKey]) return res.status(400).json({ message: "Master SBA not initialized. Call download first." });
 
@@ -916,7 +926,6 @@ exports.saveSubjectSheet = async (req, res) => {
   }
 };
 
-
 // 6️⃣ Admin download full class workbook
 exports.adminDownloadClassWorkbook = async (req, res) => {
   try {
@@ -929,7 +938,8 @@ exports.adminDownloadClassWorkbook = async (req, res) => {
     const school = await School.findById(classDoc.school).lean();
     if (!school) return res.status(404).json({ message: "School not found" });
 
-    const classLevelKey = getClassLevelKey(classDoc.name);
+    const { className, classDisplayName } = resolveClassNames(classDoc);
+    const classLevelKey = getClassLevelKey(className);
     if (!school.sbaMaster?.[classLevelKey])
       return res.status(400).json({ message: "Master SBA not initialized" });
 
@@ -938,7 +948,7 @@ exports.adminDownloadClassWorkbook = async (req, res) => {
     const [buffer] = await masterFile.download();
     const workbook = await XlsxPopulate.fromDataAsync(buffer);
 
-    const filename = `${classDoc.name}_FULL_SBA.xlsx`;
+    const filename = `${classDisplayName}_FULL_SBA.xlsx`;
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 
@@ -989,6 +999,9 @@ exports.uploadReportSheetPDF = [
         { new: true, runValidators: true }
       );
       if (!classDoc) return res.status(404).json({ message: "Class not found" });
+
+      // ✅ Use resolveClassNames helper
+      const { classDisplayName } = resolveClassNames(classDoc);
 
       // Fetch students
       const students = await Student.find({ class: classId })
@@ -1159,7 +1172,7 @@ exports.uploadReportSheetPDF = [
 
       res.json({
         message: "SUPER-TURBO upload complete",
-        class: classDoc.name,
+        class: classDisplayName, // ✅ Use classDisplayName for response
         totalStudents: students.length,
         uploadedCount: Object.keys(uploadedReports).length,
         classPdfUrl: pdfUrl,
@@ -1179,15 +1192,6 @@ exports.uploadReportSheetPDF = [
   }
 ];
 
-
-
-
-
-
-
-
-
-
 // ==================== UPDATED ROUTE ====================
 exports.getMyReportSheet = async (req, res) => {
   try {
@@ -1200,7 +1204,7 @@ exports.getMyReportSheet = async (req, res) => {
     // 🎓 Student request
     if (requester.role === "student") {
       targetStudent = await Student.findOne({ user: requester._id })
-        .populate("class", "name reportSheetPdfUrl")
+        .populate("class", "name displayName stream reportSheetPdfUrl")
         .populate("user", "name")
         .lean();
 
@@ -1223,7 +1227,7 @@ exports.getMyReportSheet = async (req, res) => {
           { parentIds: { $in: [requester._id] } }
         ]
       })
-        .populate("class", "name reportSheetPdfUrl")
+        .populate("class", "name displayName stream reportSheetPdfUrl")
         .populate("user", "name")
         .lean();
 
@@ -1250,6 +1254,9 @@ exports.getMyReportSheet = async (req, res) => {
     if (!classDoc) {
       return res.status(400).json({ message: "Student not assigned to a class." });
     }
+
+    // ✅ Use resolveClassNames helper
+    const { classDisplayName } = resolveClassNames(classDoc);
 
     // --------------------------
     // GET INDIVIDUAL PDF
@@ -1325,7 +1332,7 @@ exports.getMyReportSheet = async (req, res) => {
 
       res.setHeader(
         "Content-Disposition",
-        `inline; filename="${classDoc.name}_Report.pdf"`
+        `inline; filename="${classDisplayName}_Report.pdf"` // ✅ Use classDisplayName
       );
       return res.redirect(302, classDoc.reportSheetPdfUrl);
     }
@@ -1346,7 +1353,6 @@ exports.getMyReportSheet = async (req, res) => {
   }
 };
 
-
 // 🚀 GET true overall subject + class average (based on total marks of all subjects)
 exports.getOverallSubjectAverage = async (req, res) => {
   try {
@@ -1361,7 +1367,10 @@ exports.getOverallSubjectAverage = async (req, res) => {
     const school = await School.findById(classDoc.school).lean();
     if (!school) return res.status(404).json({ message: "School not found" });
 
-    const classLevelKey = getClassLevelKey(classDoc.name);
+    // ✅ Use resolveClassNames helper
+    const { className, classDisplayName } = resolveClassNames(classDoc);
+    const classLevelKey = getClassLevelKey(className);
+    
     if (!school.sbaMaster?.[classLevelKey]) {
       return res.status(400).json({ message: "Master SBA not initialized for this class" });
     }
@@ -1451,7 +1460,7 @@ exports.getOverallSubjectAverage = async (req, res) => {
         message: "✅ True overall subject and class average computed successfully",
         data: {
           classId,
-          className: classDoc.name,
+          className: classDisplayName, // ✅ Use classDisplayName for frontend
           totalSubjects: totalSubjectCount,
           combinedSubjectTotal: parseFloat(totalAllSubjects.toFixed(2)),
           classAverage: parseFloat(averageOfSubjectAverages.toFixed(2)),
@@ -1463,7 +1472,7 @@ exports.getOverallSubjectAverage = async (req, res) => {
 
     return res.status(404).json({
       message: "No valid student marks found in any subject sheets",
-      data: { classId, className: classDoc.name }
+      data: { classId, className: classDisplayName } // ✅ Use classDisplayName for frontend
     });
   } catch (err) {
     console.error("❌ Error computing true class average:", err);
@@ -1498,18 +1507,19 @@ function extractNumericValue(cell) {
     return NaN;
   }
 }
+
 // 🚀 GET Class Averages for Performance Chart
 exports.getClassAveragesForChart = async (req, res) => {
   try {
     console.log("🚀 [START] getClassAveragesForChart");
 
-    // ✅ Support both query and logged-in user’s school
+    // ✅ Support both query and logged-in user's school
     let schoolId = req.query.schoolId || req.user?.school?._id || req.user?.school?.id || req.user?.school;
     if (!schoolId) {
       return res.status(400).json({ message: "schoolId is required" });
     }
 
-    // ✅ Ensure it’s a proper string (ObjectId-friendly)
+    // ✅ Ensure it's a proper string (ObjectId-friendly)
     if (typeof schoolId === "object" && schoolId._id) schoolId = schoolId._id.toString();
 
     // 🏫 Fetch school
@@ -1525,9 +1535,12 @@ exports.getClassAveragesForChart = async (req, res) => {
     // 🧮 Iterate each class and calculate averages
     for (const classDoc of classes) {
       try {
-        const classLevelKey = getClassLevelKey(classDoc.name);
+        // ✅ Use resolveClassNames helper
+        const { className, classDisplayName } = resolveClassNames(classDoc);
+        const classLevelKey = getClassLevelKey(className);
+        
         if (!school.sbaMaster?.[classLevelKey]) {
-          console.log(`⚠️ No SBA master workbook for ${classDoc.name}, skipping`);
+          console.log(`⚠️ No SBA master workbook for ${classDisplayName}, skipping`);
           continue;
         }
 
@@ -1590,16 +1603,16 @@ exports.getClassAveragesForChart = async (req, res) => {
 
           classAverages.push({
             classId: classDoc._id,
-            className: classDoc.name,
+            className: classDisplayName, // ✅ Use classDisplayName for charts
             average: overallClassAverage,
             subjectCount: validSubjects,
             studentCount: classDoc.students?.length || 0,
           });
 
-          console.log(`📊 ${classDoc.name} → ${overallClassAverage}% across ${validSubjects} subjects`);
+          console.log(`📊 ${classDisplayName} → ${overallClassAverage}% across ${validSubjects} subjects`);
         }
       } catch (err) {
-        console.error(`❌ Error processing class ${classDoc.name}:`, err.message);
+        console.error(`❌ Error processing class ${classDisplayName}:`, err.message);
         continue;
       }
     }
