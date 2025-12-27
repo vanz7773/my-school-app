@@ -7,6 +7,25 @@ const PushToken = require("../models/PushToken");
 const { Expo } = require("expo-server-sdk");
 const expo = new Expo();
 
+// ==============================
+// Helper: Resolve class names (Assignments = class-based)
+// ==============================
+function resolveAssignmentClassNames(cls) {
+  if (!cls) {
+    return {
+      className: "Unassigned",
+      classDisplayName: null
+    };
+  }
+
+  const className = cls.name || "Unassigned";
+
+  const classDisplayName =
+    cls.displayName ||
+    (cls.stream ? `${cls.name}${cls.stream}` : cls.name);
+
+  return { className, classDisplayName };
+}
 
 // 🔔 Reusable push sender
 async function sendPush(userIds, title, body) {
@@ -40,7 +59,6 @@ async function sendPush(userIds, title, body) {
     console.error("⚠️ sendPush failed:", err.message);
   }
 }
-
 
 // --------------------------------------------------------------------
 // 🔍 Cache for frequently accessed data
@@ -156,7 +174,6 @@ async function createAssignmentNotification({
   }
 }
 
-
 // --------------------------------------------------------------------
 // 🗂️ Create new assignment WITH NOTIFICATION SUPPORT (Fixed & Type-Safe)
 // --------------------------------------------------------------------
@@ -242,7 +259,6 @@ exports.createAssignment = async (req, res) => {
   }
 };
 
-
 // --------------------------------------------------------------------
 // 👨‍🏫 Get assignments for teacher
 // --------------------------------------------------------------------
@@ -254,10 +270,17 @@ exports.getAssignmentsForTeacher = async (req, res) => {
     // Admin gets all assignments
     if (req.user.role === 'admin') {
       const assignments = await Assignment.find({ school: schoolId })
-        .populate('class', 'name')
+        .populate('class', 'name displayName stream')
         .sort({ createdAt: -1 })
         .lean();
-      return res.json(assignments);
+
+      // Normalize with class names
+      const normalized = assignments.map(a => {
+        const { className, classDisplayName } = resolveAssignmentClassNames(a.class);
+        return { ...a, className, classDisplayName };
+      });
+
+      return res.json(normalized);
     }
 
     // Teacher gets assignments only from their classes
@@ -291,13 +314,24 @@ exports.getAssignmentsForTeacher = async (req, res) => {
           description: 1,
           dueDate: 1,
           createdAt: 1,
-          'class.name': '$classInfo.name'
+          class: {
+            _id: '$classInfo._id',
+            name: '$classInfo.name',
+            displayName: '$classInfo.displayName',
+            stream: '$classInfo.stream'
+          }
         }
       },
       { $sort: { createdAt: -1 } }
     ]);
 
-    res.json(assignments);
+    // Normalize with class names
+    const normalized = assignments.map(a => {
+      const { className, classDisplayName } = resolveAssignmentClassNames(a.class);
+      return { ...a, className, classDisplayName };
+    });
+
+    res.json(normalized);
   } catch (err) {
     res.status(500).json({ message: 'Error fetching assignments', error: err.message });
   }
@@ -330,11 +364,17 @@ exports.getAssignmentsForClass = async (req, res) => {
     }
 
     const assignments = await Assignment.find(query)
-      .populate('class', 'name')
+      .populate('class', 'name displayName stream')
       .sort({ createdAt: -1 })
       .lean();
 
-    res.json({ assignments });
+    // Normalize with class names
+    const normalized = assignments.map(a => {
+      const { className, classDisplayName } = resolveAssignmentClassNames(a.class);
+      return { ...a, className, classDisplayName };
+    });
+
+    res.json({ assignments: normalized });
   } catch (err) {
     res.status(500).json({ message: 'Error fetching class assignments', error: err.message });
   }
@@ -409,7 +449,7 @@ exports.getAssignmentsForStudent = async (req, res) => {
         school: schoolId,
         class: classId
       })
-        .populate("class", "name")
+        .populate("class", "name displayName stream")
         .sort({ createdAt: -1 })
         .lean(),
       
@@ -441,11 +481,17 @@ exports.getAssignmentsForStudent = async (req, res) => {
       notifMap[String(n.assignmentId)] = n;
     });
 
-    // 🔔 Attach notification to each assignment
-    const finalAssignments = assignments.map(a => ({
-      ...a,
-      notification: notifMap[String(a._id)] || null
-    }));
+    // 🔔 Attach notification to each assignment + normalize class names
+    const finalAssignments = assignments.map(a => {
+      const { className, classDisplayName } = resolveAssignmentClassNames(a.class);
+      
+      return {
+        ...a,
+        className,
+        classDisplayName,
+        notification: notifMap[String(a._id)] || null
+      };
+    });
 
     // 🔔 Auto-mark assignment notifications as read in background
     setImmediate(async () => {
@@ -463,12 +509,16 @@ exports.getAssignmentsForStudent = async (req, res) => {
       }
     });
 
+    // Get class name info for response header
+    const { className: studentClassName, classDisplayName: studentClassDisplayName } = 
+      resolveAssignmentClassNames(targetStudent.class);
+
     // 📤 Response
     return res.json({
       success: true,
       studentId: targetStudent._id,
       studentName: targetStudent.name,
-      class: targetStudent.class?.name || "Unassigned",
+      class: studentClassDisplayName || studentClassName,
       assignments: finalAssignments
     });
 
@@ -506,23 +556,33 @@ exports.updateAssignment = async (req, res) => {
     assignment.dueDate = dueDate;
     await assignment.save();
 
-   // 🔔 Create notification in background
-setImmediate(async () => {
-  try {
-    await createAssignmentNotification({
-      title,
-      sender: req.user._id,
-      school: schoolId,
-      classId: assignment.class,
-      action: 'updated'
+    // 🔔 Create notification in background
+    setImmediate(async () => {
+      try {
+        await createAssignmentNotification({
+          title,
+          sender: req.user._id,
+          school: schoolId,
+          classId: assignment.class,
+          action: 'updated'
+        });
+      } catch (notifErr) {
+        console.error('⚠️ updateAssignment background notification failed:', notifErr);
+      }
     });
-  } catch (notifErr) {
-    console.error('⚠️ updateAssignment background notification failed:', notifErr);
-  }
-});
 
+    // Populate class for response
+    await assignment.populate('class', 'name displayName stream');
+    const { className, classDisplayName } = resolveAssignmentClassNames(assignment.class);
 
-    res.json({ message: 'Assignment updated', assignment });
+    res.json({ 
+      message: 'Assignment updated', 
+      assignment: {
+        ...assignment.toObject(),
+        className,
+        classDisplayName
+      }
+    });
   } catch (err) {
     res.status(500).json({ message: 'Error updating assignment', error: err.message });
   }
@@ -653,7 +713,12 @@ exports.getAllAssignmentsForAdmin = async (req, res) => {
           description: 1,
           dueDate: 1,
           createdAt: 1,
-          'class.name': '$classInfo.name',
+          class: {
+            _id: '$classInfo._id',
+            name: '$classInfo.name',
+            displayName: '$classInfo.displayName',
+            stream: '$classInfo.stream'
+          },
           'createdBy.name': '$creatorInfo.name',
           'createdBy.role': '$creatorInfo.role'
         }
@@ -668,13 +733,19 @@ exports.getAllAssignmentsForAdmin = async (req, res) => {
       Assignment.countDocuments(filter),
     ]);
 
+    // Normalize with class names
+    const normalized = items.map(a => {
+      const { className, classDisplayName } = resolveAssignmentClassNames(a.class);
+      return { ...a, className, classDisplayName };
+    });
+
     res.json({
       success: true,
       total,
       page: pageNum,
       limit: limitNum,
-      hasMore: skip + items.length < total,
-      items,
+      hasMore: skip + normalized.length < total,
+      items: normalized,
     });
   } catch (err) {
     res.status(500).json({ message: 'Error fetching assignments', error: err.message });
