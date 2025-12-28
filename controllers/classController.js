@@ -118,50 +118,31 @@ exports.getTeacherClasses = async (req, res) => {
       return res.status(404).json({ message: 'Teacher not found' });
     }
 
-    // 🔥 ALWAYS read from Class collection (SOURCE OF TRUTH)
     const classes = await Class.find({
       school: schoolId,
       teachers: teacher._id
     })
       .select('_id name stream displayName')
+      .sort({ name: 1, stream: 1 })
       .lean();
 
-    // ✅ HARD NORMALIZATION (NO TRUST)
-    const normalized = classes.map(cls => {
-      const stream = cls.stream?.trim();
-      const name = cls.name?.trim();
+    // ✅ NORMALIZE CLASS NAMES FOR FRONTEND
+    const normalized = classes.map(cls => ({
+      ...cls,
+      className: cls.name,
+      classDisplayName:
+        cls.displayName ||
+        (cls.stream ? `${cls.name}${cls.stream}` : cls.name),
+    }));
 
-      return {
-        _id: cls._id,
-
-        // raw
-        name,
-        stream: stream || null,
-
-        // UI-safe
-        className: name,
-        classDisplayName:
-          cls.displayName ||
-          (stream ? `${name}${stream}` : name),
-      };
-    });
-
-    console.log("✅ getTeacherClasses normalized:", normalized);
-
-    res.status(200).json({
-      success: true,
-      classes: normalized
-    });
+    res.status(200).json({ success: true, classes: normalized });
   } catch (err) {
-    console.error("❌ getTeacherClasses error:", err);
     res.status(500).json({
       message: 'Error fetching teacher classes',
       error: err.message
     });
   }
 };
-
-
 
 // ✅ Update class (admin only)
 exports.updateClass = async (req, res) => {
