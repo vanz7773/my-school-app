@@ -105,23 +105,36 @@ exports.getAllClasses = async (req, res) => {
 // ✅ Get classes assigned to a teacher (teacher only)
 exports.getTeacherClasses = async (req, res) => {
   try {
-    const { teacherId } = req.params; // 👉 Teacher._id
+    const { teacherId } = req.params;
     const schoolId = req.user.school;
 
-    // 1️⃣ Find teacher profile
-    const teacherProfile = await Teacher.findOne({
+    let userId;
+
+    // 1️⃣ If ID belongs to Teacher collection
+    const teacherDoc = await Teacher.findOne({
       _id: teacherId,
       school: schoolId
     }).lean();
 
-    if (!teacherProfile) {
-      return res.status(404).json({ message: 'Teacher profile not found' });
+    if (teacherDoc) {
+      // Teacher._id ➜ User._id
+      userId = teacherDoc.user;
+    } else {
+      // 2️⃣ Fallback: ID is already User._id
+      const user = await User.findOne({
+        _id: teacherId,
+        role: 'teacher',
+        school: schoolId
+      }).lean();
+
+      if (!user) {
+        return res.status(404).json({ message: 'Teacher not found' });
+      }
+
+      userId = user._id;
     }
 
-    // 2️⃣ Resolve USER ID (this is what Class uses)
-    const userId = teacherProfile.user;
-
-    // 3️⃣ Fetch classes (subject + class teacher)
+    // 3️⃣ Fetch classes using USER ID
     const classes = await Class.find({
       school: schoolId,
       $or: [
@@ -133,7 +146,7 @@ exports.getTeacherClasses = async (req, res) => {
       .sort({ name: 1, stream: 1 })
       .lean();
 
-    // 4️⃣ Normalize for frontend
+    // 4️⃣ Normalize
     const normalized = classes.map(cls => ({
       ...cls,
       className: cls.name,
@@ -155,6 +168,7 @@ exports.getTeacherClasses = async (req, res) => {
     });
   }
 };
+
 
 
 // ✅ Update class (admin only)
