@@ -21,25 +21,23 @@ async function resolveTeacherUserId(candidateId, schoolId) {
 }
 
 // ==============================
-// Helper: Resolve class names safely
+// Helper: Normalize class names safely
 // ==============================
-function resolveClassNames(cls) {
-  if (!cls) {
-    return {
-      className: "Unassigned",
-      classDisplayName: null,
-    };
-  }
+function normalizeClass(cls) {
+  if (!cls) return null;
 
-  const className = cls.name || "Unassigned";
-
+  const name = cls.name || "Unassigned";
   const classDisplayName =
     cls.displayName ||
-    (cls.stream ? `${cls.name}${cls.stream}` : null);
+    cls.classDisplayName ||
+    (cls.stream ? `${name}${cls.stream}` : name);
 
-  return { className, classDisplayName };
+  return {
+    ...cls.toObject?.() ?? cls,
+    name,
+    classDisplayName
+  };
 }
-
 
 // ----------------------
 // Admin: Filter timetable by class/teacher/day (Scoped by school)
@@ -62,7 +60,14 @@ exports.getFilteredTimetable = async (req, res) => {
     const results = await Timetable.find(filter)
       .populate('class', 'name stream displayName')
       .populate('teacher', 'name email'); // teacher is a User id
-    res.json({ success: true, results });
+    
+    // ✅ USE normalizeClass
+    const timetable = results.map(entry => ({
+      ...entry.toObject(),
+      class: normalizeClass(entry.class)
+    }));
+    
+    res.json({ success: true, results: timetable });
   } catch (err) {
     console.error('Error fetching filtered timetable:', err);
     res.status(500).json({ success: false, message: 'Error fetching timetable', error: err.message });
@@ -99,20 +104,14 @@ exports.getTeacherTimetable = async (req, res) => {
         { class: { $in: classIds } }
       ],
     })
-      // ✅ UPDATED populate
       .populate('class', 'name stream displayName')
       .populate('teacher', 'name email');
 
-    // ✅ NORMALIZE CLASS NAMES (BASIC 9A fix)
-    const timetable = results.map(entry => {
-      const { className, classDisplayName } = resolveClassNames(entry.class);
-
-      return {
-        ...entry.toObject(),
-        className,
-        classDisplayName
-      };
-    });
+    // ✅ USE normalizeClass
+    const timetable = results.map(entry => ({
+      ...entry.toObject(),
+      class: normalizeClass(entry.class)
+    }));
 
     res.json({ success: true, timetable });
 
@@ -125,7 +124,6 @@ exports.getTeacherTimetable = async (req, res) => {
     });
   }
 };
-
 
 // ----------------------
 // Student: View own class timetable (Scoped by school)
@@ -147,19 +145,13 @@ exports.getStudentTimetable = async (req, res) => {
       school: req.user.school
     })
       .populate('teacher', 'name email')
-      // ✅ UPDATED: include stream + displayName
       .populate('class', 'name stream displayName');
 
-    // ✅ NORMALIZE CLASS NAMES (BASIC 9A fix)
-    const timetable = results.map(entry => {
-      const { className, classDisplayName } = resolveClassNames(entry.class);
-
-      return {
-        ...entry.toObject(),
-        className,
-        classDisplayName
-      };
-    });
+    // ✅ USE normalizeClass
+    const timetable = results.map(entry => ({
+      ...entry.toObject(),
+      class: normalizeClass(entry.class)
+    }));
 
     res.json({ success: true, timetable });
 
@@ -173,10 +165,8 @@ exports.getStudentTimetable = async (req, res) => {
   }
 };
 
-
 // ----------------------
-// Parent: View all children’s timetables (Scoped by school)
-// NOTE: fix - ensure we populate the student's user to get a display name
+// Parent: View all children's timetables (Scoped by school)
 exports.getParentTimetables = async (req, res) => {
   try {
     if (req.user.role !== 'parent')
@@ -202,21 +192,14 @@ exports.getParentTimetables = async (req, res) => {
         .populate('teacher', 'name email')
         .populate('class', 'name stream displayName');
 
-      // ✅ NORMALIZE CLASS NAME (BASIC 9A FIX)
-      const normalizedTimetable = results.map(entry => {
-        const { className, classDisplayName } = resolveClassNames(entry.class);
-
-        return {
-          ...entry.toObject(),
-          className,
-          classDisplayName
-        };
-      });
+      // ✅ USE normalizeClass
+      const normalizedTimetable = results.map(entry => ({
+        ...entry.toObject(),
+        class: normalizeClass(entry.class)
+      }));
 
       // Prefer student user.name if present
-      const childName =
-        child.user?.name || String(child._id);
-
+      const childName = child.user?.name || String(child._id);
       timetables[childName] = normalizedTimetable;
     }
 
@@ -235,7 +218,6 @@ exports.getParentTimetables = async (req, res) => {
     });
   }
 };
-
 
 // ----------------------
 // Admin: Create new timetable entry
@@ -267,7 +249,13 @@ exports.createTimetableEntry = async (req, res) => {
       .populate('class', 'name stream displayName')
       .populate('teacher', 'name email');
 
-    res.status(201).json({ success: true, message: 'Timetable entry created', timetable: populated });
+    // ✅ USE normalizeClass
+    const normalizedTimetable = {
+      ...populated.toObject(),
+      class: normalizeClass(populated.class)
+    };
+
+    res.status(201).json({ success: true, message: 'Timetable entry created', timetable: normalizedTimetable });
   } catch (err) {
     console.error('Error creating timetable entry:', err);
     res.status(500).json({ success: false, message: 'Error creating entry', error: err.message });
@@ -308,7 +296,13 @@ exports.createClassTeacherTimetable = async (req, res) => {
       .populate('class', 'name stream displayName')
       .populate('teacher', 'name email');
 
-    res.status(201).json({ success: true, message: 'Timetable entry created successfully', timetable: populated });
+    // ✅ USE normalizeClass
+    const normalizedTimetable = {
+      ...populated.toObject(),
+      class: normalizeClass(populated.class)
+    };
+
+    res.status(201).json({ success: true, message: 'Timetable entry created successfully', timetable: normalizedTimetable });
   } catch (err) {
     console.error('Error creating class teacher entry:', err);
     res.status(500).json({ success: false, message: 'Error creating class teacher entry', error: err.message });
@@ -350,12 +344,19 @@ exports.updateTimetableEntry = async (req, res) => {
       .populate('class', 'name stream displayName')
       .populate('teacher', 'name email');
 
-    res.json({ success: true, message: 'Timetable entry updated', timetable: populated });
+    // ✅ USE normalizeClass
+    const normalizedTimetable = {
+      ...populated.toObject(),
+      class: normalizeClass(populated.class)
+    };
+
+    res.json({ success: true, message: 'Timetable entry updated', timetable: normalizedTimetable });
   } catch (err) {
     console.error('Error updating timetable entry:', err);
     res.status(500).json({ success: false, message: 'Error updating timetable entry', error: err.message });
   }
 };
+
 // ----------------------
 // Class Teacher: Delete timetable entry
 exports.deleteTimetableEntry = async (req, res) => {
@@ -388,18 +389,20 @@ exports.deleteTimetableEntry = async (req, res) => {
 };
 
 // ----------------------
-// NEW: Get the classTeacher for a class (useful for timetable UI)
-// Returns the user object for classTeacher and the related Teacher doc (if exists)
+// Get the classTeacher for a class
 exports.getClassTeacher = async (req, res) => {
   try {
     const { classId } = req.params;
     if (!classId) return res.status(400).json({ success: false, message: 'classId is required' });
 
     const cls = await Class.findOne({ _id: classId, school: req.user.school })
-      .populate('classTeacher', 'name email') // user doc
-      .populate('teachers', 'name email');    // team of subject teachers
+      .populate('classTeacher', 'name email')
+      .populate('teachers', 'name email');
 
     if (!cls) return res.status(404).json({ success: false, message: 'Class not found' });
+
+    // ✅ USE normalizeClass for the class data
+    const normalizedClass = normalizeClass(cls);
 
     // try to also fetch Teacher profile (if exists) that corresponds to classTeacher user
     let teacherProfile = null;
@@ -412,7 +415,8 @@ exports.getClassTeacher = async (req, res) => {
     res.json({
       success: true,
       classId: cls._id,
-      className: cls.name,
+      className: normalizedClass.name,
+      classDisplayName: normalizedClass.classDisplayName,
       classTeacher: cls.classTeacher || null,
       teacherProfile: teacherProfile || null,
       subjectTeachers: cls.teachers || []
@@ -424,7 +428,7 @@ exports.getClassTeacher = async (req, res) => {
 };
 
 // ----------------------
-// NEW: Get classes assigned to a teacher (for timetable UX) - returns both where they are classTeacher and where they are subject teacher
+// Get classes assigned to a teacher
 exports.getTeacherAssignedClasses = async (req, res) => {
   try {
     const { teacherId } = req.params;
@@ -440,14 +444,19 @@ exports.getTeacherAssignedClasses = async (req, res) => {
         { classTeacher: resolvedTeacherUserId },
         { teachers: resolvedTeacherUserId }
       ]
-    }).select('_id name classTeacher teachers').populate('classTeacher', 'name email');
+    }).select('_id name classTeacher teachers stream displayName').populate('classTeacher', 'name email');
 
-    res.json({ success: true, total: classes.length, classes });
+    // ✅ USE normalizeClass for each class
+    const normalizedClasses = classes.map(cls => normalizeClass(cls));
+
+    res.json({ success: true, total: normalizedClasses.length, classes: normalizedClasses });
   } catch (err) {
     console.error('Error fetching teacher assigned classes:', err);
     res.status(500).json({ success: false, message: 'Error fetching classes', error: err.message });
   }
 };
+
+// ----------------------
 // Teacher: View timetable for a specific class
 exports.getTeacherClassTimetable = async (req, res) => {
   try {
@@ -463,16 +472,11 @@ exports.getTeacherClassTimetable = async (req, res) => {
       .populate("class", "name stream displayName")
       .populate("teacher", "name email");
 
-    // ✅ NORMALIZE CLASS NAME (BASIC 9A FIX)
-    const timetable = results.map(entry => {
-      const { className, classDisplayName } = resolveClassNames(entry.class);
-
-      return {
-        ...entry.toObject(),
-        className,
-        classDisplayName
-      };
-    });
+    // ✅ USE normalizeClass
+    const timetable = results.map(entry => ({
+      ...entry.toObject(),
+      class: normalizeClass(entry.class)
+    }));
 
     res.json({ success: true, timetable });
 
@@ -485,4 +489,3 @@ exports.getTeacherClassTimetable = async (req, res) => {
     });
   }
 };
-
