@@ -127,7 +127,6 @@ exports.getTeacherClasses = async (req, res) => {
       $or: [
         { teachers: userId },      // subject teacher
         { classTeacher: userId },
-        { teachers: teacherId._id }   // class teacher
       ]
     })
       .select('_id name stream displayName classTeacher')
