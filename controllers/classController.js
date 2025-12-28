@@ -108,25 +108,54 @@ exports.getTeacherClasses = async (req, res) => {
     const { teacherId } = req.params;
     const schoolId = req.user.school;
 
-    const teacher = await User.findOne({
-      _id: teacherId,
-      role: 'teacher',
-      school: schoolId
-    });
+    let userId = null;
 
-    if (!teacher) {
-      return res.status(404).json({ message: 'Teacher not found' });
+    // --------------------------------------------------
+    // 1️⃣ TRY: teacherId is Teacher._id (NEW SYSTEM)
+    // --------------------------------------------------
+    const teacherProfile = await Teacher.findOne({
+      _id: teacherId,
+      school: schoolId
+    }).lean();
+
+    if (teacherProfile) {
+      userId = teacherProfile.user;
     }
 
+    // --------------------------------------------------
+    // 2️⃣ FALLBACK: teacherId is User._id (OLD SYSTEM)
+    // --------------------------------------------------
+    if (!userId) {
+      const teacherUser = await User.findOne({
+        _id: teacherId,
+        role: 'teacher',
+        school: schoolId
+      }).lean();
+
+      if (!teacherUser) {
+        return res.status(404).json({ message: 'Teacher not found' });
+      }
+
+      userId = teacherUser._id;
+    }
+
+    // --------------------------------------------------
+    // 3️⃣ FETCH CLASSES (subject + class teacher)
+    // --------------------------------------------------
     const classes = await Class.find({
       school: schoolId,
-      teachers: teacher._id
+      $or: [
+        { teachers: userId },     // subject teacher
+        { classTeacher: userId }  // class teacher
+      ]
     })
-      .select('_id name stream displayName')
+      .select('_id name stream displayName classTeacher')
       .sort({ name: 1, stream: 1 })
       .lean();
 
-    // ✅ NORMALIZE CLASS NAMES FOR FRONTEND
+    // --------------------------------------------------
+    // 4️⃣ NORMALIZE FOR FRONTEND
+    // --------------------------------------------------
     const normalized = classes.map(cls => ({
       ...cls,
       className: cls.name,
@@ -135,14 +164,23 @@ exports.getTeacherClasses = async (req, res) => {
         (cls.stream ? `${cls.name}${cls.stream}` : cls.name),
     }));
 
-    res.status(200).json({ success: true, classes: normalized });
+    // --------------------------------------------------
+    // 5️⃣ RESPONSE
+    // --------------------------------------------------
+    res.status(200).json({
+      success: true,
+      totalClasses: normalized.length,
+      classes: normalized
+    });
   } catch (err) {
+    console.error('Error fetching teacher classes:', err);
     res.status(500).json({
       message: 'Error fetching teacher classes',
       error: err.message
     });
   }
 };
+
 
 // ✅ Update class (admin only)
 exports.updateClass = async (req, res) => {
