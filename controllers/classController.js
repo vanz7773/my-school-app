@@ -1,7 +1,7 @@
 const Class = require('../models/Class');
 const User = require('../models/User');
 const School = require('../models/School');
-
+const Teacher = require('../models/Teacher');
 // ✅ Create class (admin only)
 exports.createClass = async (req, res) => {
   try {
@@ -105,57 +105,35 @@ exports.getAllClasses = async (req, res) => {
 // ✅ Get classes assigned to a teacher (teacher only)
 exports.getTeacherClasses = async (req, res) => {
   try {
-    const { teacherId } = req.params;
+    const { teacherId } = req.params; // 👉 Teacher._id
     const schoolId = req.user.school;
 
-    let userId = null;
-
-    // --------------------------------------------------
-    // 1️⃣ TRY: teacherId is Teacher._id (NEW SYSTEM)
-    // --------------------------------------------------
+    // 1️⃣ Find teacher profile
     const teacherProfile = await Teacher.findOne({
       _id: teacherId,
       school: schoolId
     }).lean();
 
-    if (teacherProfile) {
-      userId = teacherProfile.user;
+    if (!teacherProfile) {
+      return res.status(404).json({ message: 'Teacher profile not found' });
     }
 
-    // --------------------------------------------------
-    // 2️⃣ FALLBACK: teacherId is User._id (OLD SYSTEM)
-    // --------------------------------------------------
-    if (!userId) {
-      const teacherUser = await User.findOne({
-        _id: teacherId,
-        role: 'teacher',
-        school: schoolId
-      }).lean();
+    // 2️⃣ Resolve USER ID (this is what Class uses)
+    const userId = teacherProfile.user;
 
-      if (!teacherUser) {
-        return res.status(404).json({ message: 'Teacher not found' });
-      }
-
-      userId = teacherUser._id;
-    }
-
-    // --------------------------------------------------
-    // 3️⃣ FETCH CLASSES (subject + class teacher)
-    // --------------------------------------------------
+    // 3️⃣ Fetch classes (subject + class teacher)
     const classes = await Class.find({
       school: schoolId,
       $or: [
-        { teachers: userId },     // subject teacher
-        { classTeacher: userId }  // class teacher
+        { teachers: userId },
+        { classTeacher: userId }
       ]
     })
       .select('_id name stream displayName classTeacher')
       .sort({ name: 1, stream: 1 })
       .lean();
 
-    // --------------------------------------------------
-    // 4️⃣ NORMALIZE FOR FRONTEND
-    // --------------------------------------------------
+    // 4️⃣ Normalize for frontend
     const normalized = classes.map(cls => ({
       ...cls,
       className: cls.name,
@@ -164,9 +142,6 @@ exports.getTeacherClasses = async (req, res) => {
         (cls.stream ? `${cls.name}${cls.stream}` : cls.name),
     }));
 
-    // --------------------------------------------------
-    // 5️⃣ RESPONSE
-    // --------------------------------------------------
     res.status(200).json({
       success: true,
       totalClasses: normalized.length,
