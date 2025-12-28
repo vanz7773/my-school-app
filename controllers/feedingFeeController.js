@@ -383,16 +383,23 @@ const markFeeding = async (req, res) => {
       (b) => b.student.toString() === student
     );
     if (!breakdownEntry) {
-      breakdownEntry = {
-        student,
-        studentName: getFullStudentName(studentDoc),
-        className: studentDoc.class?.name || "Unknown Class",
-        amount: 0,
-        perDayFee: { M: 0, T: 0, W: 0, TH: 0, F: 0 },
-        days: { M: "notmarked", T: "notmarked", W: "notmarked", TH: "notmarked", F: "notmarked" },
-        daysPaid: 0,
-        currency: feeConfig.currency || "GHS",
-      };
+      const { className, classDisplayName } = resolveClassNames(studentDoc.class);
+
+breakdownEntry = {
+  student,
+  studentName: getFullStudentName(studentDoc),
+
+  // ✅ STORE BOTH (CANONICAL FORMAT)
+  className,
+  classDisplayName,
+
+  amount: 0,
+  perDayFee: { M: 0, T: 0, W: 0, TH: 0, F: 0 },
+  days: { M: "notmarked", T: "notmarked", W: "notmarked", TH: "notmarked", F: "notmarked" },
+  daysPaid: 0,
+  currency: feeConfig.currency || "GHS",
+};
+
       record.breakdown.push(breakdownEntry);
     }
 
