@@ -118,35 +118,40 @@ exports.getTeacherClasses = async (req, res) => {
       return res.status(404).json({ message: 'Teacher not found' });
     }
 
+    // 🔥 ALWAYS read from Class collection (SOURCE OF TRUTH)
     const classes = await Class.find({
       school: schoolId,
       teachers: teacher._id
     })
       .select('_id name stream displayName')
-      .sort({ name: 1, stream: 1 })
       .lean();
 
-    // ✅ HARD NORMALIZATION (NO BASIC 9 LEAKS)
+    // ✅ HARD NORMALIZATION (NO TRUST)
     const normalized = classes.map(cls => {
-      // 🔒 Single source of truth
-      const display =
-        cls.displayName ||
-        (cls.stream ? `${cls.name}${cls.stream}` : cls.name);
+      const stream = cls.stream?.trim();
+      const name = cls.name?.trim();
 
       return {
-        ...cls,
+        _id: cls._id,
 
-        // frontend contract
-        className: display,
-        classDisplayName: display,
+        // raw
+        name,
+        stream: stream || null,
+
+        // UI-safe
+        className: name,
+        classDisplayName:
+          cls.displayName ||
+          (stream ? `${name}${stream}` : name),
       };
     });
+
+    console.log("✅ getTeacherClasses normalized:", normalized);
 
     res.status(200).json({
       success: true,
       classes: normalized
     });
-
   } catch (err) {
     console.error("❌ getTeacherClasses error:", err);
     res.status(500).json({
@@ -155,6 +160,7 @@ exports.getTeacherClasses = async (req, res) => {
     });
   }
 };
+
 
 
 // ✅ Update class (admin only)
