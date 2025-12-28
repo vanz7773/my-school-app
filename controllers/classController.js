@@ -1,7 +1,7 @@
 const Class = require('../models/Class');
 const User = require('../models/User');
 const School = require('../models/School');
-
+const Teacher = require('../models/Teacher');
 // ✅ Create class (admin only)
 exports.createClass = async (req, res) => {
   try {
@@ -103,27 +103,33 @@ exports.getAllClasses = async (req, res) => {
 };
 
 // ✅ Get classes assigned to a teacher (teacher only)
+
 exports.getTeacherClasses = async (req, res) => {
   try {
     const { teacherId } = req.params;
     const schoolId = req.user.school;
 
-    const teacher = await User.findOne({
+    // 🔥 IMPORTANT: teacherId is Teacher._id, NOT User._id
+    const teacherProfile = await Teacher.findOne({
       _id: teacherId,
-      role: 'teacher',
       school: schoolId
-    });
+    }).lean();
 
-    if (!teacher) {
+    if (!teacherProfile) {
       return res.status(404).json({ message: 'Teacher not found' });
     }
 
+    // 🔥 THIS is the ID stored in Class.teachers[] and Class.classTeacher
+    const userId = teacherProfile.user;
+
     const classes = await Class.find({
       school: schoolId,
-      teachers: teacher._id
+      $or: [
+        { teachers: userId },      // subject teacher
+        { classTeacher: userId }   // class teacher
+      ]
     })
-      // 🔥 FORCE INCLUDE fields hidden by select:false in schema
-      .select('_id name +stream +displayName +classTeacher')
+      .select('_id name stream displayName classTeacher')
       .sort({ name: 1, stream: 1 })
       .lean();
 
