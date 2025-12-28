@@ -106,8 +106,13 @@ exports.getAllClasses = async (req, res) => {
 // ✅ Get classes assigned to a teacher (teacher only)
 exports.getTeacherClasses = async (req, res) => {
   try {
+    console.log('🔥 getTeacherClasses controller HIT');
+
     const { teacherId } = req.params;
     const schoolId = req.user.school;
+
+    console.log('👤 Teacher ID:', teacherId);
+    console.log('🏫 School ID:', schoolId);
 
     const teacher = await User.findOne({
       _id: teacherId,
@@ -116,6 +121,7 @@ exports.getTeacherClasses = async (req, res) => {
     });
 
     if (!teacher) {
+      console.log('❌ Teacher not found');
       return res.status(404).json({ message: 'Teacher not found' });
     }
 
@@ -123,8 +129,20 @@ exports.getTeacherClasses = async (req, res) => {
       school: schoolId,
       teachers: teacher._id
     })
-      .select('_id name stream displayName classTeacher') // ✅ FIX
+      // ✅ IMPORTANT: include ALL required fields
+      .select('_id name stream displayName classTeacher')
       .sort({ name: 1, stream: 1 });
+
+    console.log(
+      '📦 getTeacherClasses returning:',
+      classes.map(c => ({
+        id: c._id,
+        name: c.name,
+        stream: c.stream,
+        displayName: c.displayName,
+        classTeacher: c.classTeacher
+      }))
+    );
 
     res.status(200).json({
       success: true,
@@ -132,12 +150,14 @@ exports.getTeacherClasses = async (req, res) => {
       classes
     });
   } catch (err) {
+    console.error('❌ Error fetching teacher classes:', err);
     res.status(500).json({
       message: 'Error fetching teacher classes',
       error: err.message
     });
   }
 };
+
 
 
 // ✅ Update class (admin only)
