@@ -103,6 +103,7 @@ exports.getAllClasses = async (req, res) => {
 };
 
 // ✅ Get classes assigned to a teacher (teacher only)
+// ✅ Get classes assigned to a teacher (teacher only)
 exports.getTeacherClasses = async (req, res) => {
   try {
     const { teacherId } = req.params;
@@ -122,10 +123,14 @@ exports.getTeacherClasses = async (req, res) => {
       school: schoolId,
       teachers: teacher._id
     })
-      .select('_id name stream displayName')
+      .select('_id name stream displayName classTeacher') // ✅ FIX
       .sort({ name: 1, stream: 1 });
 
-    res.status(200).json({ success: true, classes });
+    res.status(200).json({
+      success: true,
+      totalClasses: classes.length,
+      classes
+    });
   } catch (err) {
     res.status(500).json({
       message: 'Error fetching teacher classes',
@@ -133,6 +138,7 @@ exports.getTeacherClasses = async (req, res) => {
     });
   }
 };
+
 
 // ✅ Update class (admin only)
 exports.updateClass = async (req, res) => {

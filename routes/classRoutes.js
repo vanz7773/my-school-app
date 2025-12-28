@@ -15,8 +15,8 @@ router.post('/', protect, restrictTo('admin'), createClass);
 router.get('/', protect, restrictTo('admin'), getAllClasses);
 router.delete('/:id', protect, restrictTo('admin'), deleteClass);
 
-// Assign/change class teacher (admin only)
-router.post('/:classId/assign-class-teacher', protect, restrictTo('admin'), assignClassTeacher);
+// Assign/change class teacher (admin and teacher)
+router.post('/:classId/assign-class-teacher', protect, restrictTo('admin', 'teacher'), assignClassTeacher);
 
 // ---------------- Teacher Routes ----------------
 // For assignments/homework: only return class _id and name
