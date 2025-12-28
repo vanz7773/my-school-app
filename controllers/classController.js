@@ -126,23 +126,36 @@ exports.getTeacherClasses = async (req, res) => {
       .sort({ name: 1, stream: 1 })
       .lean();
 
-    // ✅ NORMALIZE CLASS NAMES FOR FRONTEND
-    const normalized = classes.map(cls => ({
-      ...cls,
-      className: cls.name,
-      classDisplayName:
+    // ✅ HARD NORMALIZATION (NO BASIC 9 LEAKS)
+    const normalized = classes.map(cls => {
+      // 🔒 Single source of truth
+      const display =
         cls.displayName ||
-        (cls.stream ? `${cls.name}${cls.stream}` : cls.name),
-    }));
+        (cls.stream ? `${cls.name}${cls.stream}` : cls.name);
 
-    res.status(200).json({ success: true, classes: normalized });
+      return {
+        ...cls,
+
+        // frontend contract
+        className: display,
+        classDisplayName: display,
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      classes: normalized
+    });
+
   } catch (err) {
+    console.error("❌ getTeacherClasses error:", err);
     res.status(500).json({
       message: 'Error fetching teacher classes',
       error: err.message
     });
   }
 };
+
 
 // ✅ Update class (admin only)
 exports.updateClass = async (req, res) => {
