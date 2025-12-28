@@ -122,7 +122,8 @@ exports.getTeacherClasses = async (req, res) => {
       school: schoolId,
       teachers: teacher._id
     })
-      .select('_id name stream displayName')
+      // 🔥 FORCE INCLUDE fields hidden by select:false in schema
+      .select('_id name +stream +displayName +classTeacher')
       .sort({ name: 1, stream: 1 })
       .lean();
 
@@ -135,7 +136,11 @@ exports.getTeacherClasses = async (req, res) => {
         (cls.stream ? `${cls.name}${cls.stream}` : cls.name),
     }));
 
-    res.status(200).json({ success: true, classes: normalized });
+    res.status(200).json({
+      success: true,
+      totalClasses: normalized.length,
+      classes: normalized
+    });
   } catch (err) {
     res.status(500).json({
       message: 'Error fetching teacher classes',
@@ -143,6 +148,7 @@ exports.getTeacherClasses = async (req, res) => {
     });
   }
 };
+
 
 // ✅ Update class (admin only)
 exports.updateClass = async (req, res) => {
