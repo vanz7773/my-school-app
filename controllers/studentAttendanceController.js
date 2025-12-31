@@ -46,6 +46,28 @@ async function sendPush(userIds, title, body, extraData = {}) {
   }
 }
 
+
+// ==============================
+// Helper: Normalize class display name
+// ==============================
+function getClassDisplayName(cls) {
+  if (!cls) return "Unknown Class";
+
+  if (cls.displayName && cls.displayName.trim()) {
+    return cls.displayName;
+  }
+
+  if (cls.classDisplayName && cls.classDisplayName.trim()) {
+    return cls.classDisplayName;
+  }
+
+  if (cls.name && cls.stream) {
+    return `${cls.name}${cls.stream}`;
+  }
+
+  return cls.name || "Unknown Class";
+}
+
 // 🎯 SIMPLE IN-MEMORY CACHE (No external dependencies)
 class SimpleCache {
   constructor() {
@@ -351,7 +373,10 @@ const markAttendance = async (req, res) => {
 
     const weekString = String(weekParam ?? week ?? weekNumber);
     const weekStartDate = getWeekStartDate(term, weekNumber);
-    const category = classDoc.category || inferCategoryFromClassName(classDoc.name);
+    const category =
+  classDoc.category ||
+  inferCategoryFromClassName(getClassDisplayName(classDoc));
+
 
     // 🎯 TRANSACTION SAFETY - MongoDB session for critical operations
     const session = await mongoose.startSession();
@@ -486,7 +511,7 @@ const markAttendance = async (req, res) => {
             feedingRecord.breakdown.push({
               student: studentId,
               studentName: student.user?.name || "Student",
-              className: student.class?.name || 'Unknown',
+              className: getClassDisplayName(classDoc),
               daysPaid: fedDays.length,
               days: Object.fromEntries(
                 Object.entries(DEFAULT_DAYS).map(([key]) => [
@@ -853,7 +878,7 @@ setImmediate(async () => {
       sender: req.user._id,
       school: req.user.school,
       title: "Attendance Week Initialized",
-      message: `Attendance week ${weekNumber} initialized for ${classDoc.name}`,
+      message: `Attendance week ${weekNumber} initialized for ${getClassDisplayName(classDoc)}`,
       type: "attendance",
       audience: "teacher",
       class: classId,
@@ -865,7 +890,7 @@ setImmediate(async () => {
     await sendPush(
       teacherUserIds,
       "Attendance Week Initialized",
-      `Week ${weekNumber} has been set up for ${classDoc.name}.`
+    `Week ${weekNumber} has been set up for ${getClassDisplayName(classDoc)}.`
     );
 
   } catch (error) {
