@@ -333,33 +333,58 @@ exports.getMyAnnouncements = async (req, res) => {
     }
 
     // ----------------------------------------------------------
-    // 🔍 BUILD FILTER
+    // 🔍 BUILD FILTER (STRICT – NO CLASS LEAKS)
     // ----------------------------------------------------------
     let filter = {
       school: schoolId,
-      isDeleted: { $ne: true }
+      isDeleted: { $ne: true },
+      $and: []
     };
 
+    // ----------------------------------------------------------
+    // 🎓 STUDENT FILTER
+    // ----------------------------------------------------------
     if (userRole === "student") {
-      filter.$or = [
-        { class: { $in: classIds } },
-        { class: null, targetRoles: { $in: ["student", "all", "everyone"] } }
-      ];
+      filter.$and.push({
+        $or: [
+          { class: { $in: classIds } }, // 🔒 class-scoped ONLY
+          {
+            class: null,
+            targetRoles: { $in: ["student", "all", "everyone"] }
+          }
+        ]
+      });
     }
 
+    // ----------------------------------------------------------
+    // 👪 PARENT FILTER
+    // ----------------------------------------------------------
     if (userRole === "parent") {
-      filter.$or = [
-        { class: { $in: classIds } },
-        { class: null, targetRoles: { $in: ["parent", "all", "everyone"] } }
-      ];
+      filter.$and.push({
+        $or: [
+          { class: { $in: classIds } }, // 🔒 class-scoped ONLY
+          {
+            class: null,
+            targetRoles: { $in: ["parent", "all", "everyone"] }
+          }
+        ]
+      });
     }
 
+    // ----------------------------------------------------------
+    // 🧑‍🏫 TEACHER FILTER
+    // ----------------------------------------------------------
     if (userRole === "teacher") {
-      filter.$or = [
-        { class: { $in: classIds } },
-        { sentBy: userId },
-        { targetRoles: { $in: ["teacher", "all", "everyone"] } }
-      ];
+      filter.$and.push({
+        $or: [
+          { class: { $in: classIds } }, // 🔒 class-scoped ONLY
+          { sentBy: userId },
+          {
+            class: null,
+            targetRoles: { $in: ["teacher", "all", "everyone"] }
+          }
+        ]
+      });
     }
 
     // ----------------------------------------------------------
@@ -379,11 +404,11 @@ exports.getMyAnnouncements = async (req, res) => {
     const notifications = await Notification.find({
       school: schoolId,
       type: "announcement",
+      announcementId: { $in: announcementIds },
       $or: [
         { recipientUsers: userId },
         { recipientRoles: { $in: [userRole] } }
-      ],
-      announcementId: { $in: announcementIds }
+      ]
     }).select("announcementId isRead").lean();
 
     const notifMap = {};
@@ -409,37 +434,21 @@ exports.getMyAnnouncements = async (req, res) => {
     );
 
     // ----------------------------------------------------------
-    // 🧩 CLASS NAME NORMALIZATION (FIX FOR BASIC 9A)
+    // 🧩 CLASS NAME NORMALIZATION (BASIC 9A FIX)
     // ----------------------------------------------------------
     announcements = announcements.map(a => {
       const { className, classDisplayName } = resolveClassNames(a.class);
-
-      return {
-        ...a,
-        className,
-        classDisplayName
-      };
+      return { ...a, className, classDisplayName };
     });
 
     // ----------------------------------------------------------
-    // 📋 STUDENT ENRICHMENT (NO className overwrite)
+    // 📋 STUDENT / PARENT ENRICHMENT
     // ----------------------------------------------------------
-    if (userRole === "student") {
+    if (userRole === "student" || userRole === "parent") {
       announcements = announcements.map(a => ({
         ...a,
-        childId: targetStudent._id,
-        childName: targetStudent.user?.name || "You"
-      }));
-    }
-
-    // ----------------------------------------------------------
-    // 📋 PARENT ENRICHMENT (NO className overwrite)
-    // ----------------------------------------------------------
-    if (userRole === "parent") {
-      announcements = announcements.map(a => ({
-        ...a,
-        childId: targetStudent._id,
-        childName: targetStudent.user?.name
+        childId: targetStudent?._id,
+        childName: targetStudent?.user?.name
       }));
     }
 
@@ -460,6 +469,7 @@ exports.getMyAnnouncements = async (req, res) => {
     });
   }
 };
+
 
 
 /**
