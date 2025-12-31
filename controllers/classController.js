@@ -147,13 +147,20 @@ exports.getTeacherClasses = async (req, res) => {
       .lean();
 
     // 4️⃣ Normalize
-    const normalized = classes.map(cls => ({
-      ...cls,
-      className: cls.name,
-      classDisplayName:
-        cls.displayName ||
-        (cls.stream ? `${cls.name}${cls.stream}` : cls.name),
-    }));
+    const normalized = classes.map(cls => {
+  const name = cls.name || "Unknown Class";
+  const stream = cls.stream || null;
+
+  return {
+    ...cls,
+    name,
+    stream,
+    classDisplayName:
+      cls.displayName ||
+      (stream ? `${name}${stream}` : name),
+  };
+});
+
 
     res.status(200).json({
       success: true,

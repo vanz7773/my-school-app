@@ -447,7 +447,20 @@ exports.getTeacherAssignedClasses = async (req, res) => {
     }).select('_id name classTeacher teachers stream displayName').populate('classTeacher', 'name email');
 
     // ✅ USE normalizeClass for each class
-    const normalizedClasses = classes.map(cls => normalizeClass(cls));
+    const normalizedClasses = classes.map(cls => {
+  const name = cls.name || "Unknown Class";
+  const stream = cls.stream || null;
+
+  return {
+    ...cls.toObject(),
+    name,
+    stream,
+    classDisplayName:
+      cls.displayName ||
+      (stream ? `${name}${stream}` : name),
+  };
+});
+
 
     res.json({ success: true, total: normalizedClasses.length, classes: normalizedClasses });
   } catch (err) {
