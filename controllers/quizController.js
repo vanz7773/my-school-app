@@ -2889,6 +2889,60 @@ const gradeQuestion = async (req, res) => {
   }
 };
 
+// In your quiz controller, add this endpoint (or modify existing one)
+// ---------------------------
+// NEW: Simple check-in-progress endpoint
+// ---------------------------
+const checkInProgress = async (req, res) => {
+  try {
+    const { quizId } = req.params;
+    const userId = req.user._id;
+    const school = toObjectId(req.user.school);
+
+    console.log(`🔍 [BACKEND] checkInProgress called: quiz=${quizId}, user=${userId}, school=${school}`);
+
+    // Validate quiz ID
+    if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
+      return res.status(400).json({ message: "Invalid quiz ID format" });
+    }
+
+    // Try to find the linked Student record
+    const studentDoc = await Student.findOne({ user: userId, school }).lean();
+
+    // Include both User ID and Student ID in lookup
+    const idsToCheck = [toObjectId(userId)];
+    if (studentDoc?._id) idsToCheck.push(toObjectId(studentDoc._id));
+
+    console.log(`🔍 [BACKEND] Checking IDs: ${idsToCheck.map(id => id.toString()).join(', ')}`);
+
+    // Find active attempts
+    const activeAttempts = await QuizAttempt.find({
+      quizId: toObjectId(quizId),
+      studentId: { $in: idsToCheck },
+      school,
+      status: "in-progress",
+      expiresAt: { $gt: new Date() }
+    })
+    .sort({ lastActivity: -1 })
+    .lean();
+
+    console.log(`📊 [BACKEND] Found ${activeAttempts.length} active attempts`);
+
+    const response = { 
+      inProgress: activeAttempts.length > 0,
+      attempts: activeAttempts
+    };
+
+    console.log(`✅ [BACKEND] Returning: ${JSON.stringify(response)}`);
+    res.json(response);
+  } catch (error) {
+    console.error(`❌ [BACKEND] Error in checkInProgress: ${error.message}`);
+    res.status(500).json({
+      message: "Error checking quiz progress",
+      error: error.message,
+    });
+  }
+};
 
 
 // 🎯 ADD autoSubmitQuiz TO YOUR EXPORTS AT THE BOTTOM OF THE FILE
@@ -2915,5 +2969,5 @@ module.exports = {
   resumeQuizAttempt,
   saveQuizProgress,
   gradeQuestion,
-
+checkInProgress,
 };
