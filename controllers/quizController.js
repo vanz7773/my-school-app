@@ -52,6 +52,13 @@ async function resolveStudentIdentifier(userId, school) {
 }
 
 
+// Add this near the top of your backend controller file, after imports
+const addDebugLog = (log) => {
+  const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+  const logEntry = `[${timestamp}] ${log}`;
+  console.log(logEntry);
+};
+
 
 // Add these helper functions at the TOP of your file (after imports)
 // ---------------------------
@@ -2337,14 +2344,18 @@ const checkQuizInProgress = async (req, res) => {
     const school = toObjectId(req.user.school);
     const cacheKey = `quiz:inprogress:${quizId}:${userId}`;
 
+    addDebugLog(`🔍 checkQuizInProgress called: quiz=${quizId}, user=${userId}`);
+
     // 🎯 Check cache
     const cached = cache.get(cacheKey);
-    if (cached !== undefined) {
+    if (cached) {
+      addDebugLog(`📦 Returning cached result: ${JSON.stringify(cached)}`);
       return res.json(cached);
     }
 
     // Validate quiz ID
     if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
+      addDebugLog("❌ Invalid quiz ID format");
       return res.status(400).json({ message: "Invalid quiz ID format" });
     }
 
@@ -2353,9 +2364,13 @@ const checkQuizInProgress = async (req, res) => {
       Student.findOne({ user: userId, school }).lean().maxTimeMS(5000)
     );
 
+    addDebugLog(`👤 Student lookup result: ${studentDoc ? 'Found' : 'Not found'}`);
+
     // Include both User ID and Student ID in lookup to cover both schemas
     const idsToCheck = [toObjectId(userId)];
     if (studentDoc?._id) idsToCheck.push(toObjectId(studentDoc._id));
+
+    addDebugLog(`🔍 Checking IDs: ${idsToCheck.map(id => id.toString()).join(', ')}`);
 
     // Find ALL active attempts that haven't expired
     const activeAttempts = await executeWithTimeout(
@@ -2373,6 +2388,13 @@ const checkQuizInProgress = async (req, res) => {
 
     const hasActiveAttempt = activeAttempts && activeAttempts.length > 0;
     
+    addDebugLog(`📊 Active attempts found: ${activeAttempts.length}`);
+    if (activeAttempts.length > 0) {
+      activeAttempts.forEach((attempt, index) => {
+        addDebugLog(`  Attempt ${index + 1}: ${attempt._id}, expires: ${attempt.expiresAt}`);
+      });
+    }
+    
     // Return attempt details if exists
     const response = { 
       inProgress: hasActiveAttempt,
@@ -2380,8 +2402,11 @@ const checkQuizInProgress = async (req, res) => {
     };
     
     cache.set(cacheKey, response, 60); // 1 min cache for progress checks
+    
+    addDebugLog(`✅ Returning: ${JSON.stringify(response)}`);
     res.json(response);
   } catch (error) {
+    addDebugLog(`❌ Error in checkQuizInProgress: ${error.message}`);
     console.error("❌ Error checking quiz progress:", error);
     res.status(500).json({
       message: "Error checking quiz progress",
