@@ -46,6 +46,12 @@ async function sendPush(userIds, title, body, data = {}) {
 }
 
 
+async function resolveStudentIdentifier(userId, school) {
+  const student = await Student.findOne({ user: userId, school }).select("_id").lean();
+  return student ? student._id : userId;
+}
+
+
 
 // Add these helper functions at the TOP of your file (after imports)
 // ---------------------------
@@ -2289,8 +2295,16 @@ const checkQuizCompletion = async (req, res) => {
     );
 
     // Build a list of possible student identifiers to match
-    const idsToCheck = [toObjectId(userId)];
-    if (studentDoc?._id) idsToCheck.push(toObjectId(studentDoc._id));
+    const studentIdentifier = await resolveStudentIdentifier(userId, school);
+
+const activeAttempt = await QuizAttempt.findOne({
+  quizId: toObjectId(quizId),
+  studentId: studentIdentifier,
+  school,
+  status: "in-progress",
+  expiresAt: { $gt: new Date() }
+});
+
 
     // Check for a matching quiz result under either ID
     const result = await executeWithTimeout(
@@ -2430,7 +2444,8 @@ const startQuizAttempt = async (req, res) => {
       return res.status(403).json({ message: "You are not enrolled in this class" });
     }
 
-    const studentIdentifier = student?._id || userId;
+    const studentIdentifier = await resolveStudentIdentifier(userId, school);
+
 
     // 🎯 Check existing results and attempts in parallel
     const [existingResult, activeAttempt, attemptCount] = await Promise.all([
@@ -2539,15 +2554,17 @@ const resumeQuizAttempt = async (req, res) => {
       return res.status(400).json({ message: 'Invalid quiz ID format' });
     }
 
-    const activeAttempt = await executeWithTimeout(
-      QuizAttempt.findOne({
-        quizId: toObjectId(quizId),
-        studentId: toObjectId(studentId),
-        school,
-        status: 'in-progress',
-        expiresAt: { $gt: new Date() }
-      }).maxTimeMS(5000)
-    );
+    
+     const studentIdentifier = await resolveStudentIdentifier(req.user._id, school);
+
+const activeAttempt = await QuizAttempt.findOne({
+  quizId: toObjectId(quizId),
+  studentId: studentIdentifier,
+  school,
+  status: "in-progress",
+  expiresAt: { $gt: new Date() }
+});
+
 
     if (!activeAttempt) {
       return res.status(404).json({ message: 'No active quiz attempt found' });
