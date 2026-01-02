@@ -2394,39 +2394,39 @@ const checkQuizInProgress = async (req, res) => {
 // 19. Start a new quiz attempt (Strict due date + completion lock) - OPTIMIZED
 // ---------------------------
 const startQuizAttempt = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
+  // REMOVE the session transaction - use regular operations instead
   try {
     const { quizId } = req.params;
     const userId = req.user._id;
     const school = toObjectId(req.user.school);
     const now = new Date();
 
+    addDebugLog(`🎬 startQuizAttempt called for quiz: ${quizId}, user: ${userId}`);
+
     if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
-      await session.abortTransaction();
+      addDebugLog("❌ Invalid quiz ID format");
       return res.status(400).json({ message: "Invalid quiz ID format" });
     }
 
-    // 🎯 Parallel validation checks
+    // 🎯 Parallel validation checks WITHOUT session
     const [quiz, student, userRecord] = await Promise.all([
       executeWithTimeout(
         QuizSession.findOne({
           _id: toObjectId(quizId),
           school,
           isPublished: true,
-        }).session(session).maxTimeMS(5000)
+        }).maxTimeMS(5000)
       ),
       executeWithTimeout(
-        Student.findOne({ user: userId, school }).lean().session(session).maxTimeMS(5000)
+        Student.findOne({ user: userId, school }).lean().maxTimeMS(5000)
       ),
       executeWithTimeout(
-        User.findOne({ _id: userId, school }).lean().session(session).maxTimeMS(5000)
+        User.findOne({ _id: userId, school }).lean().maxTimeMS(5000)
       )
     ]);
 
     if (!quiz) {
-      await session.abortTransaction();
+      addDebugLog("❌ Quiz not found or not published");
       return res.status(404).json({ message: "Quiz not found or not published" });
     }
 
@@ -2435,12 +2435,12 @@ const startQuizAttempt = async (req, res) => {
     const quizDue = quiz.dueDate ? new Date(quiz.dueDate) : null;
 
     if (quizStart && now < quizStart) {
-      await session.abortTransaction();
+      addDebugLog("❌ Quiz is not available yet");
       return res.status(403).json({ message: "Quiz is not available yet" });
     }
 
     if (quizDue && now > quizDue) {
-      await session.abortTransaction();
+      addDebugLog("❌ Quiz has expired");
       return res.status(403).json({ message: "Quiz has expired" });
     }
 
@@ -2450,11 +2450,12 @@ const startQuizAttempt = async (req, res) => {
       (userRecord?.class && quiz.class && userRecord.class.toString() === quiz.class.toString());
 
     if (!enrolled) {
-      await session.abortTransaction();
+      addDebugLog("❌ User not enrolled in this class");
       return res.status(403).json({ message: "You are not enrolled in this class" });
     }
 
     const studentIdentifier = student?._id || userId;
+    addDebugLog(`👤 Student identifier: ${studentIdentifier}`);
 
     // 🎯 Check for existing results FIRST (global check across all devices)
     const existingResult = await executeWithTimeout(
@@ -2462,11 +2463,11 @@ const startQuizAttempt = async (req, res) => {
         quizId: toObjectId(quizId),
         studentId: studentIdentifier,
         school,
-      }).session(session).maxTimeMS(5000)
+      }).maxTimeMS(5000)
     );
 
     if (existingResult) {
-      await session.abortTransaction();
+      addDebugLog("❌ Quiz already completed");
       return res.status(403).json({
         message: "You have already completed this quiz and cannot retake it.",
         alreadyCompleted: true,
@@ -2474,7 +2475,7 @@ const startQuizAttempt = async (req, res) => {
     }
 
     // 🎯 Check for active attempts across ALL devices (not just current session)
-    // This is the key fix: look for ANY in-progress attempt regardless of device
+    addDebugLog("🔍 Looking for active attempts...");
     const activeAttempts = await executeWithTimeout(
       QuizAttempt.find({
         quizId: toObjectId(quizId),
@@ -2484,20 +2485,22 @@ const startQuizAttempt = async (req, res) => {
         expiresAt: { $gt: now }
       })
       .sort({ lastActivity: -1 }) // Get most recent activity
-      .session(session)
       .maxTimeMS(5000)
     );
+
+    addDebugLog(`📊 Found ${activeAttempts.length} active attempts`);
 
     // If there's an existing active attempt, resume it
     if (activeAttempts && activeAttempts.length > 0) {
       const mostRecentAttempt = activeAttempts[0];
+      addDebugLog(`🔄 Found active attempt: ${mostRecentAttempt._id}, session: ${mostRecentAttempt.sessionId}`);
       
       // Update last activity and session info
       mostRecentAttempt.lastActivity = now;
       mostRecentAttempt.lastDeviceInfo = req.headers['user-agent'] || 'Unknown device';
-      await mostRecentAttempt.save({ session });
+      await mostRecentAttempt.save();
       
-      await session.commitTransaction();
+      addDebugLog(`📝 Updated attempt activity: ${mostRecentAttempt._id}`);
       
       return res.json({
         sessionId: mostRecentAttempt.sessionId,
@@ -2514,12 +2517,12 @@ const startQuizAttempt = async (req, res) => {
       QuizResult.countDocuments({
         quizId: toObjectId(quizId),
         studentId: studentIdentifier,
-      }).session(session).maxTimeMS(5000)
+      }).maxTimeMS(5000)
     );
 
     const attemptNumber = attemptCount + 1;
     if (quiz.maxAttempts && attemptNumber > quiz.maxAttempts) {
-      await session.abortTransaction();
+      addDebugLog(`❌ Max attempts exceeded: ${attemptNumber} > ${quiz.maxAttempts}`);
       return res.status(400).json({ message: "Maximum number of attempts exceeded" });
     }
 
@@ -2528,7 +2531,9 @@ const startQuizAttempt = async (req, res) => {
     const expiresAt = new Date(Date.now() + timeLimit * 1000);
     const sessionId = new mongoose.Types.ObjectId().toString();
 
-    const newAttempt = await QuizAttempt.create([{
+    addDebugLog(`🆕 Creating new attempt #${attemptNumber}, timeLimit: ${timeLimit}s`);
+
+    const newAttempt = await QuizAttempt.create({
       quizId: toObjectId(quizId),
       studentId: studentIdentifier,
       school,
@@ -2540,26 +2545,24 @@ const startQuizAttempt = async (req, res) => {
       lastActivity: now,
       lastDeviceInfo: req.headers['user-agent'] || 'Unknown device',
       createdFromDevice: req.headers['user-agent'] || 'Unknown device'
-    }], { session });
+    });
 
-    await session.commitTransaction();
+    addDebugLog(`✅ Created new attempt: ${newAttempt._id}, session: ${sessionId}`);
 
     res.json({
-      sessionId: newAttempt[0].sessionId,
+      sessionId: newAttempt.sessionId,
       timeRemaining: timeLimit,
-      startTime: newAttempt[0].startTime,
+      startTime: newAttempt.startTime,
       resumed: false,
-      attemptNumber: newAttempt[0].attemptNumber
+      attemptNumber: newAttempt.attemptNumber
     });
   } catch (error) {
-    await session.abortTransaction();
+    addDebugLog(`❌ Error in startQuizAttempt: ${error.message}`);
     console.error("❌ Error starting quiz attempt:", error);
     res.status(500).json({
       message: "Error starting quiz attempt",
       error: error.message,
     });
-  } finally {
-    session.endSession();
   }
 };
 
