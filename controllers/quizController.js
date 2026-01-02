@@ -2357,18 +2357,28 @@ const checkQuizInProgress = async (req, res) => {
     const idsToCheck = [toObjectId(userId)];
     if (studentDoc?._id) idsToCheck.push(toObjectId(studentDoc._id));
 
-    // Find an active attempt that hasn't expired
-    const activeAttempt = await executeWithTimeout(
-      QuizAttempt.findOne({
+    // Find ALL active attempts that haven't expired
+    const activeAttempts = await executeWithTimeout(
+      QuizAttempt.find({
         quizId: toObjectId(quizId),
         studentId: { $in: idsToCheck },
         school,
         status: "in-progress",
-        expiresAt: { $gt: new Date() },
-      }).lean().maxTimeMS(5000)
+        expiresAt: { $gt: new Date() }
+      })
+      .sort({ lastActivity: -1 }) // Get most recent
+      .lean()
+      .maxTimeMS(5000)
     );
 
-    const response = { inProgress: !!activeAttempt };
+    const hasActiveAttempt = activeAttempts && activeAttempts.length > 0;
+    
+    // Return attempt details if exists
+    const response = { 
+      inProgress: hasActiveAttempt,
+      attempts: hasActiveAttempt ? activeAttempts : []
+    };
+    
     cache.set(cacheKey, response, 60); // 1 min cache for progress checks
     res.json(response);
   } catch (error) {
@@ -2444,34 +2454,16 @@ const startQuizAttempt = async (req, res) => {
       return res.status(403).json({ message: "You are not enrolled in this class" });
     }
 
-    const studentIdentifier = await resolveStudentIdentifier(userId, school);
+    const studentIdentifier = student?._id || userId;
 
-
-    // 🎯 Check existing results and attempts in parallel
-    const [existingResult, activeAttempt, attemptCount] = await Promise.all([
-      executeWithTimeout(
-        QuizResult.findOne({
-          quizId: toObjectId(quizId),
-          studentId: studentIdentifier,
-          school,
-        }).session(session).maxTimeMS(5000)
-      ),
-      executeWithTimeout(
-        QuizAttempt.findOne({
-          quizId: toObjectId(quizId),
-          studentId: studentIdentifier,
-          school,
-          status: "in-progress",
-          expiresAt: { $gt: now }
-        }).session(session).maxTimeMS(5000)
-      ),
-      executeWithTimeout(
-        QuizResult.countDocuments({
-          quizId: toObjectId(quizId),
-          studentId: studentIdentifier,
-        }).session(session).maxTimeMS(5000)
-      )
-    ]);
+    // 🎯 Check for existing results FIRST (global check across all devices)
+    const existingResult = await executeWithTimeout(
+      QuizResult.findOne({
+        quizId: toObjectId(quizId),
+        studentId: studentIdentifier,
+        school,
+      }).session(session).maxTimeMS(5000)
+    );
 
     if (existingResult) {
       await session.abortTransaction();
@@ -2481,15 +2473,49 @@ const startQuizAttempt = async (req, res) => {
       });
     }
 
-    if (activeAttempt) {
+    // 🎯 Check for active attempts across ALL devices (not just current session)
+    // This is the key fix: look for ANY in-progress attempt regardless of device
+    const activeAttempts = await executeWithTimeout(
+      QuizAttempt.find({
+        quizId: toObjectId(quizId),
+        studentId: studentIdentifier,
+        school,
+        status: "in-progress",
+        expiresAt: { $gt: now }
+      })
+      .sort({ lastActivity: -1 }) // Get most recent activity
+      .session(session)
+      .maxTimeMS(5000)
+    );
+
+    // If there's an existing active attempt, resume it
+    if (activeAttempts && activeAttempts.length > 0) {
+      const mostRecentAttempt = activeAttempts[0];
+      
+      // Update last activity and session info
+      mostRecentAttempt.lastActivity = now;
+      mostRecentAttempt.lastDeviceInfo = req.headers['user-agent'] || 'Unknown device';
+      await mostRecentAttempt.save({ session });
+      
       await session.commitTransaction();
+      
       return res.json({
-        sessionId: activeAttempt.sessionId,
-        timeRemaining: Math.floor((new Date(activeAttempt.expiresAt) - now) / 1000),
-        startTime: activeAttempt.startTime,
+        sessionId: mostRecentAttempt.sessionId,
+        timeRemaining: Math.floor((new Date(mostRecentAttempt.expiresAt) - now) / 1000),
+        startTime: mostRecentAttempt.startTime,
         resumed: true,
+        message: "Resuming existing quiz attempt",
+        attemptNumber: mostRecentAttempt.attemptNumber
       });
     }
+
+    // 🎯 Check attempt count (only if no active attempts exist)
+    const attemptCount = await executeWithTimeout(
+      QuizResult.countDocuments({
+        quizId: toObjectId(quizId),
+        studentId: studentIdentifier,
+      }).session(session).maxTimeMS(5000)
+    );
 
     const attemptNumber = attemptCount + 1;
     if (quiz.maxAttempts && attemptNumber > quiz.maxAttempts) {
@@ -2497,7 +2523,7 @@ const startQuizAttempt = async (req, res) => {
       return res.status(400).json({ message: "Maximum number of attempts exceeded" });
     }
 
-    // 🎯 Create new attempt
+    // 🎯 Create new attempt (only if no active attempts exist)
     const timeLimit = quiz.timeLimit || 3600;
     const expiresAt = new Date(Date.now() + timeLimit * 1000);
     const sessionId = new mongoose.Types.ObjectId().toString();
@@ -2512,6 +2538,8 @@ const startQuizAttempt = async (req, res) => {
       expiresAt,
       status: "in-progress",
       lastActivity: now,
+      lastDeviceInfo: req.headers['user-agent'] || 'Unknown device',
+      createdFromDevice: req.headers['user-agent'] || 'Unknown device'
     }], { session });
 
     await session.commitTransaction();
@@ -2521,6 +2549,7 @@ const startQuizAttempt = async (req, res) => {
       timeRemaining: timeLimit,
       startTime: newAttempt[0].startTime,
       resumed: false,
+      attemptNumber: newAttempt[0].attemptNumber
     });
   } catch (error) {
     await session.abortTransaction();
