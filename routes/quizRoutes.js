@@ -20,7 +20,7 @@ const {
   resumeQuizAttempt,
   saveQuizProgress,
   gradeQuestion,
-checkInProgress
+
 } = require('../controllers/quizController.js');
 
 const { protect, restrictTo } = require('../middlewares/authMiddleware');
@@ -65,8 +65,7 @@ router.get('/:quizId/progress', protect, restrictTo('student'), checkQuizInProgr
 router.post('/:quizId/start', protect, restrictTo('student'), startQuizAttempt);
 router.get('/:quizId/resume', protect, restrictTo('student'), resumeQuizAttempt);
 router.post('/:quizId/save', protect, restrictTo('student'), saveQuizProgress);
-// In your quiz routes file, add:
-router.get('/:quizId/check-in-progress', protect, checkInProgress);
+
 // 🔥 Submit must come BEFORE any /results/ routes
 router.post('/:quizId/submit', protect, restrictTo('student'), submitQuiz);
 
