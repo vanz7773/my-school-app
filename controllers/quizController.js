@@ -2291,9 +2291,6 @@ const checkQuizInProgress = async (req, res) => {
 
 // ---------------------------
 const startQuizAttempt = async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
   try {
     const { quizId } = req.params;
     const userId = req.user._id;
@@ -2301,89 +2298,66 @@ const startQuizAttempt = async (req, res) => {
     const now = new Date();
 
     if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
-      await session.abortTransaction();
       return res.status(400).json({ message: "Invalid quiz ID format" });
     }
 
-    // 🎯 Parallel validation checks (FIXED ORDER)
-    const [quiz, student, userRecord] = await Promise.all([
+    // 🎯 Load quiz + student
+    const [quiz, student] = await Promise.all([
       QuizSession.findOne({
         _id: toObjectId(quizId),
         school,
         isPublished: true,
-      }).session(session),
+      }),
 
-      Student.findOne({ user: userId, school })
-        .session(session)
-        .lean(),
-
-      User.findOne({ _id: userId, school })
-        .session(session)
-        .lean(),
+      Student.findOne({ user: userId, school }).lean(),
     ]);
 
     if (!quiz) {
-      await session.abortTransaction();
       return res.status(404).json({ message: "Quiz not found or not published" });
     }
 
     if (!student) {
-      await session.abortTransaction();
       return res.status(404).json({ message: "Student record not found" });
     }
 
-    // 🎯 Time validation
+    // ⏰ Time checks
     if (quiz.startTime && now < new Date(quiz.startTime)) {
-      await session.abortTransaction();
       return res.status(403).json({ message: "Quiz is not available yet" });
     }
 
     if (quiz.dueDate && now > new Date(quiz.dueDate)) {
-      await session.abortTransaction();
       return res.status(403).json({ message: "Quiz has expired" });
     }
 
-    // 🎯 Enrollment check
+    // 🎓 Enrollment check
     if (!quiz.class || student.class.toString() !== quiz.class.toString()) {
-      await session.abortTransaction();
       return res.status(403).json({ message: "You are not enrolled in this class" });
     }
 
-    // ✅ SINGLE SOURCE OF TRUTH
-    const studentIdentifier = userId;
+    const studentId = userId; // ✅ SINGLE ID
 
-    // 🎯 Check existing result / active attempt
+    // 🔍 Check result / active attempt
     const [existingResult, activeAttempt, attemptCount] = await Promise.all([
-      QuizResult.findOne({
-        quizId: toObjectId(quizId),
-        studentId: studentIdentifier,
-        school,
-      }).session(session),
-
+      QuizResult.findOne({ quizId, studentId, school }),
       QuizAttempt.findOne({
-        quizId: toObjectId(quizId),
-        studentId: studentIdentifier,
+        quizId,
+        studentId,
         school,
         status: "in-progress",
         expiresAt: { $gt: now },
-      }).session(session),
-
-      QuizResult.countDocuments({
-        quizId: toObjectId(quizId),
-        studentId: studentIdentifier,
-      }).session(session),
+      }),
+      QuizResult.countDocuments({ quizId, studentId }),
     ]);
 
     if (existingResult) {
-      await session.abortTransaction();
       return res.status(403).json({
         message: "You have already completed this quiz.",
         alreadyCompleted: true,
       });
     }
 
+    // 🔄 RESUME
     if (activeAttempt) {
-      await session.commitTransaction();
       return res.json({
         sessionId: activeAttempt.sessionId,
         startTime: activeAttempt.startTime,
@@ -2394,52 +2368,38 @@ const startQuizAttempt = async (req, res) => {
       });
     }
 
-    const attemptNumber = attemptCount + 1;
-    if (quiz.maxAttempts && attemptNumber > quiz.maxAttempts) {
-      await session.abortTransaction();
-      return res.status(400).json({ message: "Maximum number of attempts exceeded" });
-    }
-
-    // 🎯 Create new attempt (FIXED TIME UNITS)
+    // 🆕 NEW ATTEMPT
     const timeLimitSeconds = (quiz.timeLimit ?? 60) * 60;
     const expiresAt = new Date(now.getTime() + timeLimitSeconds * 1000);
 
-    const sessionId = new mongoose.Types.ObjectId().toString();
+    const newAttempt = await QuizAttempt.create({
+      quizId,
+      studentId,
+      school,
+      sessionId: new mongoose.Types.ObjectId().toString(),
+      attemptNumber: attemptCount + 1,
+      startTime: now,
+      expiresAt,
+      status: "in-progress",
+      lastActivity: now,
+    });
 
-    const [newAttempt] = await QuizAttempt.create(
-      [{
-        quizId: toObjectId(quizId),
-        studentId: studentIdentifier,
-        school,
-        sessionId,
-        attemptNumber,
-        startTime: now,
-        expiresAt,
-        status: "in-progress",
-        lastActivity: now,
-      }],
-      { session }
-    );
-
-    await session.commitTransaction();
-
-    res.json({
+    return res.json({
       sessionId: newAttempt.sessionId,
       startTime: newAttempt.startTime,
       timeRemaining: timeLimitSeconds,
       resumed: false,
     });
+
   } catch (error) {
-    await session.abortTransaction();
-    console.error("❌ Error starting quiz attempt:", error);
+    console.error("❌ startQuizAttempt failed:", error);
     res.status(500).json({
       message: "Error starting quiz attempt",
       error: error.message,
     });
-  } finally {
-    session.endSession();
   }
 };
+
 
 // ---------------------------
 // 20. Resume quiz attempt - OPTIMIZED
