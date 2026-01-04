@@ -2445,9 +2445,13 @@ const startQuizAttempt = async (req, res) => {
       return res.status(403).json({ message: "Quiz is not available yet" });
     }
 
-    if (quizDue && now > quizDue) {
-      return res.status(403).json({ message: "Quiz has expired" });
-    }
+   if (
+  quizDue &&
+  now.toDateString() !== quizDue.toDateString() &&
+  now > quizDue
+) {
+  return res.status(403).json({ message: "Quiz has expired" });
+}
 
     // --------------------------------------------------
     // 🎓 Enrollment check
