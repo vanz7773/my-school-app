@@ -2445,8 +2445,9 @@ const startQuizAttempt = async (req, res) => {
     // 🔐 HYBRID-SAFE student identifiers
     // --------------------------------------------------
     const idsToCheck = [];
-    if (student?._id) idsToCheck.push(student._id);
-    idsToCheck.push(new mongoose.Types.ObjectId(userId));
+if (student?._id) idsToCheck.push(student._id);
+idsToCheck.push(new mongoose.Types.ObjectId(userId));
+
 
     // --------------------------------------------------
     // 🔍 Check existing result & active attempt (NO SESSION)
