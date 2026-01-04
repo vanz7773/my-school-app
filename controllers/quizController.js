@@ -1032,138 +1032,60 @@ const getProtectedQuiz = async (req, res) => {
     const userId = req.user._id;
 
     if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
-      return res.status(400).json({ message: 'Invalid quiz ID format' });
+      return res.status(400).json({ message: "Invalid quiz ID format" });
     }
 
-    // 🎯 Parallel validation checks
-    const [quiz, student] = await Promise.all([
-      executeWithTimeout(
-        QuizSession.findOne({ _id: toObjectId(quizId), school }).maxTimeMS(5000)
-      ),
-      executeWithTimeout(
-        User.findOne({ _id: toObjectId(userId), school }).maxTimeMS(5000)
-      )
-    ]);
-    
-    if (!quiz) {
-      return res.status(404).json({ message: 'Quiz not found in your school' });
-    }
-
-    if (req.user.role === 'student') {      
-      if (!student || student.class.toString() !== quiz.class.toString()) {
-        return res.status(403).json({ message: 'You are not allowed to access this quiz' });
-      }
-      
-      if (quiz.startTime && new Date() < quiz.startTime) {
-        return res.status(403).json({ message: 'Quiz is not available yet' });
-      }
-      
-      if (!quiz.isPublished) {
-        return res.status(403).json({ message: 'Quiz is not published yet' });
-      }
-    }
-
-    const sessionId = new mongoose.Types.ObjectId();
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
-    
-    // 🎯 Background session creation
-    processInBackground(async () => {
-      try {
-        await QuizSession.create({
-          sessionId,
-          quizId: toObjectId(quizId),
-          studentId: req.user.role === 'student' ? toObjectId(userId) : null,
-          expiresAt,
-          startTime: new Date()
-        });
-      } catch (sessionError) {
-        console.error('Session creation failed:', sessionError);
-      }
-    });
-
-    let questions = quiz.questions;
-    if (quiz.shuffleQuestions) {
-      questions = [...questions].sort(() => Math.random() - 0.5);
-    }
-
-    const protectedQuestions = questions.map((q, index) => {
-      const questionId = `q${index}_${sessionId}`;
-      
-      let options = [];
-      if (q.options && q.options.length > 0) {
-        options = [...q.options];
-        if (quiz.shuffleOptions) {
-          options = options.sort(() => Math.random() - 0.5);
-        }
-        
-        options = options.map(opt => ({
-          text: obfuscateText(opt),
-          id: `opt_${Math.random().toString(36).substr(2, 9)}`,
-          value: opt
-        }));
-      }
-      
-      return {
-        id: questionId,
-        questionText: obfuscateText(q.questionText),
-        type: q.type,
-        options: options,
-        points: q.points || 1
-      };
-    });
-
-    res.json({
-      sessionId,
-      quizTitle: quiz.title,
-      timeLimit: quiz.timeLimit,
-      questions: protectedQuestions,
-      expiresAt,
-      startTime: new Date()
-    });
-  } catch (error) {
-    console.error('Error getting protected quiz:', error);
-    res.status(500).json({ message: 'Error loading quiz', error: error.message });
-  }
-};
-
-function obfuscateText(text) {
-  if (!text) return text;
-  const words = text.split(' ');
-  return words.map(word => word.split('').join('\u200B')).join(' ');
-}
-
-// ---------------------------
-// 7. Validate QuizSession Session - OPTIMIZED
-// ---------------------------
-const validateQuizSession = async (req, res, next) => {
-  try {
-    const { sessionId } = req.body;
-    
-    if (!sessionId) {
-      return res.status(400).json({ message: 'Session ID is required' });
-    }
-    
-    const session = await executeWithTimeout(
-      QuizSession.findOne({ 
-        sessionId, 
-        expiresAt: { $gt: new Date() } 
-      }).maxTimeMS(5000)
+    // -----------------------------------
+    // 🔍 Load quiz metadata (NO sessions)
+    // -----------------------------------
+    const quiz = await executeWithTimeout(
+      QuizSession.findOne({ _id: toObjectId(quizId), school })
+        .lean()
+        .maxTimeMS(5000)
     );
-    
-    if (!session) {
-      return res.status(403).json({ message: 'Invalid or expired quiz session' });
+
+    if (!quiz) {
+      return res.status(404).json({ message: "Quiz not found in your school" });
     }
-    
-    if (req.user.role === 'student' && session.studentId.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'This session does not belong to you' });
+
+    // -----------------------------------
+    // 🎓 Student access checks
+    // -----------------------------------
+    if (req.user.role === "student") {
+      const student = await executeWithTimeout(
+        Student.findOne({ user: userId, school }).lean().maxTimeMS(5000)
+      );
+
+      if (!student || student.class.toString() !== quiz.class.toString()) {
+        return res.status(403).json({ message: "You are not allowed to access this quiz" });
+      }
+
+      if (quiz.startTime && new Date() < new Date(quiz.startTime)) {
+        return res.status(403).json({ message: "Quiz is not available yet" });
+      }
+
+      if (!quiz.isPublished) {
+        return res.status(403).json({ message: "Quiz is not published yet" });
+      }
     }
-    
-    req.quizSession = session;
-    next();
+
+    // -------------------------------------------------
+    // 🚀 START or RESUME ATTEMPT (AUTHORITATIVE)
+    // -------------------------------------------------
+    // Reuse your existing logic instead of creating sessions
+    return startQuizAttempt(req, res);
+
   } catch (error) {
-    res.status(500).json({ message: 'Session validation failed', error: error.message });
+    console.error("❌ Error getting protected quiz:", error);
+    res.status(500).json({
+      message: "Error loading quiz",
+      error: error.message,
+    });
   }
 };
+
+
+
 
 // ---------------------------
 // 9. Get QuizSession Results (Optimized)
@@ -1521,7 +1443,7 @@ const deleteQuiz = async (req, res) => {
         QuizResult.deleteMany({ quizId: toObjectId(quizId) }).session(session)
       ),
       executeWithTimeout(
-        QuizSession.deleteMany({ quizId: toObjectId(quizId) }).session(session)
+        QuizAttempt.deleteMany({ quizId: toObjectId(quizId) }).session(session) // <- fixed
       ),
       executeWithTimeout(
         QuizSession.findByIdAndDelete(toObjectId(quizId)).session(session)
@@ -1549,6 +1471,7 @@ const deleteQuiz = async (req, res) => {
     session.endSession();
   }
 };
+
 
 // --------------------------- 
 // 14. Submit Quiz (NON-TRANSACTION VERSION, FIXED FOR AUTO-SUBMIT)
@@ -2825,7 +2748,6 @@ module.exports = {
   getQuizzesForClass,
   getQuizzesForSchool,
   getProtectedQuiz,
-  validateQuizSession,
   getQuizResults,
   getAverageScoresPerSubject,
   getStudentProgress,
