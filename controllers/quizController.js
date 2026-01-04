@@ -2290,8 +2290,6 @@ const checkQuizInProgress = async (req, res) => {
 };
 
 // ---------------------------
-// 19. Start a new quiz attempt (Strict due date + completion lock) - OPTIMIZED
-// ---------------------------
 const startQuizAttempt = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -2307,21 +2305,21 @@ const startQuizAttempt = async (req, res) => {
       return res.status(400).json({ message: "Invalid quiz ID format" });
     }
 
-    // 🎯 Parallel validation checks
+    // 🎯 Parallel validation checks (FIXED ORDER)
     const [quiz, student, userRecord] = await Promise.all([
-      executeWithTimeout(
-        QuizSession.findOne({
-          _id: toObjectId(quizId),
-          school,
-          isPublished: true,
-        }).session(session).maxTimeMS(5000)
-      ),
-      executeWithTimeout(
-        Student.findOne({ user: userId, school }).lean().session(session).maxTimeMS(5000)
-      ),
-      executeWithTimeout(
-        User.findOne({ _id: userId, school }).lean().session(session).maxTimeMS(5000)
-      )
+      QuizSession.findOne({
+        _id: toObjectId(quizId),
+        school,
+        isPublished: true,
+      }).session(session),
+
+      Student.findOne({ user: userId, school })
+        .session(session)
+        .lean(),
+
+      User.findOne({ _id: userId, school })
+        .session(session)
+        .lean(),
     ]);
 
     if (!quiz) {
@@ -2329,62 +2327,57 @@ const startQuizAttempt = async (req, res) => {
       return res.status(404).json({ message: "Quiz not found or not published" });
     }
 
-    // 🎯 Time validation
-    const quizStart = quiz.startTime ? new Date(quiz.startTime) : null;
-    const quizDue = quiz.dueDate ? new Date(quiz.dueDate) : null;
+    if (!student) {
+      await session.abortTransaction();
+      return res.status(404).json({ message: "Student record not found" });
+    }
 
-    if (quizStart && now < quizStart) {
+    // 🎯 Time validation
+    if (quiz.startTime && now < new Date(quiz.startTime)) {
       await session.abortTransaction();
       return res.status(403).json({ message: "Quiz is not available yet" });
     }
 
-    if (quizDue && now > quizDue) {
+    if (quiz.dueDate && now > new Date(quiz.dueDate)) {
       await session.abortTransaction();
       return res.status(403).json({ message: "Quiz has expired" });
     }
 
     // 🎯 Enrollment check
-    const enrolled =
-      (student?.class && quiz.class && student.class.toString() === quiz.class.toString()) ||
-      (userRecord?.class && quiz.class && userRecord.class.toString() === quiz.class.toString());
-
-    if (!enrolled) {
+    if (!quiz.class || student.class.toString() !== quiz.class.toString()) {
       await session.abortTransaction();
       return res.status(403).json({ message: "You are not enrolled in this class" });
     }
 
-    const studentIdentifier = student?._id || userId;
+    // ✅ SINGLE SOURCE OF TRUTH
+    const studentIdentifier = userId;
 
-    // 🎯 Check existing results and attempts in parallel
+    // 🎯 Check existing result / active attempt
     const [existingResult, activeAttempt, attemptCount] = await Promise.all([
-      executeWithTimeout(
-        QuizResult.findOne({
-          quizId: toObjectId(quizId),
-          studentId: studentIdentifier,
-          school,
-        }).session(session).maxTimeMS(5000)
-      ),
-      executeWithTimeout(
-        QuizAttempt.findOne({
-          quizId: toObjectId(quizId),
-          studentId: studentIdentifier,
-          school,
-          status: "in-progress",
-          expiresAt: { $gt: now }
-        }).session(session).maxTimeMS(5000)
-      ),
-      executeWithTimeout(
-        QuizResult.countDocuments({
-          quizId: toObjectId(quizId),
-          studentId: studentIdentifier,
-        }).session(session).maxTimeMS(5000)
-      )
+      QuizResult.findOne({
+        quizId: toObjectId(quizId),
+        studentId: studentIdentifier,
+        school,
+      }).session(session),
+
+      QuizAttempt.findOne({
+        quizId: toObjectId(quizId),
+        studentId: studentIdentifier,
+        school,
+        status: "in-progress",
+        expiresAt: { $gt: now },
+      }).session(session),
+
+      QuizResult.countDocuments({
+        quizId: toObjectId(quizId),
+        studentId: studentIdentifier,
+      }).session(session),
     ]);
 
     if (existingResult) {
       await session.abortTransaction();
       return res.status(403).json({
-        message: "You have already completed this quiz and cannot retake it.",
+        message: "You have already completed this quiz.",
         alreadyCompleted: true,
       });
     }
@@ -2393,8 +2386,10 @@ const startQuizAttempt = async (req, res) => {
       await session.commitTransaction();
       return res.json({
         sessionId: activeAttempt.sessionId,
-        timeRemaining: Math.floor((new Date(activeAttempt.expiresAt) - now) / 1000),
         startTime: activeAttempt.startTime,
+        timeRemaining: Math.floor(
+          (new Date(activeAttempt.expiresAt) - now) / 1000
+        ),
         resumed: true,
       });
     }
@@ -2405,29 +2400,33 @@ const startQuizAttempt = async (req, res) => {
       return res.status(400).json({ message: "Maximum number of attempts exceeded" });
     }
 
-    // 🎯 Create new attempt
-    const timeLimit = quiz.timeLimit || 3600;
-    const expiresAt = new Date(Date.now() + timeLimit * 1000);
+    // 🎯 Create new attempt (FIXED TIME UNITS)
+    const timeLimitSeconds = (quiz.timeLimit ?? 60) * 60;
+    const expiresAt = new Date(now.getTime() + timeLimitSeconds * 1000);
+
     const sessionId = new mongoose.Types.ObjectId().toString();
 
-    const newAttempt = await QuizAttempt.create([{
-      quizId: toObjectId(quizId),
-      studentId: studentIdentifier,
-      school,
-      sessionId,
-      attemptNumber,
-      startTime: now,
-      expiresAt,
-      status: "in-progress",
-      lastActivity: now,
-    }], { session });
+    const [newAttempt] = await QuizAttempt.create(
+      [{
+        quizId: toObjectId(quizId),
+        studentId: studentIdentifier,
+        school,
+        sessionId,
+        attemptNumber,
+        startTime: now,
+        expiresAt,
+        status: "in-progress",
+        lastActivity: now,
+      }],
+      { session }
+    );
 
     await session.commitTransaction();
 
     res.json({
-      sessionId: newAttempt[0].sessionId,
-      timeRemaining: timeLimit,
-      startTime: newAttempt[0].startTime,
+      sessionId: newAttempt.sessionId,
+      startTime: newAttempt.startTime,
+      timeRemaining: timeLimitSeconds,
       resumed: false,
     });
   } catch (error) {
