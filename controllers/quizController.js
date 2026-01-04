@@ -46,19 +46,6 @@ async function sendPush(userIds, title, body, data = {}) {
 }
 
 
-async function resolveStudentIdentifier(userId, school) {
-  const student = await Student.findOne({ user: userId, school }).select("_id").lean();
-  return student ? student._id : userId;
-}
-
-
-// Add this near the top of your backend controller file, after imports
-const addDebugLog = (log) => {
-  const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
-  const logEntry = `[${timestamp}] ${log}`;
-  console.log(logEntry);
-};
-
 
 // Add these helper functions at the TOP of your file (after imports)
 // ---------------------------
@@ -2302,16 +2289,8 @@ const checkQuizCompletion = async (req, res) => {
     );
 
     // Build a list of possible student identifiers to match
-    const studentIdentifier = await resolveStudentIdentifier(userId, school);
-
-const activeAttempt = await QuizAttempt.findOne({
-  quizId: toObjectId(quizId),
-  studentId: studentIdentifier,
-  school,
-  status: "in-progress",
-  expiresAt: { $gt: new Date() }
-});
-
+    const idsToCheck = [toObjectId(userId)];
+    if (studentDoc?._id) idsToCheck.push(toObjectId(studentDoc._id));
 
     // Check for a matching quiz result under either ID
     const result = await executeWithTimeout(
@@ -2344,18 +2323,14 @@ const checkQuizInProgress = async (req, res) => {
     const school = toObjectId(req.user.school);
     const cacheKey = `quiz:inprogress:${quizId}:${userId}`;
 
-    addDebugLog(`🔍 checkQuizInProgress called: quiz=${quizId}, user=${userId}`);
-
     // 🎯 Check cache
     const cached = cache.get(cacheKey);
-    if (cached) {
-      addDebugLog(`📦 Returning cached result: ${JSON.stringify(cached)}`);
+    if (cached !== undefined) {
       return res.json(cached);
     }
 
     // Validate quiz ID
     if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
-      addDebugLog("❌ Invalid quiz ID format");
       return res.status(400).json({ message: "Invalid quiz ID format" });
     }
 
@@ -2364,49 +2339,25 @@ const checkQuizInProgress = async (req, res) => {
       Student.findOne({ user: userId, school }).lean().maxTimeMS(5000)
     );
 
-    addDebugLog(`👤 Student lookup result: ${studentDoc ? 'Found' : 'Not found'}`);
-
     // Include both User ID and Student ID in lookup to cover both schemas
     const idsToCheck = [toObjectId(userId)];
     if (studentDoc?._id) idsToCheck.push(toObjectId(studentDoc._id));
 
-    addDebugLog(`🔍 Checking IDs: ${idsToCheck.map(id => id.toString()).join(', ')}`);
-
-    // Find ALL active attempts that haven't expired
-    const activeAttempts = await executeWithTimeout(
-      QuizAttempt.find({
+    // Find an active attempt that hasn't expired
+    const activeAttempt = await executeWithTimeout(
+      QuizAttempt.findOne({
         quizId: toObjectId(quizId),
         studentId: { $in: idsToCheck },
         school,
         status: "in-progress",
-        expiresAt: { $gt: new Date() }
-      })
-      .sort({ lastActivity: -1 }) // Get most recent
-      .lean()
-      .maxTimeMS(5000)
+        expiresAt: { $gt: new Date() },
+      }).lean().maxTimeMS(5000)
     );
 
-    const hasActiveAttempt = activeAttempts && activeAttempts.length > 0;
-    
-    addDebugLog(`📊 Active attempts found: ${activeAttempts.length}`);
-    if (activeAttempts.length > 0) {
-      activeAttempts.forEach((attempt, index) => {
-        addDebugLog(`  Attempt ${index + 1}: ${attempt._id}, expires: ${attempt.expiresAt}`);
-      });
-    }
-    
-    // Return attempt details if exists
-    const response = { 
-      inProgress: hasActiveAttempt,
-      attempts: hasActiveAttempt ? activeAttempts : []
-    };
-    
+    const response = { inProgress: !!activeAttempt };
     cache.set(cacheKey, response, 60); // 1 min cache for progress checks
-    
-    addDebugLog(`✅ Returning: ${JSON.stringify(response)}`);
     res.json(response);
   } catch (error) {
-    addDebugLog(`❌ Error in checkQuizInProgress: ${error.message}`);
     console.error("❌ Error checking quiz progress:", error);
     res.status(500).json({
       message: "Error checking quiz progress",
@@ -2419,39 +2370,39 @@ const checkQuizInProgress = async (req, res) => {
 // 19. Start a new quiz attempt (Strict due date + completion lock) - OPTIMIZED
 // ---------------------------
 const startQuizAttempt = async (req, res) => {
-  // REMOVE the session transaction - use regular operations instead
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
     const { quizId } = req.params;
     const userId = req.user._id;
     const school = toObjectId(req.user.school);
     const now = new Date();
 
-    addDebugLog(`🎬 startQuizAttempt called for quiz: ${quizId}, user: ${userId}`);
-
     if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
-      addDebugLog("❌ Invalid quiz ID format");
+      await session.abortTransaction();
       return res.status(400).json({ message: "Invalid quiz ID format" });
     }
 
-    // 🎯 Parallel validation checks WITHOUT session
+    // 🎯 Parallel validation checks
     const [quiz, student, userRecord] = await Promise.all([
       executeWithTimeout(
         QuizSession.findOne({
           _id: toObjectId(quizId),
           school,
           isPublished: true,
-        }).maxTimeMS(5000)
+        }).session(session).maxTimeMS(5000)
       ),
       executeWithTimeout(
-        Student.findOne({ user: userId, school }).lean().maxTimeMS(5000)
+        Student.findOne({ user: userId, school }).lean().session(session).maxTimeMS(5000)
       ),
       executeWithTimeout(
-        User.findOne({ _id: userId, school }).lean().maxTimeMS(5000)
+        User.findOne({ _id: userId, school }).lean().session(session).maxTimeMS(5000)
       )
     ]);
 
     if (!quiz) {
-      addDebugLog("❌ Quiz not found or not published");
+      await session.abortTransaction();
       return res.status(404).json({ message: "Quiz not found or not published" });
     }
 
@@ -2460,12 +2411,12 @@ const startQuizAttempt = async (req, res) => {
     const quizDue = quiz.dueDate ? new Date(quiz.dueDate) : null;
 
     if (quizStart && now < quizStart) {
-      addDebugLog("❌ Quiz is not available yet");
+      await session.abortTransaction();
       return res.status(403).json({ message: "Quiz is not available yet" });
     }
 
     if (quizDue && now > quizDue) {
-      addDebugLog("❌ Quiz has expired");
+      await session.abortTransaction();
       return res.status(403).json({ message: "Quiz has expired" });
     }
 
@@ -2475,90 +2426,68 @@ const startQuizAttempt = async (req, res) => {
       (userRecord?.class && quiz.class && userRecord.class.toString() === quiz.class.toString());
 
     if (!enrolled) {
-      addDebugLog("❌ User not enrolled in this class");
+      await session.abortTransaction();
       return res.status(403).json({ message: "You are not enrolled in this class" });
     }
 
     const studentIdentifier = student?._id || userId;
-    addDebugLog(`👤 Student identifier: ${studentIdentifier}`);
 
-    // 🎯 Check for existing results FIRST (global check across all devices)
-    const existingResult = await executeWithTimeout(
-      QuizResult.findOne({
-        quizId: toObjectId(quizId),
-        studentId: studentIdentifier,
-        school,
-      }).maxTimeMS(5000)
-    );
+    // 🎯 Check existing results and attempts in parallel
+    const [existingResult, activeAttempt, attemptCount] = await Promise.all([
+      executeWithTimeout(
+        QuizResult.findOne({
+          quizId: toObjectId(quizId),
+          studentId: studentIdentifier,
+          school,
+        }).session(session).maxTimeMS(5000)
+      ),
+      executeWithTimeout(
+        QuizAttempt.findOne({
+          quizId: toObjectId(quizId),
+          studentId: studentIdentifier,
+          school,
+          status: "in-progress",
+          expiresAt: { $gt: now }
+        }).session(session).maxTimeMS(5000)
+      ),
+      executeWithTimeout(
+        QuizResult.countDocuments({
+          quizId: toObjectId(quizId),
+          studentId: studentIdentifier,
+        }).session(session).maxTimeMS(5000)
+      )
+    ]);
 
     if (existingResult) {
-      addDebugLog("❌ Quiz already completed");
+      await session.abortTransaction();
       return res.status(403).json({
         message: "You have already completed this quiz and cannot retake it.",
         alreadyCompleted: true,
       });
     }
 
-    // 🎯 Check for active attempts across ALL devices (not just current session)
-    addDebugLog("🔍 Looking for active attempts...");
-    const activeAttempts = await executeWithTimeout(
-      QuizAttempt.find({
-        quizId: toObjectId(quizId),
-        studentId: studentIdentifier,
-        school,
-        status: "in-progress",
-        expiresAt: { $gt: now }
-      })
-      .sort({ lastActivity: -1 }) // Get most recent activity
-      .maxTimeMS(5000)
-    );
-
-    addDebugLog(`📊 Found ${activeAttempts.length} active attempts`);
-
-    // If there's an existing active attempt, resume it
-    if (activeAttempts && activeAttempts.length > 0) {
-      const mostRecentAttempt = activeAttempts[0];
-      addDebugLog(`🔄 Found active attempt: ${mostRecentAttempt._id}, session: ${mostRecentAttempt.sessionId}`);
-      
-      // Update last activity and session info
-      mostRecentAttempt.lastActivity = now;
-      mostRecentAttempt.lastDeviceInfo = req.headers['user-agent'] || 'Unknown device';
-      await mostRecentAttempt.save();
-      
-      addDebugLog(`📝 Updated attempt activity: ${mostRecentAttempt._id}`);
-      
+    if (activeAttempt) {
+      await session.commitTransaction();
       return res.json({
-        sessionId: mostRecentAttempt.sessionId,
-        timeRemaining: Math.floor((new Date(mostRecentAttempt.expiresAt) - now) / 1000),
-        startTime: mostRecentAttempt.startTime,
+        sessionId: activeAttempt.sessionId,
+        timeRemaining: Math.floor((new Date(activeAttempt.expiresAt) - now) / 1000),
+        startTime: activeAttempt.startTime,
         resumed: true,
-        message: "Resuming existing quiz attempt",
-        attemptNumber: mostRecentAttempt.attemptNumber
       });
     }
 
-    // 🎯 Check attempt count (only if no active attempts exist)
-    const attemptCount = await executeWithTimeout(
-      QuizResult.countDocuments({
-        quizId: toObjectId(quizId),
-        studentId: studentIdentifier,
-      }).maxTimeMS(5000)
-    );
-
     const attemptNumber = attemptCount + 1;
     if (quiz.maxAttempts && attemptNumber > quiz.maxAttempts) {
-      addDebugLog(`❌ Max attempts exceeded: ${attemptNumber} > ${quiz.maxAttempts}`);
+      await session.abortTransaction();
       return res.status(400).json({ message: "Maximum number of attempts exceeded" });
     }
 
-    // 🎯 Create new attempt (only if no active attempts exist)
+    // 🎯 Create new attempt
     const timeLimit = quiz.timeLimit || 3600;
     const expiresAt = new Date(Date.now() + timeLimit * 1000);
     const sessionId = new mongoose.Types.ObjectId().toString();
 
-    addDebugLog(`🆕 Creating new attempt #${attemptNumber}, timeLimit: ${timeLimit}s`);
-
-    const newAttempt = await QuizAttempt.create({
+    const newAttempt = await QuizAttempt.create([{
       quizId: toObjectId(quizId),
       studentId: studentIdentifier,
       school,
@@ -2568,26 +2497,25 @@ const startQuizAttempt = async (req, res) => {
       expiresAt,
       status: "in-progress",
       lastActivity: now,
-      lastDeviceInfo: req.headers['user-agent'] || 'Unknown device',
-      createdFromDevice: req.headers['user-agent'] || 'Unknown device'
-    });
+    }], { session });
 
-    addDebugLog(`✅ Created new attempt: ${newAttempt._id}, session: ${sessionId}`);
+    await session.commitTransaction();
 
     res.json({
-      sessionId: newAttempt.sessionId,
+      sessionId: newAttempt[0].sessionId,
       timeRemaining: timeLimit,
-      startTime: newAttempt.startTime,
+      startTime: newAttempt[0].startTime,
       resumed: false,
-      attemptNumber: newAttempt.attemptNumber
     });
   } catch (error) {
-    addDebugLog(`❌ Error in startQuizAttempt: ${error.message}`);
+    await session.abortTransaction();
     console.error("❌ Error starting quiz attempt:", error);
     res.status(500).json({
       message: "Error starting quiz attempt",
       error: error.message,
     });
+  } finally {
+    session.endSession();
   }
 };
 
@@ -2611,17 +2539,15 @@ const resumeQuizAttempt = async (req, res) => {
       return res.status(400).json({ message: 'Invalid quiz ID format' });
     }
 
-    
-     const studentIdentifier = await resolveStudentIdentifier(req.user._id, school);
-
-const activeAttempt = await QuizAttempt.findOne({
-  quizId: toObjectId(quizId),
-  studentId: studentIdentifier,
-  school,
-  status: "in-progress",
-  expiresAt: { $gt: new Date() }
-});
-
+    const activeAttempt = await executeWithTimeout(
+      QuizAttempt.findOne({
+        quizId: toObjectId(quizId),
+        studentId: toObjectId(studentId),
+        school,
+        status: 'in-progress',
+        expiresAt: { $gt: new Date() }
+      }).maxTimeMS(5000)
+    );
 
     if (!activeAttempt) {
       return res.status(404).json({ message: 'No active quiz attempt found' });
@@ -2889,60 +2815,6 @@ const gradeQuestion = async (req, res) => {
   }
 };
 
-// In your quiz controller, add this endpoint (or modify existing one)
-// ---------------------------
-// NEW: Simple check-in-progress endpoint
-// ---------------------------
-const checkInProgress = async (req, res) => {
-  try {
-    const { quizId } = req.params;
-    const userId = req.user._id;
-    const school = toObjectId(req.user.school);
-
-    console.log(`🔍 [BACKEND] checkInProgress called: quiz=${quizId}, user=${userId}, school=${school}`);
-
-    // Validate quiz ID
-    if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
-      return res.status(400).json({ message: "Invalid quiz ID format" });
-    }
-
-    // Try to find the linked Student record
-    const studentDoc = await Student.findOne({ user: userId, school }).lean();
-
-    // Include both User ID and Student ID in lookup
-    const idsToCheck = [toObjectId(userId)];
-    if (studentDoc?._id) idsToCheck.push(toObjectId(studentDoc._id));
-
-    console.log(`🔍 [BACKEND] Checking IDs: ${idsToCheck.map(id => id.toString()).join(', ')}`);
-
-    // Find active attempts
-    const activeAttempts = await QuizAttempt.find({
-      quizId: toObjectId(quizId),
-      studentId: { $in: idsToCheck },
-      school,
-      status: "in-progress",
-      expiresAt: { $gt: new Date() }
-    })
-    .sort({ lastActivity: -1 })
-    .lean();
-
-    console.log(`📊 [BACKEND] Found ${activeAttempts.length} active attempts`);
-
-    const response = { 
-      inProgress: activeAttempts.length > 0,
-      attempts: activeAttempts
-    };
-
-    console.log(`✅ [BACKEND] Returning: ${JSON.stringify(response)}`);
-    res.json(response);
-  } catch (error) {
-    console.error(`❌ [BACKEND] Error in checkInProgress: ${error.message}`);
-    res.status(500).json({
-      message: "Error checking quiz progress",
-      error: error.message,
-    });
-  }
-};
 
 
 // 🎯 ADD autoSubmitQuiz TO YOUR EXPORTS AT THE BOTTOM OF THE FILE
@@ -2969,5 +2841,5 @@ module.exports = {
   resumeQuizAttempt,
   saveQuizProgress,
   gradeQuestion,
-checkInProgress,
+
 };
