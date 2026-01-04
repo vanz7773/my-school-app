@@ -2517,7 +2517,8 @@ const timeLimitSeconds = timeLimitMinutes * 60;
     const sessionId = new mongoose.Types.ObjectId().toString();
 
     // Determine which student ID to use
-    const finalStudentId = student?._id || new mongoose.Types.ObjectId(userId);
+    const finalStudentId = student?._id || userId;
+
 
     const newAttempt = await QuizAttempt.create(
       [{
