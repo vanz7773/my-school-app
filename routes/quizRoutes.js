@@ -20,6 +20,10 @@ const {
   resumeQuizAttempt,
   saveQuizProgress,
   gradeQuestion,
+  getActiveAttempt,
+  startOrResumeAttempt,
+  saveAttemptProgress,
+  validateActiveAttempt,
 
 } = require('../controllers/quizController.js');
 
@@ -69,7 +73,23 @@ router.post('/:quizId/save', protect, restrictTo('student'), saveQuizProgress);
 // 🔥 Submit must come BEFORE any /results/ routes
 router.post('/:quizId/submit', protect, restrictTo('student'), submitQuiz);
 
+// Check for active attempt (for frontend to show Resume/Start)
+router.get('/:quizId/attempt/active', protect, restrictTo('student'), getActiveAttempt);
 
+// Start or resume attempt (atomic operation)
+router.post('/:quizId/attempt/start', protect, restrictTo('student'), startOrResumeAttempt);
+
+// Save progress (with atomic update)
+router.post('/:quizId/attempt/save', protect, restrictTo('student'), saveAttemptProgress);
+
+// Get attempt details (for resuming)
+router.get('/:quizId/attempt', protect, restrictTo('student'), validateActiveAttempt, (req, res) => {
+  res.json({
+    success: true,
+    attempt: req.attempt,
+    timeRemaining: Math.floor((req.attempt.expiresAt - new Date()) / 1000),
+  });
+});
 
 // Student reads their own results
 router.get('/results/student/:studentId', protect, restrictTo('student', 'parent', 'teacher'), getResultsForStudent);

@@ -2697,6 +2697,449 @@ const gradeQuestion = async (req, res) => {
   }
 };
 
+// ---------------------------
+// 1. Get Active Attempt (Check if attempt exists)
+// ---------------------------
+const getActiveAttempt = async (req, res) => {
+  try {
+    const { quizId } = req.params;
+    const userId = req.user._id;
+    const school = toObjectId(req.user.school);
+    const now = new Date();
+
+    if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
+      return res.status(400).json({ message: "Invalid quiz ID format" });
+    }
+
+    // Find student record
+    const student = await Student.findOne({ user: userId, school });
+    if (!student) {
+      return res.status(404).json({ message: "Student record not found" });
+    }
+
+    // Check if quiz exists and is available
+    const quiz = await QuizSession.findOne({
+      _id: quizId,
+      school,
+      isPublished: true,
+    });
+
+    if (!quiz) {
+      return res.status(404).json({ message: "Quiz not found or not published" });
+    }
+
+    // Check if student has already submitted
+    const existingResult = await QuizResult.findOne({
+      quizId,
+      studentId: student._id,
+      school,
+    });
+
+    if (existingResult) {
+      return res.status(403).json({
+        message: "Quiz already completed",
+        completed: true,
+        resultId: existingResult._id,
+      });
+    }
+
+    // Find active attempt (both not expired and in-progress)
+    const activeAttempt = await QuizAttempt.findOne({
+      quizId,
+      studentId: student._id,
+      school,
+      status: "in-progress",
+      expiresAt: { $gt: now },
+    }).lean();
+
+    if (activeAttempt) {
+      // Calculate remaining time
+      const timeRemaining = Math.floor((activeAttempt.expiresAt - now) / 1000);
+      
+      return res.json({
+        hasActiveAttempt: true,
+        attemptId: activeAttempt._id,
+        sessionId: activeAttempt.sessionId,
+        timeRemaining,
+        startTime: activeAttempt.startTime,
+        answers: activeAttempt.answers || {},
+        quizTitle: quiz.title,
+        timeLimit: quiz.timeLimit,
+      });
+    }
+
+    // Check for expired attempt that needs auto-submission
+    const expiredAttempt = await QuizAttempt.findOne({
+      quizId,
+      studentId: student._id,
+      school,
+      status: "in-progress",
+      expiresAt: { $lte: now },
+    });
+
+    if (expiredAttempt) {
+      // Auto-submit the expired attempt
+      await handleAutoSubmit(expiredAttempt, quiz, student);
+      return res.json({
+        hasActiveAttempt: false,
+        expired: true,
+        message: "Your previous attempt has expired and was auto-submitted",
+      });
+    }
+
+    // No active attempt found
+    return res.json({
+      hasActiveAttempt: false,
+      canStart: true,
+      quizTitle: quiz.title,
+      timeLimit: quiz.timeLimit,
+    });
+  } catch (error) {
+    console.error("Error checking active attempt:", error);
+    res.status(500).json({ message: "Error checking quiz attempt", error: error.message });
+  }
+};
+
+// ---------------------------
+// 2. Start or Resume Attempt (Atomic Operation)
+// ---------------------------
+const startOrResumeAttempt = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { quizId } = req.params;
+    const userId = req.user._id;
+    const school = toObjectId(req.user.school);
+    const now = new Date();
+
+    if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
+      await session.abortTransaction();
+      return res.status(400).json({ message: "Invalid quiz ID format" });
+    }
+
+    // Find student
+    const student = await Student.findOne({ user: userId, school }).session(session);
+    if (!student) {
+      await session.abortTransaction();
+      return res.status(404).json({ message: "Student record not found" });
+    }
+
+    // Get quiz
+    const quiz = await QuizSession.findOne({
+      _id: quizId,
+      school,
+      isPublished: true,
+    }).session(session);
+
+    if (!quiz) {
+      await session.abortTransaction();
+      return res.status(404).json({ message: "Quiz not found or not published" });
+    }
+
+    // Check if already completed
+    const existingResult = await QuizResult.findOne({
+      quizId,
+      studentId: student._id,
+      school,
+    }).session(session);
+
+    if (existingResult) {
+      await session.abortTransaction();
+      return res.status(403).json({
+        message: "Quiz already completed",
+        completed: true,
+        resultId: existingResult._id,
+      });
+    }
+
+    // Check for active attempt (atomic findOneAndUpdate to prevent race conditions)
+    const activeAttempt = await QuizAttempt.findOneAndUpdate(
+      {
+        quizId,
+        studentId: student._id,
+        school,
+        status: "in-progress",
+        expiresAt: { $gt: now },
+      },
+      {
+        $set: { 
+          lastActivity: now,
+          $inc: { resumeCount: 1 }
+        }
+      },
+      { 
+        session, 
+        new: true,
+        upsert: false // Don't create new one here
+      }
+    );
+
+    if (activeAttempt) {
+      // Calculate remaining time
+      const timeRemaining = Math.floor((activeAttempt.expiresAt - now) / 1000);
+      
+      await session.commitTransaction();
+      
+      return res.json({
+        success: true,
+        resumed: true,
+        attemptId: activeAttempt._id,
+        sessionId: activeAttempt.sessionId,
+        timeRemaining,
+        startTime: activeAttempt.startTime,
+        answers: activeAttempt.answers || {},
+        expiresAt: activeAttempt.expiresAt,
+        message: "Resuming existing attempt",
+      });
+    }
+
+    // Check for expired attempt
+    const expiredAttempt = await QuizAttempt.findOne({
+      quizId,
+      studentId: student._id,
+      school,
+      status: "in-progress",
+      expiresAt: { $lte: now },
+    }).session(session);
+
+    if (expiredAttempt) {
+      // Auto-submit expired attempt
+      await handleAutoSubmit(expiredAttempt, quiz, student, session);
+      await session.commitTransaction();
+      return res.status(400).json({
+        message: "Your previous attempt has expired and was auto-submitted",
+        expired: true,
+      });
+    }
+
+    // Create new attempt
+    const timeLimit = quiz.timeLimit || 3600; // Default 1 hour
+    const expiresAt = new Date(now.getTime() + timeLimit * 1000);
+    const sessionId = new mongoose.Types.ObjectId().toString();
+
+    const newAttempt = await QuizAttempt.create([{
+      quizId,
+      studentId: student._id,
+      school,
+      sessionId,
+      attemptNumber: 1,
+      startTime: now,
+      expiresAt,
+      status: "in-progress",
+      lastActivity: now,
+      answers: {},
+    }], { session });
+
+    await session.commitTransaction();
+
+    res.json({
+      success: true,
+      resumed: false,
+      attemptId: newAttempt[0]._id,
+      sessionId: newAttempt[0].sessionId,
+      timeRemaining: timeLimit,
+      startTime: newAttempt[0].startTime,
+      expiresAt: newAttempt[0].expiresAt,
+      answers: {},
+      message: "New quiz attempt started",
+    });
+  } catch (error) {
+    await session.abortTransaction();
+    console.error("Error starting/resuming attempt:", error);
+    res.status(500).json({ message: "Error starting quiz attempt", error: error.message });
+  } finally {
+    session.endSession();
+  }
+};
+
+// ---------------------------
+// 3. Save Progress with Atomic Update
+// ---------------------------
+const saveAttemptProgress = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { quizId } = req.params;
+    const { answers } = req.body;
+    const userId = req.user._id;
+    const school = toObjectId(req.user.school);
+    const now = new Date();
+
+    if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
+      await session.abortTransaction();
+      return res.status(400).json({ message: "Invalid quiz ID format" });
+    }
+
+    // Find student
+    const student = await Student.findOne({ user: userId, school }).session(session);
+    if (!student) {
+      await session.abortTransaction();
+      return res.status(404).json({ message: "Student record not found" });
+    }
+
+    // Atomic update to ensure we only update active attempts
+    const updatedAttempt = await QuizAttempt.findOneAndUpdate(
+      {
+        quizId,
+        studentId: student._id,
+        school,
+        status: "in-progress",
+        expiresAt: { $gt: now },
+      },
+      {
+        $set: { 
+          answers,
+          lastActivity: now,
+        },
+        $inc: { saveCount: 1 }
+      },
+      { 
+        session, 
+        new: true,
+        returnDocument: 'after'
+      }
+    );
+
+    if (!updatedAttempt) {
+      await session.abortTransaction();
+      return res.status(404).json({ message: "No active quiz attempt found" });
+    }
+
+    await session.commitTransaction();
+    
+    res.json({
+      success: true,
+      message: "Progress saved successfully",
+      lastSaved: now,
+      expiresAt: updatedAttempt.expiresAt,
+    });
+  } catch (error) {
+    await session.abortTransaction();
+    console.error("Error saving progress:", error);
+    res.status(500).json({ message: "Error saving quiz progress", error: error.message });
+  } finally {
+    session.endSession();
+  }
+};
+
+// ---------------------------
+// 4. Auto-Submit Helper (Standalone MongoDB)
+// ---------------------------
+const handleAutoSubmit = async (attempt, quiz, student, session = null) => {
+  const now = new Date();
+  
+  // Prepare empty answers array
+  const answers = attempt.answers || {};
+  const quizAnswers = quiz.questions.map((q, index) => ({
+    questionId: q._id,
+    selectedAnswer: answers[q._id] || null,
+    timeSpent: 0,
+  }));
+
+  const timeSpent = Math.floor((now - attempt.startTime) / 1000);
+
+  // Create quiz result for auto-submit
+  const quizResult = {
+    school: quiz.school,
+    quizId: quiz._id,
+    studentId: student._id,
+    sessionId: attempt.sessionId,
+    answers: [],
+    score: 0,
+    totalPoints: quiz.questions.reduce((sum, q) => sum + (q.points || 1), 0),
+    percentage: 0,
+    startTime: attempt.startTime,
+    submittedAt: now,
+    timeSpent,
+    attemptNumber: attempt.attemptNumber || 1,
+    status: "submitted",
+    autoGraded: false,
+    autoSubmit: true,
+  };
+
+  // Save with or without session
+  if (session) {
+    await QuizResult.create([quizResult], { session });
+    attempt.status = "submitted";
+    attempt.completedAt = now;
+    await attempt.save({ session });
+  } else {
+    await QuizResult.create(quizResult);
+    attempt.status = "submitted";
+    attempt.completedAt = now;
+    await attempt.save();
+  }
+
+  console.log(`Auto-submitted quiz ${quiz._id} for student ${student._id}`);
+};
+
+// ---------------------------
+// 5. Validate Attempt (Middleware)
+// ---------------------------
+const validateActiveAttempt = async (req, res, next) => {
+  try {
+    const { quizId } = req.params;
+    const userId = req.user._id;
+    const school = toObjectId(req.user.school);
+    const now = new Date();
+
+    const student = await Student.findOne({ user: userId, school });
+    if (!student) {
+      return res.status(404).json({ message: "Student record not found" });
+    }
+
+    const activeAttempt = await QuizAttempt.findOne({
+      quizId,
+      studentId: student._id,
+      school,
+      status: "in-progress",
+      expiresAt: { $gt: now },
+    });
+
+    if (!activeAttempt) {
+      return res.status(404).json({ message: "No active quiz attempt found" });
+    }
+
+    // Update last activity
+    activeAttempt.lastActivity = now;
+    await activeAttempt.save();
+
+    req.attempt = activeAttempt;
+    next();
+  } catch (error) {
+    console.error("Error validating attempt:", error);
+    res.status(500).json({ message: "Error validating quiz attempt", error: error.message });
+  }
+};
+
+// ---------------------------
+// 6. Cleanup Expired Attempts (Background Job)
+// ---------------------------
+const cleanupExpiredAttempts = async () => {
+  try {
+    const now = new Date();
+    const expiredAttempts = await QuizAttempt.find({
+      status: "in-progress",
+      expiresAt: { $lte: now },
+    }).populate('quizId').populate('studentId');
+
+    for (const attempt of expiredAttempts) {
+      if (attempt.quizId && attempt.studentId) {
+        await handleAutoSubmit(attempt, attempt.quizId, attempt.studentId);
+      } else {
+        // Just mark as expired if can't auto-submit
+        attempt.status = "expired";
+        await attempt.save();
+      }
+    }
+
+    console.log(`Cleaned up ${expiredAttempts.length} expired attempts`);
+  } catch (error) {
+    console.error("Error cleaning up expired attempts:", error);
+  }
+};
 
 
 // 🎯 ADD autoSubmitQuiz TO YOUR EXPORTS AT THE BOTTOM OF THE FILE
@@ -2722,5 +3165,9 @@ module.exports = {
   resumeQuizAttempt,
   saveQuizProgress,
   gradeQuestion,
+  getActiveAttempt,
+  startOrResumeAttempt,
+  saveAttemptProgress,
+  validateActiveAttempt,
 
 };
