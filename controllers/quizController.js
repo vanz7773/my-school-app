@@ -2372,16 +2372,17 @@ const checkQuizInProgress = async (req, res) => {
 };
 
 // ---------------------------
-// 19. Start a new quiz attempt (Strict due date + completion lock) - FIXED TRANSACTION ISSUE
+// 19. Start a new quiz attempt (Strict due date + completion lock) - FIXED
 // ---------------------------
 const startQuizAttempt = async (req, res) => {
   let session = null;
-  
+
   try {
     const { quizId } = req.params;
     const userId = req.user._id;
     const school = toObjectId(req.user.school);
     const now = new Date();
+    const startTime = now; // ✅ FIX 1: DEFINE startTime ONCE
 
     if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
       return res.status(400).json({ message: "Invalid quiz ID format" });
@@ -2398,14 +2399,10 @@ const startQuizAttempt = async (req, res) => {
         school,
         isPublished: true,
       }).maxTimeMS(5000),
-      
-      Student.findOne({ user: userId, school })
-        .lean()
-        .maxTimeMS(5000),
-      
-      User.findOne({ _id: userId, school })
-        .lean()
-        .maxTimeMS(5000),
+
+      Student.findOne({ user: userId, school }).lean().maxTimeMS(5000),
+
+      User.findOne({ _id: userId, school }).lean().maxTimeMS(5000),
     ]);
 
     if (!quiz) {
@@ -2445,9 +2442,8 @@ const startQuizAttempt = async (req, res) => {
     // 🔐 HYBRID-SAFE student identifiers
     // --------------------------------------------------
     const idsToCheck = [];
-if (student?._id) idsToCheck.push(student._id);
-idsToCheck.push(new mongoose.Types.ObjectId(userId));
-
+    if (student?._id) idsToCheck.push(student._id);
+    idsToCheck.push(userId); // ✅ FIX 2: DO NOT re-wrap ObjectId
 
     // --------------------------------------------------
     // 🔍 Check existing result & active attempt (NO SESSION)
@@ -2458,7 +2454,7 @@ idsToCheck.push(new mongoose.Types.ObjectId(userId));
         studentId: { $in: idsToCheck },
         school,
       }).maxTimeMS(5000),
-      
+
       QuizAttempt.findOne({
         quizId: toObjectId(quizId),
         studentId: { $in: idsToCheck },
@@ -2466,7 +2462,7 @@ idsToCheck.push(new mongoose.Types.ObjectId(userId));
         status: "in-progress",
         expiresAt: { $gt: now },
       }).maxTimeMS(5000),
-      
+
       QuizResult.countDocuments({
         quizId: toObjectId(quizId),
         studentId: { $in: idsToCheck },
@@ -2484,13 +2480,15 @@ idsToCheck.push(new mongoose.Types.ObjectId(userId));
     }
 
     // --------------------------------------------------
-    // 🔄 Resume existing attempt (NO restart)
+    // 🔄 Resume existing attempt
     // --------------------------------------------------
     if (activeAttempt) {
       console.log(`🔄 Resuming existing attempt for user ${userId}`);
       return res.json({
         sessionId: activeAttempt.sessionId,
-        timeRemaining: Math.floor((new Date(activeAttempt.expiresAt) - now) / 1000),
+        timeRemaining: Math.floor(
+          (new Date(activeAttempt.expiresAt) - now) / 1000
+        ),
         startTime: activeAttempt.startTime,
         resumed: true,
       });
@@ -2510,71 +2508,64 @@ idsToCheck.push(new mongoose.Types.ObjectId(userId));
     session = await mongoose.startSession();
     session.startTransaction();
 
-    const timeLimitMinutes = quiz.timeLimit ?? 60; // minutes
-const timeLimitSeconds = timeLimitMinutes * 60;
-
+    const timeLimitMinutes = quiz.timeLimit ?? 60;
+    const timeLimitSeconds = timeLimitMinutes * 60;
     const expiresAt = new Date(now.getTime() + timeLimitSeconds * 1000);
     const sessionId = new mongoose.Types.ObjectId().toString();
 
-    // Determine which student ID to use
     const finalStudentId = student?._id || userId;
 
-
-    const newAttempt = await QuizAttempt.create(
-      [{
-        quizId: toObjectId(quizId),
-        studentId: finalStudentId,
-        school,
-        sessionId,
-        attemptNumber,
-        startTime: now,
-        expiresAt,
-        status: "in-progress",
-        lastActivity: now,
-      }],
+    await QuizAttempt.create(
+      [
+        {
+          quizId: toObjectId(quizId),
+          studentId: finalStudentId,
+          school,
+          sessionId,
+          attemptNumber,
+          startTime,
+          expiresAt,
+          status: "in-progress",
+          lastActivity: now,
+        },
+      ],
       { session }
     );
 
     await session.commitTransaction();
-    await session.endSession();
+    session.endSession(); // ✅ FIX 3: NO abort after commit
 
     console.log(`✅ New attempt created for user ${userId}, session: ${sessionId}`);
 
     return res.json({
-  sessionId,
-  timeRemaining: timeLimitSeconds, // ALWAYS seconds
-  startTime,
-  resumed: false,
-});
-
+      sessionId,
+      timeRemaining: timeLimitSeconds,
+      startTime: startTime.toISOString(),
+      resumed: false,
+    });
 
   } catch (error) {
-    // Clean up session if it exists
-    if (session) {
+    // --------------------------------------------------
+    // 🧹 Safe session cleanup
+    // --------------------------------------------------
+    if (session && session.inTransaction()) {
       try {
         await session.abortTransaction();
-        await session.endSession();
+        session.endSession();
       } catch (sessionError) {
         console.error("Session cleanup error:", sessionError);
       }
     }
-    
+
     console.error("❌ Error starting quiz attempt:", error);
-    
-    // Handle specific MongoDB transaction errors
-    if (error.message.includes('transaction number') && error.message.includes('does not match')) {
-      return res.status(500).json({
-        message: "Database transaction error. Please try again.",
-        error: "Transaction state mismatch"
-      });
-    }
-    
+
     return res.status(500).json({
       message: "Error starting quiz attempt",
       error: error.message,
     });
   }
 };
+
 
 
 // ---------------------------
