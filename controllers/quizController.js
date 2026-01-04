@@ -2396,7 +2396,6 @@ const checkQuizInProgress = async (req, res) => {
 // ---------------------------
 // 19. Start a new quiz attempt (Strict due date + completion lock) - FIXED
 // ---------------------------
-const resolveStudentId = require("../utils/resolveStudentId");
 
 const startQuizAttempt = async (req, res) => {
   let session = null;
