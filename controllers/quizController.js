@@ -1624,23 +1624,28 @@ const submitQuiz = async (req, res) => {
     }
 
     // ---------------------------------------
-    // 🔍 LOAD ACTIVE ATTEMPT
-    // ---------------------------------------
-    let activeAttempt = await QuizAttempt.findOne({
-      quizId,
-      studentId: student._id,
-      school,
-      status: "in-progress",
-    });
+// 🔍 LOAD ACTIVE ATTEMPT
+// ---------------------------------------
+let activeAttempt = await QuizAttempt.findOne({
+  quizId,
+  studentId: student._id,
+  school,
+  status: "in-progress",
+});
 
-    if (!activeAttempt) {
-      activeAttempt = {
-        sessionId: new mongoose.Types.ObjectId().toString(),
-        attemptNumber: 1,
-        startTime: startTime ? new Date(startTime) : now,
-        expiresAt: new Date(now.getTime() + (quiz.timeLimit || 3600) * 1000),
-      };
-    }
+if (!activeAttempt) {
+  // ⏱️ timeLimit is stored in MINUTES → convert to SECONDS
+  const timeLimitMinutes = quiz.timeLimit ?? 60; // default: 60 minutes
+  const timeLimitSeconds = timeLimitMinutes * 60;
+
+  activeAttempt = {
+    sessionId: new mongoose.Types.ObjectId().toString(),
+    attemptNumber: 1,
+    startTime: startTime ? new Date(startTime) : now,
+    expiresAt: new Date(now.getTime() + timeLimitSeconds * 1000),
+  };
+}
+
 
     // ---------------------------------------
     // 🎯 Process Answers
@@ -2504,8 +2509,10 @@ const startQuizAttempt = async (req, res) => {
     session = await mongoose.startSession();
     session.startTransaction();
 
-    const timeLimit = quiz.timeLimit || 3600;
-    const expiresAt = new Date(now.getTime() + timeLimit * 1000);
+    const timeLimitMinutes = quiz.timeLimit ?? 60; // minutes
+const timeLimitSeconds = timeLimitMinutes * 60;
+
+    const expiresAt = new Date(now.getTime() + timeLimitSeconds * 1000);
     const sessionId = new mongoose.Types.ObjectId().toString();
 
     // Determine which student ID to use
@@ -2532,11 +2539,12 @@ const startQuizAttempt = async (req, res) => {
     console.log(`✅ New attempt created for user ${userId}, session: ${sessionId}`);
 
     return res.json({
-      sessionId: newAttempt[0].sessionId,
-      timeRemaining: timeLimit,
-      startTime: newAttempt[0].startTime,
-      resumed: false,
-    });
+  sessionId,
+  timeRemaining: timeLimitSeconds, // ALWAYS seconds
+  startTime,
+  resumed: false,
+});
+
 
   } catch (error) {
     // Clean up session if it exists
