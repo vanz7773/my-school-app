@@ -2353,22 +2353,14 @@ const checkQuizInProgress = async (req, res) => {
       return res.status(400).json({ message: "Invalid quiz ID format" });
     }
 
-    // 🔐 Resolve canonical Student ID
+    // 🔐 Resolve canonical Student ID (SOURCE OF TRUTH)
     const studentId = await resolveStudentId(req);
 
-    const cacheKey = `quiz:inprogress:${quizId}:${studentId}`;
-
-    // 🎯 Check cache
-    const cached = cache.get(cacheKey);
-    if (cached !== undefined) {
-      return res.json(cached);
-    }
-
-    // 🔍 Find active (non-expired) attempt
+    // 🔍 ALWAYS query database (NO CACHE)
     const activeAttempt = await executeWithTimeout(
       QuizAttempt.findOne({
         quizId: toObjectId(quizId),
-        studentId, // ✅ Student._id ONLY
+        studentId,            // ✅ Student._id ONLY
         school,
         status: "in-progress",
         expiresAt: { $gt: new Date() },
@@ -2377,12 +2369,10 @@ const checkQuizInProgress = async (req, res) => {
         .maxTimeMS(5000)
     );
 
-    const response = { inProgress: !!activeAttempt };
+    return res.json({
+      inProgress: !!activeAttempt,
+    });
 
-    // Cache result briefly (safe now that key is Student._id)
-    cache.set(cacheKey, response, 60);
-
-    return res.json(response);
   } catch (error) {
     console.error("❌ Error checking quiz progress:", error);
     return res.status(500).json({
@@ -2391,6 +2381,7 @@ const checkQuizInProgress = async (req, res) => {
     });
   }
 };
+
 
 
 // ---------------------------
