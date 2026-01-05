@@ -45,6 +45,60 @@ async function sendPush(userIds, title, body, extra = {}) {
   }
 }
 
+const backfillTermAbsencesIfNeeded = async (teacher, term) => {
+  const termStart = startOfDay(new Date(term.startDate));
+  const today = startOfDay(new Date());
+
+  // Don’t backfill beyond today
+  const termEnd = new Date(Math.min(today, new Date(term.endDate)));
+
+  const allDays = [];
+  let cursor = new Date(termStart);
+
+  while (cursor <= termEnd) {
+    const day = cursor.getDay();
+    if (day !== 0 && day !== 6) { // skip weekends
+      allDays.push(new Date(cursor));
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  const existingRecords = await Attendance.find({
+    teacher: teacher._id,
+    term: term._id,
+    date: { $gte: termStart, $lte: termEnd }
+  }).select('date');
+
+  const existingDates = new Set(
+    existingRecords.map(r => startOfDay(r.date).getTime())
+  );
+
+  const bulkOps = [];
+
+  for (const day of allDays) {
+    const dayKey = startOfDay(day).getTime();
+    if (!existingDates.has(dayKey)) {
+      bulkOps.push({
+        insertOne: {
+          document: {
+            teacher: teacher._id,
+            school: teacher.school,
+            term: term._id,
+            date: day,
+            signInTime: null,
+            signOutTime: null,
+            status: "Absent"
+          }
+        }
+      });
+    }
+  }
+
+  if (bulkOps.length) {
+    await Attendance.bulkWrite(bulkOps, { ordered: false });
+  }
+};
+
 
 // ─────────────────────────────────────────────────────────────
 // WRAPPER: Apply Geofence Validation Middleware
@@ -1155,50 +1209,71 @@ const getTeacherAttendanceHistory = async (req, res) => {
   console.log('User ID:', req.user.id);
 
   try {
-    // 👇 NEW: Ensure absentees are marked for today (after school hours)
+    // 👇 Ensure absentees are marked for today (after school hours)
     await markAbsenteesForTodayIfNeeded();
 
     const teacher = await Teacher.findOne({ user: req.user.id });
     console.log('Teacher found:', teacher ? teacher._id : 'None');
-    
+
     if (!teacher) {
       console.log('Teacher not found');
-      return res.status(404).json({ 
+      return res.status(404).json({
         status: 'fail',
-        message: 'Teacher not found' 
+        message: 'Teacher not found'
       });
     }
 
     const { termId } = req.query;
 
-const match = { teacher: teacher._id };
+    // 🔒 Term is REQUIRED for correct history
+    if (!termId) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'termId is required'
+      });
+    }
 
-if (termId) {
-  match.term = new mongoose.Types.ObjectId(termId);
-}
+    // ✅ Fetch term
+    const term = await Term.findById(termId);
+    if (!term) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Term not found'
+      });
+    }
 
-const history = await Attendance.find(match)
-  .sort({ date: -1 })
-  .select('date signInTime signOutTime status location')
-  .limit(30);
+    // ✅ BACKFILL missing absences for this teacher & term
+    await backfillTermAbsencesIfNeeded(teacher, term);
 
-console.log('History records found:', history.length);
+    // ✅ Now fetch history (term-safe & complete)
+    const match = {
+      teacher: teacher._id,
+      term: term._id
+    };
 
-res.status(200).json({
-  status: 'success',
-  data: history
-});
+    const history = await Attendance.find(match)
+      .sort({ date: -1 })
+      .select('date signInTime signOutTime status location')
+      .limit(30);
+
+    console.log('History records found:', history.length);
+
+    return res.status(200).json({
+      status: 'success',
+      data: history
+    });
 
   } catch (err) {
     console.error('Attendance history error:', err);
-    res.status(500).json({ 
+    return res.status(500).json({
       status: 'error',
-      message: 'Failed to fetch attendance history' 
+      message: 'Failed to fetch attendance history'
     });
   } finally {
     console.log('=== GET TEACHER ATTENDANCE HISTORY COMPLETED ===');
   }
 };
+
 
 
 // ─────────────────────────────────────────────────────────────
