@@ -1215,7 +1215,6 @@ const getTeacherAttendanceHistory = async (req, res) => {
     console.log('Teacher found:', teacher ? teacher._id : 'None');
 
     if (!teacher) {
-      console.log('Teacher not found');
       return res.status(404).json({
         status: 'fail',
         message: 'Teacher not found'
@@ -1224,48 +1223,37 @@ const getTeacherAttendanceHistory = async (req, res) => {
 
     const { termId } = req.query;
 
+    // ✅ DECLARE ONCE
+    let term;
 
-// 1️⃣ If termId is provided, use it
-if (termId) {
-  term = await Term.findById(termId);
-} else {
-  // 2️⃣ Otherwise, auto-detect current term
-  const today = startOfDay(new Date());
+    // 1️⃣ Resolve term
+    if (termId) {
+      term = await Term.findById(termId);
+    } else {
+      const today = startOfDay(new Date());
 
-  term = await Term.findOne({
-    school: teacher.school,
-    startDate: { $lte: today },
-    endDate: { $gte: today }
-  });
-}
-
-if (!term) {
-  return res.status(404).json({
-    status: 'fail',
-    message: 'No active term found'
-  });
-}
-
-
-    // ✅ Fetch term
-    const term = await Term.findById(termId);
-    if (!term) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'Term not found'
+      term = await Term.findOne({
+        school: teacher.school,
+        startDate: { $lte: today },
+        endDate: { $gte: today }
       });
     }
 
-    // ✅ BACKFILL missing absences for this teacher & term
+    if (!term) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'No active term found'
+      });
+    }
+
+    // 2️⃣ Backfill missing absences (SAFE & idempotent)
     await backfillTermAbsencesIfNeeded(teacher, term);
 
-    // ✅ Now fetch history (term-safe & complete)
-    const match = {
+    // 3️⃣ Fetch attendance history (term-safe)
+    const history = await Attendance.find({
       teacher: teacher._id,
       term: term._id
-    };
-
-    const history = await Attendance.find(match)
+    })
       .sort({ date: -1 })
       .select('date signInTime signOutTime status location')
       .limit(30);
@@ -1287,6 +1275,7 @@ if (!term) {
     console.log('=== GET TEACHER ATTENDANCE HISTORY COMPLETED ===');
   }
 };
+
 
 
 
