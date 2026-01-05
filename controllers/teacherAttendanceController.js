@@ -462,9 +462,18 @@ const getTeacherDailyRecords = async (req, res) => {
       return res.status(404).json({ status: 'fail', message: 'Teacher is not assigned to a school.' });
     }
 
-    const records = await Attendance.find({ teacher: teacher._id })
-      .sort({ date: -1 })
-      .limit(30);
+    const { termId } = req.query;
+
+let match = { teacher: teacher._id };
+
+if (termId) {
+  match.term = new mongoose.Types.ObjectId(termId);
+}
+
+const records = await Attendance.find(match)
+  .sort({ date: -1 })
+  .limit(30);
+
 
     console.log('Records found:', records.length);
 
@@ -894,27 +903,27 @@ const getTeacherMonthlySummary = async (req, res) => {
 
     const summary = await Attendance.aggregate([
       { $match: { teacher: teacher._id } },
-      {
-        $group: {
-          _id: {
-            year: { $year: '$date' },
-            month: { $month: '$date' }
-          },
-          total: { $sum: 1 },
-          present: {
+  {
+    $group: {
+      _id: {
+        year: { $year: '$date' },
+        month: { $month: '$date' }
+      },
+      total: { $sum: 1 },
+      present: {
             $sum: {
               $cond: [{ $in: ['$status', ['On Time', 'Late']] }, 1, 0]
             }
-          },
-          late: {
+      },
+      late: {
             $sum: {
               $cond: [{ $eq: ['$status', 'Late'] }, 1, 0]
             }
-          }
-        }
-      },
-      { $sort: { '_id.year': -1, '_id.month': -1 } }
-    ]);
+      }
+    }
+  },
+  { $sort: { '_id.year': -1, '_id.month': -1 } }
+]);
 
     console.log('Monthly summary count:', summary.length);
 
@@ -1059,10 +1068,18 @@ const getTodayAttendance = async (req, res) => {
     const todayEnd = endOfDay(new Date());
     console.log('Today date range:', { todayStart, todayEnd });
 
-    const attendance = await Attendance.findOne({
-      teacher: teacher._id,
-      date: { $gte: todayStart, $lte: todayEnd },
-    });
+    const currentTerm = await Term.findOne({
+  school: teacher.school,
+  startDate: { $lte: todayStart },
+  endDate: { $gte: todayStart }
+});
+
+const attendance = await Attendance.findOne({
+  teacher: teacher._id,
+  term: currentTerm?._id,
+  date: { $gte: todayStart, $lte: todayEnd }
+});
+
 
     console.log('Today attendance:', attendance);
 
@@ -1152,17 +1169,26 @@ const getTeacherAttendanceHistory = async (req, res) => {
       });
     }
 
-    const history = await Attendance.find({ teacher: teacher._id })
-      .sort({ date: -1 })
-      .select('date signInTime signOutTime status location')
-      .limit(30);
+    const { termId } = req.query;
 
-    console.log('History records found:', history.length);
+const match = { teacher: teacher._id };
 
-    res.status(200).json({ 
-      status: 'success',
-      data: history 
-    });
+if (termId) {
+  match.term = new mongoose.Types.ObjectId(termId);
+}
+
+const history = await Attendance.find(match)
+  .sort({ date: -1 })
+  .select('date signInTime signOutTime status location')
+  .limit(30);
+
+console.log('History records found:', history.length);
+
+res.status(200).json({
+  status: 'success',
+  data: history
+});
+
   } catch (err) {
     console.error('Attendance history error:', err);
     res.status(500).json({ 
