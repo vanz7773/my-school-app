@@ -304,6 +304,20 @@ const clockAttendance = async (req, res) => {
       date: { $gte: dayStart, $lte: dayEnd },
     });
 
+    // 🔒 NEW: Block clock-in if already marked Absent
+    if (
+      attendance &&
+      attendance.status === "Absent" &&
+      type === "in" &&
+      !isAdmin
+    ) {
+      return res.status(403).json({
+        status: "fail",
+        message:
+          "You were marked absent for today. Clock-in is no longer allowed. Please contact the administrator.",
+      });
+    }
+
     const lateThreshold = new Date(dayStart);
     lateThreshold.setHours(8, 0, 0, 0);
 
@@ -415,6 +429,7 @@ const clockAttendance = async (req, res) => {
     });
   }
 };
+
 
 
 
