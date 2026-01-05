@@ -428,15 +428,18 @@ const clockAttendance = async (req, res) => {
     const statusMessage = attendance.status === "Late" ? " (Late)" : "";
 
     await Notification.create({
-      sender: req.user._id,
-      school: req.user.school,
-      title: `Teacher ${actionType.charAt(0).toUpperCase() + actionType.slice(1)}`,
-      message: `${teacherName} ${actionType}${statusMessage}`,
-      type: "teacher-attendance",
-      audience: "teacher",
-      recipientRoles: ["teacher", "admin"],
-      recipientUsers: [],
-    });
+  sender: req.user._id,
+  school: req.user.school,
+  title: `Teacher ${actionType.charAt(0).toUpperCase() + actionType.slice(1)}`,
+  message: `${teacherName} ${actionType}${statusMessage}`,
+  type: "teacher-attendance",
+
+  // 🔒 FIXED TARGETING
+  audience: "teacher",
+  recipientRoles: ["admin"],     // 👈 admins only
+  recipientUsers: [teacher.user] // 👈 only the acting teacher
+});
+
 
     // 6️⃣ SEND PUSH
     const adminUsers = await mongoose.model("User").find({
