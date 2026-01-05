@@ -2663,9 +2663,7 @@ const resumeQuizAttempt = async (req, res) => {
 };
 
 
-// ---------------------------
-// 21. Save quiz progress - OPTIMIZED
-// ---------------------------
+
 // ---------------------------
 // 21. Save quiz progress - OPTIMIZED
 // ---------------------------
