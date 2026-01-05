@@ -17,6 +17,14 @@ const QuizAttemptSchema = new mongoose.Schema(
       index: true,
     },
 
+    // 🏫 REQUIRED — fixes cross-device resume
+    school: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "School",
+      required: true,
+      index: true,
+    },
+
     // Server-issued session identifier
     sessionId: {
       type: String,
@@ -77,7 +85,6 @@ const QuizAttemptSchema = new mongoose.Schema(
 /* ------------------------------------------------------------------
    🔒 HARD GUARANTEE (CRITICAL)
    One and only ONE active attempt per quiz per student
-   (This is what blocks fresh starts on another device)
 ------------------------------------------------------------------- */
 QuizAttemptSchema.index(
   { quizId: 1, studentId: 1 },
