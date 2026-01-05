@@ -2490,7 +2490,7 @@ const startQuizAttempt = async (req, res) => {
     }
 
     // --------------------------------------------------
-    // 🔄 Resume existing attempt
+    // 🔄 Resume existing attempt (FAST PATH)
     // --------------------------------------------------
     if (activeAttempt) {
       console.log(`🔄 Resuming existing attempt for student ${studentId}`);
@@ -2555,7 +2555,36 @@ const startQuizAttempt = async (req, res) => {
       startTime: startTime.toISOString(),
       resumed: false,
     });
+
   } catch (error) {
+    // --------------------------------------------------
+    // 🔁 CRITICAL FIX: DUPLICATE ACTIVE ATTEMPT → RESUME
+    // --------------------------------------------------
+    if (error?.code === 11000) {
+      console.warn(
+        `⚠️ Duplicate active attempt detected — resuming for student ${studentId}`
+      );
+
+      const existingAttempt = await QuizAttempt.findOne({
+        quizId: toObjectId(quizId),
+        studentId,
+        school,
+        status: "in-progress",
+        expiresAt: { $gt: new Date() },
+      });
+
+      if (existingAttempt) {
+        return res.json({
+          sessionId: existingAttempt.sessionId,
+          timeRemaining: Math.floor(
+            (new Date(existingAttempt.expiresAt) - new Date()) / 1000
+          ),
+          startTime: existingAttempt.startTime,
+          resumed: true,
+        });
+      }
+    }
+
     // --------------------------------------------------
     // 🧹 Safe session cleanup
     // --------------------------------------------------
@@ -2576,6 +2605,7 @@ const startQuizAttempt = async (req, res) => {
     });
   }
 };
+
 
 
 
