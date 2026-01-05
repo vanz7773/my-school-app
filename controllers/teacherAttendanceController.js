@@ -58,46 +58,45 @@ const backfillTermAbsencesIfNeeded = async (teacher, term) => {
   while (cursor <= termEnd) {
     const day = cursor.getDay();
     if (day !== 0 && day !== 6) { // skip weekends
-      allDays.push(new Date(cursor));
+      allDays.push(startOfDay(new Date(cursor)));
     }
     cursor.setDate(cursor.getDate() + 1);
   }
 
-  const existingRecords = await Attendance.find({
-    teacher: teacher._id,
-    term: term._id,
-    date: { $gte: termStart, $lte: termEnd }
-  }).select('date');
-
-  const existingDates = new Set(
-    existingRecords.map(r => startOfDay(r.date).getTime())
-  );
-
   const bulkOps = [];
 
   for (const day of allDays) {
-    const dayKey = startOfDay(day).getTime();
-    if (!existingDates.has(dayKey)) {
-      bulkOps.push({
-        insertOne: {
-          document: {
+    bulkOps.push({
+      updateOne: {
+        filter: {
+          teacher: teacher._id,
+          date: day
+        },
+        update: {
+          // 🔒 Create record only if it does not exist
+          $setOnInsert: {
             teacher: teacher._id,
             school: teacher.school,
-            term: term._id,
             date: day,
             signInTime: null,
             signOutTime: null,
             status: "Absent"
+          },
+          // ✅ Always ensure the term is correct
+          $set: {
+            term: term._id
           }
-        }
-      });
-    }
+        },
+        upsert: true
+      }
+    });
   }
 
-  if (bulkOps.length) {
+  if (bulkOps.length > 0) {
     await Attendance.bulkWrite(bulkOps, { ordered: false });
   }
 };
+
 
 
 // ─────────────────────────────────────────────────────────────
