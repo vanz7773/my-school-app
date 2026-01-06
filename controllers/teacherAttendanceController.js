@@ -357,19 +357,32 @@ const clockAttendance = async (req, res) => {
       date: { $gte: dayStart, $lte: dayEnd },
     });
 
-    // 🔒 NEW: Block clock-in if already marked Absent
-    if (
-      attendance &&
-      attendance.status === "Absent" &&
-      type === "in" &&
-      !isAdmin
-    ) {
-      return res.status(403).json({
-        status: "fail",
-        message:
-          "You were marked absent for today. Clock-in is no longer allowed. Please contact the administrator.",
-      });
-    }
+    // 🔒 Block clock-in ONLY if Absent AFTER school hours
+if (attendance && attendance.status === "Absent" && type === "in" && !isAdmin) {
+  const now = new Date();
+  const dayStart = startOfDay(now);
+
+  // ⏰ Must match absentee logic
+  const SCHOOL_END_HOUR = 15;
+  const SCHOOL_END_MINUTE = 30;
+
+  const schoolEnd = new Date(dayStart);
+  schoolEnd.setHours(SCHOOL_END_HOUR, SCHOOL_END_MINUTE, 0, 0);
+
+  // ❌ Block ONLY after school has closed
+  if (now >= schoolEnd) {
+    return res.status(403).json({
+      status: "fail",
+      message:
+        "You were marked absent for today. Clock-in is no longer allowed. Please contact the administrator.",
+    });
+  }
+
+  // ✅ Before school close → allow clock-in and FIX the record
+  attendance.status = "On Time";
+  attendance.signInTime = clockTime;
+}
+
 
     const lateThreshold = new Date(dayStart);
     lateThreshold.setHours(8, 0, 0, 0);
