@@ -1100,64 +1100,92 @@ const getAdminMonthlySummary = async (req, res) => {
 
 
 // ─────────────────────────────────────────────────────────────
-// TEACHER TODAY'S ATTENDANCE
+// TEACHER TODAY'S ATTENDANCE (FIXED: NO PREMATURE ABSENT)
 // ─────────────────────────────────────────────────────────────
 const getTodayAttendance = async (req, res) => {
   console.log('=== GET TODAY ATTENDANCE STARTED ===');
   console.log('User ID:', req.user.id);
 
+  // ⚠️ This will only mark absentees AFTER school hours
   await markAbsenteesForTodayIfNeeded();
 
   try {
     const teacher = await Teacher.findOne({ user: req.user.id });
     console.log('Teacher found:', teacher ? teacher._id : 'None');
-    
+
     if (!teacher) {
-      console.log('Teacher not found');
-      return res.status(404).json({ 
+      return res.status(404).json({
         status: 'fail',
-        message: 'Teacher not found' 
+        message: 'Teacher not found'
       });
     }
 
-    const todayStart = startOfDay(new Date());
-    const todayEnd = endOfDay(new Date());
-    console.log('Today date range:', { todayStart, todayEnd });
+    const now = new Date();
+    const todayStart = startOfDay(now);
+    const todayEnd = endOfDay(now);
 
+    // 🕘 School hours (MUST match absentee logic)
+    const SCHOOL_START_HOUR = 8;
+    const SCHOOL_START_MINUTE = 0;
+    const SCHOOL_END_HOUR = 15;
+    const SCHOOL_END_MINUTE = 30;
+
+    const schoolStart = new Date(todayStart);
+    schoolStart.setHours(SCHOOL_START_HOUR, SCHOOL_START_MINUTE, 0, 0);
+
+    const schoolEnd = new Date(todayStart);
+    schoolEnd.setHours(SCHOOL_END_HOUR, SCHOOL_END_MINUTE, 0, 0);
+
+    // 🔎 Resolve current term
     const currentTerm = await Term.findOne({
-  school: teacher.school,
-  startDate: { $lte: todayStart },
-  endDate: { $gte: todayStart }
-});
+      school: teacher.school,
+      startDate: { $lte: todayStart },
+      endDate: { $gte: todayStart }
+    });
 
-const attendance = await Attendance.findOne({
-  teacher: teacher._id,
-  term: currentTerm?._id,
-  date: { $gte: todayStart, $lte: todayEnd }
-});
+    // 🔎 Fetch today’s attendance (if any)
+    const attendance = await Attendance.findOne({
+      teacher: teacher._id,
+      term: currentTerm?._id,
+      date: { $gte: todayStart, $lte: todayEnd }
+    });
 
+    // 🧠 STATUS RESOLUTION (THIS IS THE FIX)
+    let status;
 
-    console.log('Today attendance:', attendance);
+    if (!attendance) {
+      if (now < schoolStart) {
+        status = 'Not Started';
+      } else if (now >= schoolStart && now < schoolEnd) {
+        status = 'Pending';
+      } else {
+        status = 'Absent';
+      }
+    } else {
+      status = attendance.status;
+    }
 
-    res.status(200).json({ 
+    return res.status(200).json({
       status: 'success',
       data: {
         clockedIn: !!attendance?.signInTime,
         clockedOut: !!attendance?.signOutTime,
-        status: attendance?.status || 'Absent',
+        status,
         lastAction: attendance?.signOutTime || attendance?.signInTime
       }
     });
+
   } catch (err) {
     console.error('Today attendance error:', err);
-    res.status(500).json({ 
+    return res.status(500).json({
       status: 'error',
-      message: 'Failed to fetch today\'s attendance' 
+      message: 'Failed to fetch today\'s attendance'
     });
   } finally {
     console.log('=== GET TODAY ATTENDANCE COMPLETED ===');
   }
 };
+
 
 // ─────────────────────────────────────────────────────────────
 // TEACHER MISSED CLOCKOUTS
