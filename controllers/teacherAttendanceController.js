@@ -47,17 +47,24 @@ async function sendPush(userIds, title, body, extra = {}) {
 
 const backfillTermAbsencesIfNeeded = async (teacher, term) => {
   const termStart = startOfDay(new Date(term.startDate));
-  const today = startOfDay(new Date());
 
-  // Don’t backfill beyond today
-  const termEnd = new Date(Math.min(today, new Date(term.endDate)));
+  // ⛔ IMPORTANT: Exclude today completely
+  const today = startOfDay(new Date());
+  today.setDate(today.getDate() - 1);
+
+  // Don’t backfill beyond yesterday or term end
+  const termEnd = new Date(
+    Math.min(today.getTime(), new Date(term.endDate).getTime())
+  );
+
+  if (termEnd < termStart) return;
 
   const allDays = [];
   let cursor = new Date(termStart);
 
   while (cursor <= termEnd) {
     const day = cursor.getDay();
-    if (day !== 0 && day !== 6) { // skip weekends
+    if (day !== 0 && day !== 6) {
       allDays.push(startOfDay(new Date(cursor)));
     }
     cursor.setDate(cursor.getDate() + 1);
@@ -73,7 +80,6 @@ const backfillTermAbsencesIfNeeded = async (teacher, term) => {
           date: day
         },
         update: {
-          // 🔒 Create record only if it does not exist
           $setOnInsert: {
             teacher: teacher._id,
             school: teacher.school,
@@ -82,7 +88,6 @@ const backfillTermAbsencesIfNeeded = async (teacher, term) => {
             signOutTime: null,
             status: "Absent"
           },
-          // ✅ Always ensure the term is correct
           $set: {
             term: term._id
           }
@@ -96,6 +101,7 @@ const backfillTermAbsencesIfNeeded = async (teacher, term) => {
     await Attendance.bulkWrite(bulkOps, { ordered: false });
   }
 };
+
 
 
 
