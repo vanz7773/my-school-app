@@ -48,6 +48,7 @@ async function sendPush(userIds, title, body, extra = {}) {
 const backfillTermAbsencesIfNeeded = async (teacher, term) => {
   const termStart = startOfDay(new Date(term.startDate));
 
+  // ⛔ Do NOT create absences for today (today handled separately)
   const yesterday = startOfDay(new Date());
   yesterday.setDate(yesterday.getDate() - 1);
 
@@ -57,41 +58,43 @@ const backfillTermAbsencesIfNeeded = async (teacher, term) => {
 
   if (termEnd < termStart) return;
 
-  const bulkOps = [];
   let cursor = new Date(termStart);
 
   while (cursor <= termEnd) {
-    const day = cursor.getDay();
-    if (day !== 0 && day !== 6) {
-      const date = startOfDay(new Date(cursor));
+    const dayOfWeek = cursor.getDay();
 
-      bulkOps.push({
-        updateOne: {
-          filter: {
-            teacher: teacher._id,
-            term: term._id,
-            date
-          },
-          update: {
-            $setOnInsert: {
-              teacher: teacher._id,
-              school: teacher.school,
-              term: term._id,
-              date,
-              signInTime: null,
-              signOutTime: null,
-              status: "Absent"
-            }
-          },
-          upsert: true
-        }
-      });
+    // ⛔ Skip weekends
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+      cursor.setDate(cursor.getDate() + 1);
+      continue;
     }
-    cursor.setDate(cursor.getDate() + 1);
-  }
 
-  if (bulkOps.length) {
-    await Attendance.bulkWrite(bulkOps, { ordered: false });
+    const date = startOfDay(new Date(cursor));
+
+    // 🔍 Check if attendance already exists
+    const exists = await Attendance.findOne({
+      teacher: teacher._id,
+      term: term._id,
+      date
+    }).lean();
+
+    if (!exists) {
+      await Attendance.create({
+        teacher: teacher._id,
+        school: teacher.school,
+        term: term._id,
+        date,
+        signInTime: null,
+        signOutTime: null,
+        status: "Absent"
+      });
+
+      console.log(
+        `📌 Backfilled ABSENT: ${teacher._id} | ${date.toISOString().slice(0, 10)}`
+      );
+    }
+
+    cursor.setDate(cursor.getDate() + 1);
   }
 };
 
@@ -1375,18 +1378,13 @@ const getMissedClockouts = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────────────────────
-// TEACHER ATTENDANCE HISTORY (READ-ONLY, TERM-SAFE)
+// TEACHER ATTENDANCE HISTORY (TERM-SAFE, CONTROLLED BACKFILL)
 // ─────────────────────────────────────────────────────────────
 const getTeacherAttendanceHistory = async (req, res) => {
   console.log('=== GET TEACHER ATTENDANCE HISTORY STARTED ===');
   console.log('User ID:', req.user.id);
 
   try {
-    // ❌ REMOVED:
-    // markAbsenteesForTodayIfNeeded()
-    // backfillTermAbsencesIfNeeded()
-    // This endpoint must be READ-ONLY
-
     const teacher = await Teacher.findOne({ user: req.user.id });
     console.log('Teacher found:', teacher ? teacher._id : 'None');
 
@@ -1420,6 +1418,12 @@ const getTeacherAttendanceHistory = async (req, res) => {
       });
     }
 
+    // ⚠️ SAFE, CONTROLLED BACKFILL (PAST DAYS ONLY)
+    // - Idempotent
+    // - Does NOT touch today
+    // - Does NOT overwrite real attendance
+    await backfillTermAbsencesIfNeeded(teacher, term);
+
     // ✅ Term-isolated, read-only query
     const history = await Attendance.find({
       teacher: teacher._id,
@@ -1446,9 +1450,6 @@ const getTeacherAttendanceHistory = async (req, res) => {
     console.log('=== GET TEACHER ATTENDANCE HISTORY COMPLETED ===');
   }
 };
-
-
-
 
 // ─────────────────────────────────────────────────────────────
 // ADMIN ATTENDANCE HISTORY (READ-ONLY, TERM-SAFE)
