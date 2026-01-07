@@ -45,58 +45,45 @@ async function sendPush(userIds, title, body, extra = {}) {
   }
 }
 
-const backfillTermAbsencesIfNeeded = async (teacher, term) => {
-  const termStart = startOfDay(new Date(term.startDate));
+const markAbsentForTodayIfNeeded = async ({ teacher, term }) => {
+  const now = new Date();
+  const todayStart = startOfDay(now);
 
-  // ⛔ Do NOT create absences for today (today handled separately)
-  const yesterday = startOfDay(new Date());
-  yesterday.setDate(yesterday.getDate() - 1);
+  // ⛔ Skip weekends
+  const day = todayStart.getDay();
+  if (day === 0 || day === 6) return;
 
-  const termEnd = new Date(
-    Math.min(yesterday.getTime(), new Date(term.endDate).getTime())
-  );
+  // 🕔 School closing time
+  const SCHOOL_END_HOUR = 15;
+  const SCHOOL_END_MINUTE = 30;
 
-  if (termEnd < termStart) return;
+  const schoolEnd = new Date(todayStart);
+  schoolEnd.setHours(SCHOOL_END_HOUR, SCHOOL_END_MINUTE, 0, 0);
 
-  let cursor = new Date(termStart);
+  // ⛔ Do NOT mark absent before school ends
+  if (now < schoolEnd) return;
 
-  while (cursor <= termEnd) {
-    const dayOfWeek = cursor.getDay();
+  const exists = await Attendance.findOne({
+    teacher: teacher._id,
+    term: term._id,
+    date: todayStart
+  });
 
-    // ⛔ Skip weekends
-    if (dayOfWeek === 0 || dayOfWeek === 6) {
-      cursor.setDate(cursor.getDate() + 1);
-      continue;
-    }
+  if (exists) return;
 
-    const date = startOfDay(new Date(cursor));
+  await Attendance.create({
+    teacher: teacher._id,
+    school: teacher.school,
+    term: term._id,
+    date: todayStart,
+    signInTime: null,
+    signOutTime: null,
+    status: "Absent"
+  });
 
-    // 🔍 Check if attendance already exists
-    const exists = await Attendance.findOne({
-      teacher: teacher._id,
-      term: term._id,
-      date
-    }).lean();
-
-    if (!exists) {
-      await Attendance.create({
-        teacher: teacher._id,
-        school: teacher.school,
-        term: term._id,
-        date,
-        signInTime: null,
-        signOutTime: null,
-        status: "Absent"
-      });
-
-      console.log(
-        `📌 Backfilled ABSENT: ${teacher._id} | ${date.toISOString().slice(0, 10)}`
-      );
-    }
-
-    cursor.setDate(cursor.getDate() + 1);
-  }
+  console.log(`🕔 ABSENT CREATED (TIME-BASED): ${teacher._id}`);
 };
+
 
 
 
@@ -149,83 +136,6 @@ const calculateTermWeeks = (startDate, endDate) => {
   });
 };
 
-// ─────────────────────────────────────────────────────────────
-// Helper: Mark absentees for today (Option A – controller-only)
-// OPTIMIZED + IDEMPOTENT + SCALABLE
-// ─────────────────────────────────────────────────────────────
-const markAbsenteesForTodayIfNeeded = async () => {
-  const now = new Date();
-
-  // 🕔 School closing time
-  const SCHOOL_END_HOUR = 15;
-  const SCHOOL_END_MINUTE = 30;
-
-  const cutoff = new Date(now);
-  cutoff.setHours(SCHOOL_END_HOUR, SCHOOL_END_MINUTE, 0, 0);
-
-  // ⛔ Only run after school hours
-  if (now < cutoff) return;
-
-  const todayStart = startOfDay(now);
-
-  // ⛔ Skip weekends
-  const day = todayStart.getDay();
-  if (day === 0 || day === 6) return;
-
-  console.log("🕔 Auto-marking absentees for today");
-
-  // 1️⃣ Get all active terms
-  const activeTerms = await Term.find(
-    {
-      startDate: { $lte: todayStart },
-      endDate: { $gte: todayStart }
-    },
-    { _id: 1, school: 1 }
-  ).lean();
-
-  if (activeTerms.length === 0) return;
-
-  // 2️⃣ Build bulk operations
-  const bulkOps = [];
-
-  for (const term of activeTerms) {
-    // Fetch only teacher IDs (lean + projection)
-    const teachers = await Teacher.find(
-      { school: term.school },
-      { _id: 1, school: 1 }
-    ).lean();
-
-    for (const teacher of teachers) {
-      bulkOps.push({
-        updateOne: {
-          filter: {
-            teacher: teacher._id,
-            date: todayStart
-          },
-          update: {
-            $setOnInsert: {
-              teacher: teacher._id,
-              school: teacher.school,
-              term: term._id,
-              date: todayStart,
-              signInTime: null,
-              signOutTime: null,
-              status: "Absent"
-            }
-          },
-          upsert: true
-        }
-      });
-    }
-  }
-
-  // 3️⃣ Execute once
-  if (bulkOps.length > 0) {
-    await Attendance.bulkWrite(bulkOps, { ordered: false });
-  }
-
-  console.log(`✅ Absentees processed: ${bulkOps.length}`);
-};
 
 // ─────────────────────────────────────────────────────────────
 // CLOCK IN / OUT (PRODUCTION CLEAN VERSION)
@@ -1241,7 +1151,7 @@ const getAdminMonthlySummary = async (req, res) => {
 
 
 // ─────────────────────────────────────────────────────────────
-// TEACHER TODAY'S ATTENDANCE (TERM-SAFE, READ-ONLY)
+// TEACHER TODAY'S ATTENDANCE (TERM-SAFE, TIME-AWARE)
 // ─────────────────────────────────────────────────────────────
 const getTodayAttendance = async (req, res) => {
   console.log('=== GET TODAY ATTENDANCE STARTED ===');
@@ -1262,6 +1172,20 @@ const getTodayAttendance = async (req, res) => {
     const todayStart = startOfDay(now);
     const todayEnd = endOfDay(now);
 
+    // ⛔ Skip weekends
+    const day = todayStart.getDay();
+    if (day === 0 || day === 6) {
+      return res.status(200).json({
+        status: 'success',
+        data: {
+          status: 'Weekend',
+          clockedIn: false,
+          clockedOut: false,
+          lastAction: null
+        }
+      });
+    }
+
     // 🕘 School hours
     const SCHOOL_START_HOUR = 8;
     const SCHOOL_START_MINUTE = 0;
@@ -1274,7 +1198,7 @@ const getTodayAttendance = async (req, res) => {
     const schoolEnd = new Date(todayStart);
     schoolEnd.setHours(SCHOOL_END_HOUR, SCHOOL_END_MINUTE, 0, 0);
 
-    // ✅ Resolve CURRENT TERM FIRST (CRITICAL)
+    // ✅ Resolve CURRENT TERM FIRST
     const currentTerm = await Term.findOne({
       school: teacher.school,
       startDate: { $lte: todayStart },
@@ -1288,14 +1212,29 @@ const getTodayAttendance = async (req, res) => {
       });
     }
 
-    // ✅ Fetch attendance STRICTLY for this term
-    const attendance = await Attendance.findOne({
+    // ✅ Fetch today's attendance (term-safe)
+    let attendance = await Attendance.findOne({
       teacher: teacher._id,
       term: currentTerm._id,
       date: { $gte: todayStart, $lte: todayEnd }
     });
 
-    // 🧠 Status resolution (NO side effects)
+    // 🕔 AFTER SCHOOL → CREATE ABSENT (ONCE)
+    if (!attendance && now >= schoolEnd) {
+      attendance = await Attendance.create({
+        teacher: teacher._id,
+        school: teacher.school,
+        term: currentTerm._id,
+        date: todayStart,
+        signInTime: null,
+        signOutTime: null,
+        status: 'Absent'
+      });
+
+      console.log(`🕔 ABSENT CREATED (TIME-BASED): ${teacher._id}`);
+    }
+
+    // 🧠 Status resolution (NO GUESSING)
     let status;
 
     if (!attendance) {
@@ -1304,7 +1243,7 @@ const getTodayAttendance = async (req, res) => {
       } else if (now >= schoolStart && now < schoolEnd) {
         status = 'Pending';
       } else {
-        status = 'Absent';
+        status = 'Absent'; // theoretical fallback
       }
     } else {
       status = attendance.status;
@@ -1325,12 +1264,13 @@ const getTodayAttendance = async (req, res) => {
     console.error('Today attendance error:', err);
     return res.status(500).json({
       status: 'error',
-      message: 'Failed to fetch today\'s attendance'
+      message: 'Failed to fetch today attendance'
     });
   } finally {
     console.log('=== GET TODAY ATTENDANCE COMPLETED ===');
   }
 };
+
 
 
 // ─────────────────────────────────────────────────────────────
