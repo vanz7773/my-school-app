@@ -1318,7 +1318,7 @@ const getMissedClockouts = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────────────────────
-// TEACHER ATTENDANCE HISTORY (TERM-SAFE, CONTROLLED BACKFILL)
+// TEACHER ATTENDANCE HISTORY (TERM-SAFE, READ-ONLY)
 // ─────────────────────────────────────────────────────────────
 const getTeacherAttendanceHistory = async (req, res) => {
   console.log('=== GET TEACHER ATTENDANCE HISTORY STARTED ===');
@@ -1339,7 +1339,6 @@ const getTeacherAttendanceHistory = async (req, res) => {
 
     // ✅ Resolve term safely
     let term;
-
     if (termId) {
       term = await Term.findById(termId);
     } else {
@@ -1358,13 +1357,7 @@ const getTeacherAttendanceHistory = async (req, res) => {
       });
     }
 
-    // ⚠️ SAFE, CONTROLLED BACKFILL (PAST DAYS ONLY)
-    // - Idempotent
-    // - Does NOT touch today
-    // - Does NOT overwrite real attendance
-    await backfillTermAbsencesIfNeeded(teacher, term);
-
-    // ✅ Term-isolated, read-only query
+    // ✅ PURE READ-ONLY QUERY (NO SIDE EFFECTS)
     const history = await Attendance.find({
       teacher: teacher._id,
       term: term._id
@@ -1390,6 +1383,7 @@ const getTeacherAttendanceHistory = async (req, res) => {
     console.log('=== GET TEACHER ATTENDANCE HISTORY COMPLETED ===');
   }
 };
+
 
 // ─────────────────────────────────────────────────────────────
 // ADMIN ATTENDANCE HISTORY (READ-ONLY, TERM-SAFE)
