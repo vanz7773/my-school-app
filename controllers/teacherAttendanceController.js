@@ -45,6 +45,49 @@ async function sendPush(userIds, title, body, extra = {}) {
   }
 }
 
+const markAbsentForTodayIfNeeded = async ({ teacher, term }) => {
+  const now = new Date();
+  const todayStart = startOfDay(now);
+
+  // ⛔ Skip weekends
+  const day = todayStart.getDay();
+  if (day === 0 || day === 6) return;
+
+  // 🕔 School closing time
+  const SCHOOL_END_HOUR = 15;
+  const SCHOOL_END_MINUTE = 30;
+
+  const schoolEnd = new Date(todayStart);
+  schoolEnd.setHours(SCHOOL_END_HOUR, SCHOOL_END_MINUTE, 0, 0);
+
+  // ⛔ Do NOT mark absent before school ends
+  if (now < schoolEnd) return;
+
+  const exists = await Attendance.findOne({
+    teacher: teacher._id,
+    term: term._id,
+    date: todayStart
+  });
+
+  if (exists) return;
+
+  await Attendance.create({
+    teacher: teacher._id,
+    school: teacher.school,
+    term: term._id,
+    date: todayStart,
+    signInTime: null,
+    signOutTime: null,
+    status: "Absent"
+  });
+
+  console.log(`🕔 ABSENT CREATED (TIME-BASED): ${teacher._id}`);
+};
+
+
+
+
+
 
 // ─────────────────────────────────────────────────────────────
 // WRAPPER: Apply Geofence Validation Middleware
@@ -93,83 +136,6 @@ const calculateTermWeeks = (startDate, endDate) => {
   });
 };
 
-// ─────────────────────────────────────────────────────────────
-// Helper: Mark absentees for today (Option A – controller-only)
-// OPTIMIZED + IDEMPOTENT + SCALABLE
-// ─────────────────────────────────────────────────────────────
-const markAbsenteesForTodayIfNeeded = async () => {
-  const now = new Date();
-
-  // 🕔 School closing time
-  const SCHOOL_END_HOUR = 15;
-  const SCHOOL_END_MINUTE = 30;
-
-  const cutoff = new Date(now);
-  cutoff.setHours(SCHOOL_END_HOUR, SCHOOL_END_MINUTE, 0, 0);
-
-  // ⛔ Only run after school hours
-  if (now < cutoff) return;
-
-  const todayStart = startOfDay(now);
-
-  // ⛔ Skip weekends
-  const day = todayStart.getDay();
-  if (day === 0 || day === 6) return;
-
-  console.log("🕔 Auto-marking absentees for today");
-
-  // 1️⃣ Get all active terms
-  const activeTerms = await Term.find(
-    {
-      startDate: { $lte: todayStart },
-      endDate: { $gte: todayStart }
-    },
-    { _id: 1, school: 1 }
-  ).lean();
-
-  if (activeTerms.length === 0) return;
-
-  // 2️⃣ Build bulk operations
-  const bulkOps = [];
-
-  for (const term of activeTerms) {
-    // Fetch only teacher IDs (lean + projection)
-    const teachers = await Teacher.find(
-      { school: term.school },
-      { _id: 1, school: 1 }
-    ).lean();
-
-    for (const teacher of teachers) {
-      bulkOps.push({
-        updateOne: {
-          filter: {
-            teacher: teacher._id,
-            date: todayStart
-          },
-          update: {
-            $setOnInsert: {
-              teacher: teacher._id,
-              school: teacher.school,
-              term: term._id,
-              date: todayStart,
-              signInTime: null,
-              signOutTime: null,
-              status: "Absent"
-            }
-          },
-          upsert: true
-        }
-      });
-    }
-  }
-
-  // 3️⃣ Execute once
-  if (bulkOps.length > 0) {
-    await Attendance.bulkWrite(bulkOps, { ordered: false });
-  }
-
-  console.log(`✅ Absentees processed: ${bulkOps.length}`);
-};
 
 // ─────────────────────────────────────────────────────────────
 // CLOCK IN / OUT (PRODUCTION CLEAN VERSION)
@@ -304,6 +270,33 @@ const clockAttendance = async (req, res) => {
       date: { $gte: dayStart, $lte: dayEnd },
     });
 
+    // 🔒 Block clock-in ONLY if Absent AFTER school hours
+if (attendance && attendance.status === "Absent" && type === "in" && !isAdmin) {
+  const now = new Date();
+  const dayStart = startOfDay(now);
+
+  // ⏰ Must match absentee logic
+  const SCHOOL_END_HOUR = 15;
+  const SCHOOL_END_MINUTE = 30;
+
+  const schoolEnd = new Date(dayStart);
+  schoolEnd.setHours(SCHOOL_END_HOUR, SCHOOL_END_MINUTE, 0, 0);
+
+  // ❌ Block ONLY after school has closed
+  if (now >= schoolEnd) {
+    return res.status(403).json({
+      status: "fail",
+      message:
+        "You were marked absent for today. Clock-in is no longer allowed. Please contact the administrator.",
+    });
+  }
+
+  // ✅ Before school close → allow clock-in and FIX the record
+  attendance.status = "On Time";
+  attendance.signInTime = clockTime;
+}
+
+
     const lateThreshold = new Date(dayStart);
     lateThreshold.setHours(8, 0, 0, 0);
 
@@ -361,15 +354,18 @@ const clockAttendance = async (req, res) => {
     const statusMessage = attendance.status === "Late" ? " (Late)" : "";
 
     await Notification.create({
-      sender: req.user._id,
-      school: req.user.school,
-      title: `Teacher ${actionType.charAt(0).toUpperCase() + actionType.slice(1)}`,
-      message: `${teacherName} ${actionType}${statusMessage}`,
-      type: "teacher-attendance",
-      audience: "teacher",
-      recipientRoles: ["teacher", "admin"],
-      recipientUsers: [],
-    });
+  sender: req.user._id,
+  school: req.user.school,
+  title: `Teacher ${actionType.charAt(0).toUpperCase() + actionType.slice(1)}`,
+  message: `${teacherName} ${actionType}${statusMessage}`,
+  type: "teacher-attendance",
+
+  // 🔒 FIXED TARGETING
+  audience: "teacher",
+  recipientRoles: ["admin"],     // 👈 admins only
+  recipientUsers: [teacher.user] // 👈 only the acting teacher
+});
+
 
     // 6️⃣ SEND PUSH
     const adminUsers = await mongoose.model("User").find({
@@ -418,53 +414,97 @@ const clockAttendance = async (req, res) => {
 
 
 
+
 // ─────────────────────────────────────────────────────────────
-// TEACHER DAILY RECORDS (WITH FIXED TEACHER LOOKUP)
+// TEACHER DAILY RECORDS (READ-ONLY, TERM-SAFE)
 // ─────────────────────────────────────────────────────────────
 const getTeacherDailyRecords = async (req, res) => {
   console.log('=== GET TEACHER DAILY RECORDS STARTED ===');
   console.log('User ID:', req.user.id);
 
   try {
-    // 👇 NEW: Ensure absentees are marked for today (after school hours)
-    await markAbsenteesForTodayIfNeeded();
+    // ❌ REMOVED: markAbsenteesForTodayIfNeeded()
+    // This endpoint must be READ-ONLY
 
     const teacher = await Teacher.findOne({ user: req.user.id })
       .populate({
         path: 'school',
-        match: { _id: { $exists: true } } // Ensure school exists
+        match: { _id: { $exists: true } }
       });
-      
+
     console.log('Teacher found:', teacher ? teacher._id : 'None');
 
     if (!teacher) {
-      console.log('Teacher not found');
-      return res.status(404).json({ status: 'fail', message: 'Teacher not found' });
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Teacher not found'
+      });
     }
 
     if (!teacher.school) {
-      console.log('Teacher found but school not assigned');
-      return res.status(404).json({ status: 'fail', message: 'Teacher is not assigned to a school.' });
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Teacher is not assigned to a school.'
+      });
     }
 
-    const records = await Attendance.find({ teacher: teacher._id })
+    const { termId } = req.query;
+
+    // ✅ Resolve term safely
+    let term;
+
+    if (termId) {
+      term = await Term.findOne({
+        _id: termId,
+        school: teacher.school._id
+      });
+    } else {
+      const today = startOfDay(new Date());
+
+      term = await Term.findOne({
+        school: teacher.school._id,
+        startDate: { $lte: today },
+        endDate: { $gte: today }
+      });
+    }
+
+    if (!term) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'No active term found'
+      });
+    }
+
+    // ✅ Term-scoped, safe query
+    const records = await Attendance.find({
+      teacher: teacher._id,
+      term: term._id
+    })
       .sort({ date: -1 })
       .limit(30);
 
     console.log('Records found:', records.length);
 
-    res.status(200).json({ status: 'success', data: records });
+    return res.status(200).json({
+      status: 'success',
+      data: records
+    });
+
   } catch (err) {
     console.error('Teacher daily records error:', err);
-    res.status(500).json({ status: 'error', message: 'Failed to fetch daily records' });
+    return res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch daily records'
+    });
   } finally {
     console.log('=== GET TEACHER DAILY RECORDS COMPLETED ===');
   }
 };
 
 
+
 // ─────────────────────────────────────────────────────────────
-// ADMIN DAILY RECORDS
+// ADMIN DAILY RECORDS (READ-ONLY, TERM-SAFE)
 // ─────────────────────────────────────────────────────────────
 const getAdminDailyRecords = async (req, res) => {
   console.log('=== GET ADMIN DAILY RECORDS STARTED ===');
@@ -472,38 +512,61 @@ const getAdminDailyRecords = async (req, res) => {
   console.log('User school:', req.user.school);
 
   try {
-    // 👇 NEW: Ensure absentees are marked for today (after school hours)
-    await markAbsenteesForTodayIfNeeded();
+    // ❌ REMOVED: markAbsenteesForTodayIfNeeded()
+    // This endpoint must be READ-ONLY
 
     const { teacherId, from, to, termId } = req.query;
     const match = { school: req.user.school };
 
-    if (teacherId) match.teacher = new mongoose.Types.ObjectId(teacherId);
+    if (teacherId) {
+      match.teacher = new mongoose.Types.ObjectId(teacherId);
+    }
+
     if (from && to) {
-      match.date = { 
-        $gte: startOfDay(new Date(from)), 
-        $lte: endOfDay(new Date(to)) 
+      match.date = {
+        $gte: startOfDay(new Date(from)),
+        $lte: endOfDay(new Date(to))
       };
     }
 
+    // ✅ Resolve term safely
+    let term;
+
     if (termId) {
-      const term = await Term.findOne({ _id: termId, school: req.user.school });
-      if (!term) {
-        return res.status(404).json({ 
-          status: 'fail', 
-          message: 'Term not found' 
-        });
-      }
-      match.term = term._id;
+      term = await Term.findOne({
+        _id: termId,
+        school: req.user.school
+      });
+    } else {
+      const today = startOfDay(new Date());
+
+      term = await Term.findOne({
+        school: req.user.school,
+        startDate: { $lte: today },
+        endDate: { $gte: today }
+      });
     }
 
+    if (!term) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'No active term found'
+      });
+    }
+
+    // ✅ Enforce term isolation
+    match.term = term._id;
+
     const records = await Attendance.find(match)
-      .populate({ path: 'teacher', populate: { path: 'user', select: 'name' } })
+      .populate({
+        path: 'teacher',
+        populate: { path: 'user', select: 'name' }
+      })
       .sort({ date: -1 });
 
     console.log('Records found:', records.length);
 
-    // Weekly chart calculation
+    // Weekly chart calculation (UNCHANGED)
     const dayCounts = {};
     const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
@@ -515,11 +578,10 @@ const getAdminDailyRecords = async (req, res) => {
       try {
         const recordDate = new Date(record.date);
         const day = recordDate.toLocaleDateString('en-US', { weekday: 'long' });
-        
+
         if (weekdays.includes(day)) {
           dayCounts[day].total += 1;
 
-          // Present = On Time or Late (Absent now exists explicitly)
           if (['On Time', 'Late'].includes(record.status)) {
             dayCounts[day].present += 1;
           }
@@ -542,23 +604,25 @@ const getAdminDailyRecords = async (req, res) => {
       };
     });
 
-    res.status(200).json({ 
+    return res.status(200).json({
       status: 'success',
       data: {
         records,
         weeklyChart
       }
     });
+
   } catch (err) {
     console.error('Admin daily records error:', err);
-    res.status(500).json({ 
-      status: 'error', 
-      message: 'Failed to fetch daily records' 
+    return res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch daily records'
     });
   } finally {
     console.log('=== GET ADMIN DAILY RECORDS COMPLETED ===');
   }
 };
+
 
 
 // ─────────────────────────────────────────────────────────────
@@ -590,16 +654,16 @@ const getTermWeeks = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────────────────────
-// ADMIN WEEKLY SUMMARY
+// ADMIN WEEKLY SUMMARY (READ-ONLY, TERM-SAFE)
 // ─────────────────────────────────────────────────────────────
 const getAdminWeeklySummary = async (req, res) => {
   console.log('=== GET ADMIN WEEKLY SUMMARY STARTED ===');
   console.log('Query parameters:', req.query);
   console.log('User school:', req.user.school);
-  
+
   try {
-    // 👇 NEW: Ensure absentees are marked for today (after school hours)
-    await markAbsenteesForTodayIfNeeded();
+    // ❌ REMOVED: markAbsenteesForTodayIfNeeded()
+    // This endpoint must NEVER mutate attendance
 
     const { teacherId, termId } = req.query;
     const match = { school: req.user.school };
@@ -608,47 +672,54 @@ const getAdminWeeklySummary = async (req, res) => {
       match.teacher = new mongoose.Types.ObjectId(teacherId);
       console.log('Filtering by teacher ID:', teacherId);
     }
-    
+
+    // ✅ Resolve term (explicit or current)
+    let term;
     let termWeeks = [];
+
     if (termId) {
-      console.log('Looking up term with ID:', termId);
-      const term = await Term.findOne({ 
-        _id: termId, 
-        school: req.user.school 
+      term = await Term.findOne({
+        _id: termId,
+        school: req.user.school
       });
-      
-      if (!term) {
-        console.log('Term not found');
-        return res.status(404).json({ 
-          status: 'fail',
-          message: 'Term not found' 
-        });
-      }
-      
-      match.date = { 
-        $gte: startOfDay(new Date(term.startDate)), 
-        $lte: endOfDay(new Date(term.endDate)) 
-      };
-      
-      termWeeks = calculateTermWeeks(term.startDate, term.endDate);
-      console.log('Calculated term weeks:', termWeeks.length);
+    } else {
+      const today = startOfDay(new Date());
+      term = await Term.findOne({
+        school: req.user.school,
+        startDate: { $lte: today },
+        endDate: { $gte: today }
+      });
     }
+
+    if (!term) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'No active term found'
+      });
+    }
+
+    // ✅ Enforce term isolation
+    match.term = term._id;
+
+    // Pre-calc weeks (used for labeling only)
+    termWeeks = calculateTermWeeks(term.startDate, term.endDate);
+    console.log('Calculated term weeks:', termWeeks.length);
 
     const summary = await Attendance.aggregate([
       { $match: match },
       {
         $group: {
           _id: {
-            weekStart: { 
-              $dateToString: { 
-                format: "%Y-%m-%d", 
+            weekStart: {
+              $dateToString: {
+                format: "%Y-%m-%d",
                 date: { $dateTrunc: { date: "$date", unit: "week" } }
-              } 
+              }
             },
             weekEnd: {
               $dateToString: {
                 format: "%Y-%m-%d",
-                date: { 
+                date: {
                   $dateAdd: {
                     startDate: { $dateTrunc: { date: "$date", unit: "week" } },
                     unit: "day",
@@ -660,8 +731,16 @@ const getAdminWeeklySummary = async (req, res) => {
             teacher: "$teacher"
           },
           total: { $sum: 1 },
-          present: { $sum: { $cond: [{ $in: ["$status", ["On Time", "Late"]] }, 1, 0] } },
-          late: { $sum: { $cond: [{ $eq: ["$status", "Late"] }, 1, 0] } }
+          present: {
+            $sum: {
+              $cond: [{ $in: ["$status", ["On Time", "Late"]] }, 1, 0]
+            }
+          },
+          late: {
+            $sum: {
+              $cond: [{ $eq: ["$status", "Late"] }, 1, 0]
+            }
+          }
         }
       },
       {
@@ -698,39 +777,34 @@ const getAdminWeeklySummary = async (req, res) => {
 
     console.log('Aggregation result count:', summary.length);
 
-    // If we have term weeks, map the week numbers to the summary
-    if (termId && termWeeks.length > 0) {
-      const summaryWithWeekNumbers = summary.map(week => {
-        const matchingTermWeek = termWeeks.find(termWeek => 
-          new Date(termWeek.startDate).toISOString() === new Date(week.weekStart).toISOString()
-        );
-        
-        return {
-          ...week,
-          weekNumber: matchingTermWeek?.weekNumber || null,
-          weekLabel: matchingTermWeek ? `Week ${matchingTermWeek.weekNumber}` : 'Unknown Week'
-        };
-      });
+    // ✅ Attach week numbers safely
+    const summaryWithWeekNumbers = summary.map(week => {
+      const matchingTermWeek = termWeeks.find(
+        w => new Date(w.startDate).toISOString() === new Date(week.weekStart).toISOString()
+      );
 
-      res.status(200).json({ 
-        status: 'success',
-        data: { 
-          termWeeks,
-          attendance: summaryWithWeekNumbers,
-          currentWeek: termWeeks.find(week => week.isCurrent)
-        }
-      });
-    } else {
-      res.status(200).json({ 
-        status: 'success',
-        data: summary 
-      });
-    }
+      return {
+        ...week,
+        weekNumber: matchingTermWeek?.weekNumber || null,
+        weekLabel: matchingTermWeek
+          ? `Week ${matchingTermWeek.weekNumber}`
+          : 'Unknown Week'
+      };
+    });
+
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        termWeeks,
+        attendance: summaryWithWeekNumbers
+      }
+    });
+
   } catch (err) {
     console.error('Admin weekly summary error:', err);
-    res.status(500).json({ 
+    return res.status(500).json({
       status: 'error',
-      message: 'Failed to fetch weekly summary' 
+      message: 'Failed to fetch weekly summary'
     });
   } finally {
     console.log('=== GET ADMIN WEEKLY SUMMARY COMPLETED ===');
@@ -738,78 +812,79 @@ const getAdminWeeklySummary = async (req, res) => {
 };
 
 
+
 // ─────────────────────────────────────────────────────────────
-// TEACHER WEEKLY SUMMARY (only weeks with attendance records)
+// TEACHER WEEKLY SUMMARY (READ-ONLY, TERM-SAFE)
 // ─────────────────────────────────────────────────────────────
 const getTeacherWeeklySummary = async (req, res) => {
   console.log('=== GET TEACHER WEEKLY SUMMARY STARTED ===');
   console.log('Query params:', req.query);
-  
+
   try {
-    // 👇 NEW: Ensure absentees are marked for today (after school hours)
-    await markAbsenteesForTodayIfNeeded();
+    // ❌ REMOVED: markAbsenteesForTodayIfNeeded()
+    // Weekly summary must NEVER mutate attendance
 
     const teacher = await Teacher.findOne({ user: req.user.id }).populate('school');
-    
+
     if (!teacher) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         status: 'fail',
-        message: 'Teacher not found' 
+        message: 'Teacher not found'
       });
     }
 
     const { termId } = req.query;
-    let currentTerm;
+    let term;
 
-    // Get the term (either specified or current term)
+    // ✅ Resolve term safely (explicit or by date)
     if (termId) {
-      currentTerm = await Term.findById(termId);
+      term = await Term.findById(termId);
     } else {
-      currentTerm = await Term.findOne({ 
-        school: teacher.school._id, 
-        isCurrent: true 
+      const today = startOfDay(new Date());
+      term = await Term.findOne({
+        school: teacher.school._id,
+        startDate: { $lte: today },
+        endDate: { $gte: today }
       });
     }
 
-    if (!currentTerm) {
+    if (!term) {
       return res.status(404).json({
         status: 'fail',
-        message: 'No term found'
+        message: 'No active term found'
       });
     }
 
-    const termStart = new Date(currentTerm.startDate);
-    const termEnd = new Date(currentTerm.endDate);
+    const termStart = new Date(term.startDate);
+    const termEnd = new Date(term.endDate);
 
-    // Build match conditions
-    const matchConditions = { 
+    console.log('Term date range:', termStart, 'to', termEnd);
+
+    // ✅ TERM-ISOLATED, READ-ONLY QUERY
+    const attendanceData = await Attendance.find({
       teacher: teacher._id,
-      date: { 
+      term: term._id,
+      date: {
         $gte: termStart,
         $lte: termEnd,
         $type: 'date'
       }
-    };
-
-    console.log('Term date range:', termStart, 'to', termEnd);
-
-    const attendanceData = await Attendance.find(matchConditions)
+    })
       .sort({ date: 1 })
       .lean();
 
-    // Group by consistent week numbers (aligned with homepage)
+    // Group by consistent week numbers
     const weeklySummary = {};
     const millisecondsPerWeek = 7 * 24 * 60 * 60 * 1000;
-    
+
     attendanceData.forEach(record => {
       const recordDate = new Date(record.date);
-      
-      // Calculate week number exactly like the homepage
-      const weekNumber = Math.floor((recordDate - termStart) / millisecondsPerWeek) + 1;
-      
-      // Ensure week number is within bounds
-      const boundedWeek = Math.max(1, Math.min(weekNumber, 
-        Math.ceil((termEnd - termStart) / millisecondsPerWeek)));
+
+      const weekNumber =
+        Math.floor((recordDate - termStart) / millisecondsPerWeek) + 1;
+
+      const maxWeeks = Math.ceil((termEnd - termStart) / millisecondsPerWeek);
+      const boundedWeek = Math.max(1, Math.min(weekNumber, maxWeeks));
 
       if (!weeklySummary[boundedWeek]) {
         weeklySummary[boundedWeek] = {
@@ -822,63 +897,89 @@ const getTeacherWeeklySummary = async (req, res) => {
       }
 
       weeklySummary[boundedWeek].total++;
-      
-      if (record.status === 'On Time' || record.status === 'Late') {
+
+      if (['On Time', 'Late'].includes(record.status)) {
         weeklySummary[boundedWeek].present++;
       }
-      
+
       if (record.status === 'Late') {
         weeklySummary[boundedWeek].late++;
       }
     });
 
-    // Convert to array (only weeks with attendance records)
-    const result = Object.values(weeklySummary);
+    // Convert to array and sort (most recent week first)
+    const result = Object.values(weeklySummary).sort((a, b) => b.week - a.week);
 
-    // Sort by week descending (most recent first)
-    result.sort((a, b) => b.week - a.week);
+    console.log('Weekly summary generated:', result.length, 'weeks');
 
-    console.log('Weekly summary generated:', result.length, 'weeks with attendance records');
-
-    res.status(200).json({ 
+    return res.status(200).json({
       status: 'success',
-      data: result 
+      data: result
     });
+
   } catch (err) {
     console.error('Teacher weekly summary error:', err);
-    res.status(500).json({ 
+    return res.status(500).json({
       status: 'error',
-      message: 'Failed to fetch weekly summary' 
+      message: 'Failed to fetch weekly summary'
     });
   } finally {
     console.log('=== GET TEACHER WEEKLY SUMMARY COMPLETED ===');
   }
 };
 
+
 // ─────────────────────────────────────────────────────────────
-// TEACHER MONTHLY SUMMARY
+// TEACHER MONTHLY SUMMARY (READ-ONLY, TERM-SAFE)
 // ─────────────────────────────────────────────────────────────
 const getTeacherMonthlySummary = async (req, res) => {
   console.log('=== GET TEACHER MONTHLY SUMMARY STARTED ===');
   console.log('User ID:', req.user.id);
-  
-  try {
-    // 👇 NEW: Ensure absentees are marked for today (after school hours)
-    await markAbsenteesForTodayIfNeeded();
 
-    const teacher = await Teacher.findOne({ user: req.user.id });
+  try {
+    // ❌ REMOVED: markAbsenteesForTodayIfNeeded()
+    // Monthly summary must NEVER mutate attendance
+
+    const teacher = await Teacher.findOne({ user: req.user.id }).populate('school');
     console.log('Teacher found:', teacher ? teacher._id : 'None');
-    
+
     if (!teacher) {
-      console.log('Teacher not found');
-      return res.status(404).json({ 
+      return res.status(404).json({
         status: 'fail',
-        message: 'Teacher not found' 
+        message: 'Teacher not found'
+      });
+    }
+
+    const { termId } = req.query;
+
+    // ✅ Resolve term (explicit or current)
+    let term;
+
+    if (termId) {
+      term = await Term.findById(termId);
+    } else {
+      const today = startOfDay(new Date());
+      term = await Term.findOne({
+        school: teacher.school._id,
+        startDate: { $lte: today },
+        endDate: { $gte: today }
+      });
+    }
+
+    if (!term) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'No active term found'
       });
     }
 
     const summary = await Attendance.aggregate([
-      { $match: { teacher: teacher._id } },
+      {
+        $match: {
+          teacher: teacher._id,
+          term: term._id
+        }
+      },
       {
         $group: {
           _id: {
@@ -903,15 +1004,16 @@ const getTeacherMonthlySummary = async (req, res) => {
 
     console.log('Monthly summary count:', summary.length);
 
-    res.status(200).json({ 
+    return res.status(200).json({
       status: 'success',
-      data: summary 
+      data: summary
     });
+
   } catch (err) {
     console.error('Teacher monthly summary error:', err);
-    res.status(500).json({ 
+    return res.status(500).json({
       status: 'error',
-      message: 'Failed to fetch monthly summary' 
+      message: 'Failed to fetch monthly summary'
     });
   } finally {
     console.log('=== GET TEACHER MONTHLY SUMMARY COMPLETED ===');
@@ -919,33 +1021,61 @@ const getTeacherMonthlySummary = async (req, res) => {
 };
 
 
+
 // ─────────────────────────────────────────────────────────────
-// ADMIN MONTHLY SUMMARY
+// ADMIN MONTHLY SUMMARY (READ-ONLY, TERM-SAFE)
 // ─────────────────────────────────────────────────────────────
 const getAdminMonthlySummary = async (req, res) => {
   console.log('=== GET ADMIN MONTHLY SUMMARY STARTED ===');
   console.log('Query parameters:', req.query);
   console.log('User school:', req.user.school);
-  
-  try {
-    // 👇 NEW: Ensure absentees are marked for today (after school hours)
-    await markAbsenteesForTodayIfNeeded();
 
-    const { teacherId, from, to } = req.query;
+  try {
+    // ❌ REMOVED: markAbsenteesForTodayIfNeeded()
+    // Monthly summary must NEVER mutate attendance
+
+    const { teacherId, from, to, termId } = req.query;
     const match = { school: req.user.school };
 
-    if (teacherId) {
+    if (teacherId && mongoose.Types.ObjectId.isValid(teacherId)) {
       match.teacher = new mongoose.Types.ObjectId(teacherId);
       console.log('Filtering by teacher ID:', teacherId);
     }
 
     if (from && to) {
-      match.date = { 
-        $gte: startOfDay(new Date(from)), 
-        $lte: endOfDay(new Date(to)) 
+      match.date = {
+        $gte: startOfDay(new Date(from)),
+        $lte: endOfDay(new Date(to))
       };
       console.log('Filtering by date range:', { from, to });
     }
+
+    // ✅ Resolve term (explicit or current)
+    let term;
+
+    if (termId) {
+      term = await Term.findOne({
+        _id: termId,
+        school: req.user.school
+      });
+    } else {
+      const today = startOfDay(new Date());
+      term = await Term.findOne({
+        school: req.user.school,
+        startDate: { $lte: today },
+        endDate: { $gte: today }
+      });
+    }
+
+    if (!term) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'No active term found'
+      });
+    }
+
+    // ✅ Enforce term isolation
+    match.term = term._id;
 
     const summary = await Attendance.aggregate([
       { $match: match },
@@ -1003,15 +1133,16 @@ const getAdminMonthlySummary = async (req, res) => {
 
     console.log('Monthly summary count:', summary.length);
 
-    res.status(200).json({ 
+    return res.status(200).json({
       status: 'success',
-      data: summary 
+      data: summary
     });
+
   } catch (err) {
     console.error('Admin monthly summary error:', err);
-    res.status(500).json({ 
+    return res.status(500).json({
       status: 'error',
-      message: 'Failed to fetch monthly summary' 
+      message: 'Failed to fetch monthly summary'
     });
   } finally {
     console.log('=== GET ADMIN MONTHLY SUMMARY COMPLETED ===');
@@ -1020,56 +1151,119 @@ const getAdminMonthlySummary = async (req, res) => {
 
 
 // ─────────────────────────────────────────────────────────────
-// TEACHER TODAY'S ATTENDANCE
+// TEACHER TODAY'S ATTENDANCE (TERM-SAFE, TIME-AWARE)
 // ─────────────────────────────────────────────────────────────
 const getTodayAttendance = async (req, res) => {
   console.log('=== GET TODAY ATTENDANCE STARTED ===');
   console.log('User ID:', req.user.id);
 
-  await markAbsenteesForTodayIfNeeded();
-
   try {
     const teacher = await Teacher.findOne({ user: req.user.id });
     console.log('Teacher found:', teacher ? teacher._id : 'None');
-    
+
     if (!teacher) {
-      console.log('Teacher not found');
-      return res.status(404).json({ 
+      return res.status(404).json({
         status: 'fail',
-        message: 'Teacher not found' 
+        message: 'Teacher not found'
       });
     }
 
-    const todayStart = startOfDay(new Date());
-    const todayEnd = endOfDay(new Date());
-    console.log('Today date range:', { todayStart, todayEnd });
+    const now = new Date();
+    const todayStart = startOfDay(now);
+    const todayEnd = endOfDay(now);
 
-    const attendance = await Attendance.findOne({
-      teacher: teacher._id,
-      date: { $gte: todayStart, $lte: todayEnd },
+    // ⛔ Skip weekends
+    const day = todayStart.getDay();
+    if (day === 0 || day === 6) {
+      return res.status(200).json({
+        status: 'success',
+        data: {
+          status: 'Weekend',
+          clockedIn: false,
+          clockedOut: false,
+          lastAction: null
+        }
+      });
+    }
+
+    // 🕘 School hours
+    const SCHOOL_START_HOUR = 8;
+    const SCHOOL_START_MINUTE = 0;
+    const SCHOOL_END_HOUR = 15;
+    const SCHOOL_END_MINUTE = 30;
+
+    const schoolStart = new Date(todayStart);
+    schoolStart.setHours(SCHOOL_START_HOUR, SCHOOL_START_MINUTE, 0, 0);
+
+    const schoolEnd = new Date(todayStart);
+    schoolEnd.setHours(SCHOOL_END_HOUR, SCHOOL_END_MINUTE, 0, 0);
+
+    // ✅ Resolve CURRENT TERM FIRST
+    const currentTerm = await Term.findOne({
+      school: teacher.school,
+      startDate: { $lte: todayStart },
+      endDate: { $gte: todayStart }
     });
 
-    console.log('Today attendance:', attendance);
+    if (!currentTerm) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'No active term found'
+      });
+    }
 
-    res.status(200).json({ 
+    // ✅ USE EXISTING HELPER (UNCHANGED)
+    await markAbsentForTodayIfNeeded({
+      teacher,
+      term: currentTerm
+    });
+
+    // ✅ Fetch today's attendance (term-safe)
+    const attendance = await Attendance.findOne({
+      teacher: teacher._id,
+      term: currentTerm._id,
+      date: { $gte: todayStart, $lte: todayEnd }
+    });
+
+    // 🧠 Status resolution (READ-ONLY)
+    let status;
+
+    if (!attendance) {
+      if (now < schoolStart) {
+        status = 'Not Started';
+      } else if (now >= schoolStart && now < schoolEnd) {
+        status = 'Pending';
+      } else {
+        status = 'Absent'; // fallback (should rarely happen now)
+      }
+    } else {
+      status = attendance.status;
+    }
+
+    return res.status(200).json({
       status: 'success',
       data: {
+        termId: currentTerm._id,
         clockedIn: !!attendance?.signInTime,
         clockedOut: !!attendance?.signOutTime,
-        status: attendance?.status || 'Absent',
+        status,
         lastAction: attendance?.signOutTime || attendance?.signInTime
       }
     });
+
   } catch (err) {
     console.error('Today attendance error:', err);
-    res.status(500).json({ 
+    return res.status(500).json({
       status: 'error',
-      message: 'Failed to fetch today\'s attendance' 
+      message: 'Failed to fetch today attendance'
     });
   } finally {
     console.log('=== GET TODAY ATTENDANCE COMPLETED ===');
   }
 };
+
+
+
 
 // ─────────────────────────────────────────────────────────────
 // TEACHER MISSED CLOCKOUTS
@@ -1116,43 +1310,66 @@ const getMissedClockouts = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────────────────────
-// TEACHER ATTENDANCE HISTORY
+// TEACHER ATTENDANCE HISTORY (TERM-SAFE, READ-ONLY)
 // ─────────────────────────────────────────────────────────────
 const getTeacherAttendanceHistory = async (req, res) => {
   console.log('=== GET TEACHER ATTENDANCE HISTORY STARTED ===');
   console.log('User ID:', req.user.id);
 
   try {
-    // 👇 NEW: Ensure absentees are marked for today (after school hours)
-    await markAbsenteesForTodayIfNeeded();
-
     const teacher = await Teacher.findOne({ user: req.user.id });
     console.log('Teacher found:', teacher ? teacher._id : 'None');
-    
+
     if (!teacher) {
-      console.log('Teacher not found');
-      return res.status(404).json({ 
+      return res.status(404).json({
         status: 'fail',
-        message: 'Teacher not found' 
+        message: 'Teacher not found'
       });
     }
 
-    const history = await Attendance.find({ teacher: teacher._id })
+    const { termId } = req.query;
+
+    // ✅ Resolve term safely
+    let term;
+    if (termId) {
+      term = await Term.findById(termId);
+    } else {
+      const today = startOfDay(new Date());
+      term = await Term.findOne({
+        school: teacher.school,
+        startDate: { $lte: today },
+        endDate: { $gte: today }
+      });
+    }
+
+    if (!term) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'No active term found'
+      });
+    }
+
+    // ✅ PURE READ-ONLY QUERY (NO SIDE EFFECTS)
+    const history = await Attendance.find({
+      teacher: teacher._id,
+      term: term._id
+    })
       .sort({ date: -1 })
       .select('date signInTime signOutTime status location')
       .limit(30);
 
     console.log('History records found:', history.length);
 
-    res.status(200).json({ 
+    return res.status(200).json({
       status: 'success',
-      data: history 
+      data: history
     });
+
   } catch (err) {
     console.error('Attendance history error:', err);
-    res.status(500).json({ 
+    return res.status(500).json({
       status: 'error',
-      message: 'Failed to fetch attendance history' 
+      message: 'Failed to fetch attendance history'
     });
   } finally {
     console.log('=== GET TEACHER ATTENDANCE HISTORY COMPLETED ===');
@@ -1161,48 +1378,77 @@ const getTeacherAttendanceHistory = async (req, res) => {
 
 
 // ─────────────────────────────────────────────────────────────
-// ADMIN ATTENDANCE HISTORY
+// ADMIN ATTENDANCE HISTORY (READ-ONLY, TERM-SAFE)
 // ─────────────────────────────────────────────────────────────
 const getAdminAttendanceHistory = async (req, res) => {
   console.log('=== GET ADMIN ATTENDANCE HISTORY STARTED ===');
   console.log('Query parameters:', req.query);
   console.log('User school:', req.user.school);
-  
-  try {
-    // 👇 NEW: Ensure absentees are marked for today (after school hours)
-    await markAbsenteesForTodayIfNeeded();
 
-    const { teacherId } = req.query;
+  try {
+    // ❌ REMOVED: markAbsenteesForTodayIfNeeded()
+    // Admin history must NEVER mutate attendance
+
+    const { teacherId, termId } = req.query;
     const filter = { school: req.user.school };
-    
+
     if (teacherId && mongoose.Types.ObjectId.isValid(teacherId)) {
-      filter.teacher = teacherId;
+      filter.teacher = new mongoose.Types.ObjectId(teacherId);
       console.log('Filtering by teacher ID:', teacherId);
     }
+
+    // ✅ Resolve term (explicit or current)
+    let term;
+
+    if (termId) {
+      term = await Term.findOne({
+        _id: termId,
+        school: req.user.school
+      });
+    } else {
+      const today = startOfDay(new Date());
+      term = await Term.findOne({
+        school: req.user.school,
+        startDate: { $lte: today },
+        endDate: { $gte: today }
+      });
+    }
+
+    if (!term) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'No active term found'
+      });
+    }
+
+    // ✅ Enforce term isolation
+    filter.term = term._id;
 
     const history = await Attendance.find(filter)
       .populate({
         path: 'teacher',
-        populate: { path: 'user', select: 'name ' }
+        populate: { path: 'user', select: 'name' }
       })
       .sort({ date: -1 });
 
     console.log('History records found:', history.length);
 
-    res.status(200).json({ 
+    return res.status(200).json({
       status: 'success',
-      data: history 
+      data: history
     });
+
   } catch (err) {
     console.error('Admin attendance history error:', err);
-    res.status(500).json({ 
+    return res.status(500).json({
       status: 'error',
-      message: 'Failed to fetch admin attendance history' 
+      message: 'Failed to fetch admin attendance history'
     });
   } finally {
     console.log('=== GET ADMIN ATTENDANCE HISTORY COMPLETED ===');
   }
 };
+
 
 // ─────────────────────────────────────────────────────────────
 // EXPORTS (UPDATE TO USE THE VALIDATED VERSION)
