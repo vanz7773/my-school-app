@@ -1212,29 +1212,20 @@ const getTodayAttendance = async (req, res) => {
       });
     }
 
+    // ✅ USE EXISTING HELPER (UNCHANGED)
+    await markAbsentForTodayIfNeeded({
+      teacher,
+      term: currentTerm
+    });
+
     // ✅ Fetch today's attendance (term-safe)
-    let attendance = await Attendance.findOne({
+    const attendance = await Attendance.findOne({
       teacher: teacher._id,
       term: currentTerm._id,
       date: { $gte: todayStart, $lte: todayEnd }
     });
 
-    // 🕔 AFTER SCHOOL → CREATE ABSENT (ONCE)
-    if (!attendance && now >= schoolEnd) {
-      attendance = await Attendance.create({
-        teacher: teacher._id,
-        school: teacher.school,
-        term: currentTerm._id,
-        date: todayStart,
-        signInTime: null,
-        signOutTime: null,
-        status: 'Absent'
-      });
-
-      console.log(`🕔 ABSENT CREATED (TIME-BASED): ${teacher._id}`);
-    }
-
-    // 🧠 Status resolution (NO GUESSING)
+    // 🧠 Status resolution (READ-ONLY)
     let status;
 
     if (!attendance) {
@@ -1243,7 +1234,7 @@ const getTodayAttendance = async (req, res) => {
       } else if (now >= schoolStart && now < schoolEnd) {
         status = 'Pending';
       } else {
-        status = 'Absent'; // theoretical fallback
+        status = 'Absent'; // fallback (should rarely happen now)
       }
     } else {
       status = attendance.status;
@@ -1270,6 +1261,7 @@ const getTodayAttendance = async (req, res) => {
     console.log('=== GET TODAY ATTENDANCE COMPLETED ===');
   }
 };
+
 
 
 
