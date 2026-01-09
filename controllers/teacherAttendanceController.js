@@ -155,6 +155,11 @@ const markAbsenteesForTodayIfNeeded = async () => {
               signInTime: null,
               signOutTime: null,
               status: "Absent"
+            },
+            // 🔐 CRITICAL FIX:
+            // Ensure NO geo field exists on auto-created Absent records
+            $unset: {
+              location: ""
             }
           },
           upsert: true
@@ -170,6 +175,7 @@ const markAbsenteesForTodayIfNeeded = async () => {
 
   console.log(`✅ Absentees processed: ${bulkOps.length}`);
 };
+
 
 // ─────────────────────────────────────────────────────────────
 // CLOCK IN / OUT (LOCKED, ONE-WAY, PRODUCTION VERSION)
