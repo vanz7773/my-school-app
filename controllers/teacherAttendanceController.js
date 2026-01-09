@@ -172,13 +172,13 @@ const markAbsenteesForTodayIfNeeded = async () => {
 };
 
 // ─────────────────────────────────────────────────────────────
-// CLOCK IN / OUT (LOCKED, ONE-WAY, PRODUCTION VERSION)
+// CLOCK IN / OUT (PRODUCTION CLEAN VERSION)
 // ─────────────────────────────────────────────────────────────
 const clockAttendance = async (req, res) => {
   const { teacherId, type, timestamp, date, termId, deviceUUID, latitude, longitude } = req.body;
   const isAdmin = req.user.role === "admin";
 
-  // ─── BASIC VALIDATION ──────────────────────────────────────
+  // Validate input
   if (!["in", "out"].includes(type)) {
     return res.status(400).json({ status: "fail", message: 'Invalid type. Must be "in" or "out".' });
   }
@@ -192,52 +192,109 @@ const clockAttendance = async (req, res) => {
     return res.status(400).json({ status: "fail", message: "Device ID missing. Please restart the app." });
   }
 
+  if (!latitude || !longitude) {
+    return res.status(400).json({
+      status: "fail",
+      message: "Location not detected. Please enable GPS and try again.",
+    });
+  }
+
   const lat = parseFloat(latitude);
   const lng = parseFloat(longitude);
 
   if (isNaN(lat) || isNaN(lng)) {
     return res.status(400).json({
       status: "fail",
-      message: "Invalid location detected. Please enable GPS and try again.",
+      message: "Invalid location detected. Please move to an open space and try again.",
     });
   }
 
   try {
-    // ─── TERM ────────────────────────────────────────────────
+    // 1️⃣ TERM LOOKUP
     const term = await Term.findById(termId);
     if (!term) {
-      return res.status(404).json({ status: "fail", message: "Term not found." });
-    }
-
-    // ─── TEACHER ─────────────────────────────────────────────
-    const teacher = isAdmin && teacherId
-      ? await Teacher.findById(teacherId).populate("school user")
-      : await Teacher.findOne({ user: req.user.id }).populate("school user");
-
-    if (!teacher || !teacher.school) {
-      return res.status(404).json({ status: "fail", message: "Teacher not properly assigned." });
-    }
-
-    // ─── DEVICE BINDING (UNCHANGED) ──────────────────────────
-    const existingByDevice = await DeviceBinding.findOne({ deviceUUID });
-    if (existingByDevice && !existingByDevice.teacher.equals(teacher._id)) {
-      return res.status(403).json({
+      return res.status(404).json({
         status: "fail",
-        message: "This device belongs to another teacher.",
+        message: "Term not found. Please refresh and select a valid term.",
       });
     }
 
-    const existingByTeacher = await DeviceBinding.findOne({ teacher: teacher._id });
-    if (!existingByTeacher) {
-      await DeviceBinding.create({ teacher: teacher._id, deviceUUID });
-    } else if (existingByTeacher.deviceUUID !== deviceUUID) {
-      return res.status(403).json({
-        status: "fail",
-        message: "Your account is linked to another device.",
+    // 2️⃣ TEACHER LOOKUP
+    let teacher;
+    try {
+      if (teacherId && isAdmin) {
+        teacher = await Teacher.findById(teacherId).populate("school user");
+      } else {
+        const userObjId =
+          typeof req.user.id === "string"
+            ? new mongoose.Types.ObjectId(req.user.id)
+            : req.user.id;
+
+        teacher = await Teacher.findOne({ user: userObjId }).populate("school user");
+      }
+    } catch (err) {
+      return res.status(500).json({
+        status: "error",
+        message: "Something went wrong while verifying your account.",
       });
     }
 
-    // ─── ATTENDANCE LOOKUP (DAY-LOCKED) ──────────────────────
+    if (!teacher) {
+      return res.status(404).json({
+        status: "fail",
+        message: "Teacher record not found. Contact your administrator.",
+      });
+    }
+
+    if (!teacher.school) {
+      return res.status(404).json({
+        status: "fail",
+        message: "You are not assigned to any school. Contact your administrator.",
+      });
+    }
+
+    // 3️⃣ DEVICE BINDING
+    let registeredDevice = null;
+
+    try {
+      const existingByDevice = await DeviceBinding.findOne({ deviceUUID });
+
+      if (existingByDevice) {
+        if (existingByDevice.teacher.equals(teacher._id)) {
+          registeredDevice = existingByDevice;
+        } else {
+          return res.status(403).json({
+            status: "fail",
+            message: "This device belongs to another teacher. Please contact your admin.",
+          });
+        }
+      } else {
+        const existingByTeacher = await DeviceBinding.findOne({ teacher: teacher._id });
+
+        if (!existingByTeacher) {
+          registeredDevice = await DeviceBinding.create({
+            teacher: teacher._id,
+            deviceUUID,
+          });
+        } else {
+          if (existingByTeacher.deviceUUID !== deviceUUID) {
+            return res.status(403).json({
+              status: "fail",
+              message:
+                "Your account is linked to a different device. Contact your admin to reset your device.",
+            });
+          }
+          registeredDevice = existingByTeacher;
+        }
+      }
+    } catch (err) {
+      return res.status(500).json({
+        status: "error",
+        message: "Device verification failed. Try again.",
+      });
+    }
+
+    // 4️⃣ ATTENDANCE LOGIC
     const attendanceDate = date ? new Date(date) : clockTime;
     const dayStart = startOfDay(attendanceDate);
     const dayEnd = endOfDay(attendanceDate);
@@ -250,76 +307,108 @@ const clockAttendance = async (req, res) => {
     const lateThreshold = new Date(dayStart);
     lateThreshold.setHours(8, 0, 0, 0);
 
-    // ─────────────────────────────────────────────────────────
-    // CLOCK IN (Absent → On Time / Late)
-    // ─────────────────────────────────────────────────────────
-    if (type === "in") {
-      if (!attendance) {
-        attendance = new Attendance({
-          teacher: teacher._id,
-          school: teacher.school._id,
-          term: term._id,
-          date: attendanceDate
-        });
+    if (!attendance) {
+      attendance = new Attendance({
+        teacher: teacher._id,
+        school: teacher.school._id,
+        date: attendanceDate,
+        term: term._id,
+        signInTime: type === "in" ? clockTime : null,
+        signOutTime: type === "out" ? clockTime : null,
+        status:
+          type === "in"
+            ? clockTime > lateThreshold
+              ? "Late"
+              : "On Time"
+            : "On Time",
+        location: { type: "Point", coordinates: [lng, lat] },
+      });
+    } else {
+      if (type === "in") {
+        if (attendance.signInTime) {
+          return res.status(400).json({
+            status: "fail",
+            message: "You have already clocked in today.",
+          });
+        }
+        attendance.signInTime = clockTime;
+        attendance.status = clockTime > lateThreshold ? "Late" : "On Time";
+      } else {
+        if (!attendance.signInTime) {
+          return res.status(400).json({
+            status: "fail",
+            message: "You must clock in before clocking out.",
+          });
+        }
+        if (attendance.signOutTime) {
+          return res.status(400).json({
+            status: "fail",
+            message: "You have already clocked out today.",
+          });
+        }
+        attendance.signOutTime = clockTime;
       }
 
-      if (attendance.signInTime) {
-        return res.status(400).json({
-          status: "fail",
-          message: "You have already clocked in today.",
-        });
-      }
-
-      attendance.signInTime = clockTime;
-      attendance.status = clockTime > lateThreshold ? "Late" : "On Time";
+      attendance.location = { type: "Point", coordinates: [lng, lat] };
+      attendance.term = term._id;
     }
-
-    // ─────────────────────────────────────────────────────────
-    // CLOCK OUT (FINAL STATE)
-    // ─────────────────────────────────────────────────────────
-    if (type === "out") {
-      if (!attendance || !attendance.signInTime) {
-        return res.status(400).json({
-          status: "fail",
-          message: "You must clock in before clocking out.",
-        });
-      }
-
-      if (attendance.signOutTime) {
-        return res.status(400).json({
-          status: "fail",
-          message: "You have already clocked out today.",
-        });
-      }
-
-      attendance.signOutTime = clockTime;
-    }
-
-    // ─── COMMON UPDATE ───────────────────────────────────────
-    attendance.location = {
-      type: "Point",
-      coordinates: [lng, lat],
-    };
-    attendance.term = term._id;
 
     await attendance.save();
 
-    // ─── RESPONSE ────────────────────────────────────────────
+    // 5️⃣ CREATE NOTIFICATION
+    const teacherName = teacher.user?.name || "Teacher";
+    const actionType = type === "in" ? "clocked in" : "clocked out";
+    const statusMessage = attendance.status === "Late" ? " (Late)" : "";
+
+    await Notification.create({
+      sender: req.user._id,
+      school: req.user.school,
+      title: `Teacher ${actionType.charAt(0).toUpperCase() + actionType.slice(1)}`,
+      message: `${teacherName} ${actionType}${statusMessage}`,
+      type: "teacher-attendance",
+      audience: "teacher",
+      recipientRoles: ["teacher", "admin"],
+      recipientUsers: [],
+    });
+
+    // 6️⃣ SEND PUSH
+    const adminUsers = await mongoose.model("User").find({
+      school: teacher.school._id,
+      role: "admin",
+    }).select("_id");
+
+    const adminIds = adminUsers.map((a) => String(a._id));
+    const teacherUserId = teacher.user?._id ? String(teacher.user._id) : null;
+    const pushRecipients = [...(teacherUserId ? [teacherUserId] : []), ...adminIds];
+
+    try {
+      await sendPush(
+        pushRecipients,
+        `Attendance ${type === "in" ? "Clock In" : "Clock Out"}`,
+        `${teacherName} ${actionType}${statusMessage}`,
+        {
+          teacherId: String(teacher._id),
+          action: type,
+          time: clockTime,
+        }
+      );
+    } catch (_) {}
+
+    // FINAL RESPONSE
     return res.status(200).json({
       status: "success",
       data: {
         attendance,
-        message: type === "in"
-          ? "Clock-in successful. Have a great day!"
-          : "Clock-out successful. Goodbye!",
-        teacherId: teacher._id,
+        message:
+          type === "in"
+            ? "Clock-in successful. Have a great day!"
+            : "Clock-out successful. Goodbye!",
         geofenceStatus: req.geofenceStatus || "validated",
         distanceFromCenter: req.geofenceData?.distanceFromCenter || null,
+        teacherId: teacher._id,
       },
     });
-
   } catch (err) {
-    console.error("Clock attendance error:", err);
     return res.status(500).json({
       status: "error",
       message: "Something went wrong. Please try again.",
@@ -931,63 +1020,51 @@ const getAdminMonthlySummary = async (req, res) => {
 
 
 // ─────────────────────────────────────────────────────────────
-// TEACHER TODAY'S ATTENDANCE (AUTHORITATIVE VERSION)
+// TEACHER TODAY'S ATTENDANCE
 // ─────────────────────────────────────────────────────────────
 const getTodayAttendance = async (req, res) => {
   console.log('=== GET TODAY ATTENDANCE STARTED ===');
   console.log('User ID:', req.user.id);
 
-  // Ensure system-generated absentees are marked (idempotent)
   await markAbsenteesForTodayIfNeeded();
 
   try {
     const teacher = await Teacher.findOne({ user: req.user.id });
     console.log('Teacher found:', teacher ? teacher._id : 'None');
-
+    
     if (!teacher) {
-      return res.status(404).json({
+      console.log('Teacher not found');
+      return res.status(404).json({ 
         status: 'fail',
-        message: 'Teacher not found'
+        message: 'Teacher not found' 
       });
     }
 
-    const now = new Date();
-    const todayStart = startOfDay(now);
-    const todayEnd = endOfDay(now);
-
+    const todayStart = startOfDay(new Date());
+    const todayEnd = endOfDay(new Date());
     console.log('Today date range:', { todayStart, todayEnd });
 
     const attendance = await Attendance.findOne({
       teacher: teacher._id,
-      date: { $gte: todayStart, $lte: todayEnd }
+      date: { $gte: todayStart, $lte: todayEnd },
     });
 
     console.log('Today attendance:', attendance);
 
-    // 🔐 AUTHORITATIVE PERMISSIONS (NO GUESSING)
-    const canClockIn =
-      !attendance || !attendance.signInTime;
-
-    const canClockOut =
-      !!attendance?.signInTime && !attendance?.signOutTime;
-
-    res.status(200).json({
+    res.status(200).json({ 
       status: 'success',
       data: {
-        status: attendance?.status || 'Absent',
         clockedIn: !!attendance?.signInTime,
         clockedOut: !!attendance?.signOutTime,
-        canClockIn,
-        canClockOut,
-        lastAction: attendance?.signOutTime || attendance?.signInTime || null
+        status: attendance?.status || 'Absent',
+        lastAction: attendance?.signOutTime || attendance?.signInTime
       }
     });
-
   } catch (err) {
     console.error('Today attendance error:', err);
-    res.status(500).json({
+    res.status(500).json({ 
       status: 'error',
-      message: 'Failed to fetch today\'s attendance'
+      message: 'Failed to fetch today\'s attendance' 
     });
   } finally {
     console.log('=== GET TODAY ATTENDANCE COMPLETED ===');
