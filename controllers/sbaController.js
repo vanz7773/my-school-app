@@ -973,14 +973,22 @@ exports.uploadReportSheetPDF = [
         return res.status(400).json({ message: "No REPORT PDF uploaded" });
 
       const { classId, termId, schoolId } = req.body;
-      if (!classId || !termId || !schoolId)
+
+      // 🔒 HARD REQUIRE — NEVER GUESS TERM
+      if (!classId || !termId || !schoolId) {
         return res.status(400).json({
-          message: "classId, termId, and schoolId are required"
+          message: "classId, termId, and schoolId are required (no auto-resolution allowed)"
         });
+      }
+
+      // 🔑 NORMALIZE TERM ID ONCE
+      const termKey = String(termId);
+
+      console.log("📅 Uploading report for termId:", termKey);
 
       tempFilePath = req.file.path;
       const bucket = admin.storage().bucket();
-      const destination = `reportcards/${schoolId}/${classId}/${termId}/REPORT.pdf`;
+      const destination = `reportcards/${schoolId}/${classId}/${termKey}/REPORT.pdf`;
 
       // Upload full report
       await bucket.upload(tempFilePath, {
@@ -1000,7 +1008,6 @@ exports.uploadReportSheetPDF = [
       );
       if (!classDoc) return res.status(404).json({ message: "Class not found" });
 
-      // ✅ Use resolveClassNames helper
       const { classDisplayName } = resolveClassNames(classDoc);
 
       // Fetch students
@@ -1018,6 +1025,15 @@ exports.uploadReportSheetPDF = [
       const pageCount = pdfDoc.getPageCount();
 
       console.log(`📄 REPORT.pdf pages: ${pageCount}`);
+      console.log(`👩‍🎓 Students in class: ${students.length}`);
+
+      // ⚠️ SAFETY WARNING (does NOT stop upload)
+      if (pageCount !== students.length) {
+        console.warn("⚠️ PAGE/STUDENT COUNT MISMATCH", {
+          pageCount,
+          studentCount: students.length
+        });
+      }
 
       // Load school info
       const schoolInfo = await SchoolInfo.findOne({ school: schoolId }).lean();
@@ -1038,7 +1054,6 @@ exports.uploadReportSheetPDF = [
         fetchImage(schoolInfo?.headTeacherSignature)
       ]);
 
-      // Embed crest & signature
       let crestImage = null;
       let signatureImage = null;
 
@@ -1056,16 +1071,13 @@ exports.uploadReportSheetPDF = [
             : await pdfDoc.embedJpg(sigBuf);
       }
 
-      // Dynamic signature detection helper
       const { findTextPosition } = require("../utils/pdfTextLocator");
       const rawPdfBuffer = await pdfDoc.save();
 
-      // Draw crest + signature using original positions
       for (let pageIndex = 0; pageIndex < pageCount; pageIndex++) {
         const page = pdfDoc.getPage(pageIndex);
         const { width, height } = page.getSize();
 
-        // ----- CREST (fixed position) -----
         if (crestImage) {
           page.drawImage(crestImage, {
             x: width - 160,
@@ -1075,9 +1087,7 @@ exports.uploadReportSheetPDF = [
           });
         }
 
-        // ----- SIGNATURE (dynamic detection) -----
         const sigPos = await findTextPosition(rawPdfBuffer, pageIndex, "HEADTEACHER");
-
         if (sigPos && signatureImage) {
           page.drawImage(signatureImage, {
             x: sigPos.x + 180,
@@ -1088,11 +1098,9 @@ exports.uploadReportSheetPDF = [
         }
       }
 
-      // Save PDF with crest/signature
       const updatedPdfBytes = await pdfDoc.save();
       const finalDoc = await PDFDocument.load(updatedPdfBytes);
 
-      // Per-student reports
       const uploadedReports = {};
       const notifications = [];
 
@@ -1104,7 +1112,7 @@ exports.uploadReportSheetPDF = [
           else if (student.parent._id) set.add(String(student.parent._id));
         }
         if (Array.isArray(student.parentIds)) {
-          student.parentIds.forEach((p) => {
+          student.parentIds.forEach(p => {
             if (!p) return;
             if (typeof p === "string") set.add(p);
             else if (p._id) set.add(String(p._id));
@@ -1122,7 +1130,7 @@ exports.uploadReportSheetPDF = [
           studentPdf.addPage(copiedPage);
 
           const studentBytes = await studentPdf.save();
-          const studentDest = `reportcards/${schoolId}/${classId}/${termId}/${student._id}.pdf`;
+          const studentDest = `reportcards/${schoolId}/${classId}/${termKey}/${student._id}.pdf`;
           const file = bucket.file(studentDest);
 
           await file.save(studentBytes, {
@@ -1136,18 +1144,19 @@ exports.uploadReportSheetPDF = [
 
           uploadedReports[student._id] = studentUrl;
 
+          // 🔑 ALWAYS USE STRING TERM KEY
           await Student.findByIdAndUpdate(student._id, {
-            $set: { [`reportCards.${termId}`]: studentUrl }
+            $set: { [`reportCards.${termKey}`]: studentUrl }
           });
 
           notifications.push({
             title: "New Report Card Available",
-            message: `Your Term ${termId} report card has been uploaded.`,
+            message: `Your Term ${termKey} report card has been uploaded.`,
             category: "report",
             audience: "student",
             class: classId,
             studentId: student._id,
-            termId,
+            termId: termKey,
             fileUrl: studentUrl,
             school: schoolId,
             sender: req.user?._id,
@@ -1166,13 +1175,13 @@ exports.uploadReportSheetPDF = [
         }
       }
 
-      await Term.findByIdAndUpdate(termId, {
+      await Term.findByIdAndUpdate(termKey, {
         $set: { [`reportSheets.${classId}`]: pdfUrl }
       });
 
       res.json({
         message: "SUPER-TURBO upload complete",
-        class: classDisplayName, // ✅ Use classDisplayName for response
+        class: classDisplayName,
         totalStudents: students.length,
         uploadedCount: Object.keys(uploadedReports).length,
         classPdfUrl: pdfUrl,
@@ -1192,6 +1201,7 @@ exports.uploadReportSheetPDF = [
   }
 ];
 
+
 // ==================== UPDATED ROUTE ====================
 exports.getMyReportSheet = async (req, res) => {
   try {
@@ -1199,9 +1209,12 @@ exports.getMyReportSheet = async (req, res) => {
     const { childId } = req.query;
     const requester = req.user;
 
+    // 🔑 NORMALIZE TERM ID (MUST MATCH UPLOAD)
+    const termKey = String(termId);
+
     console.log("🚀 [START] getMyReportSheet", {
       studentId,
-      termId,
+      termId: termKey,
       childId,
       role: requester?.role,
       requesterId: requester?._id,
@@ -1270,9 +1283,8 @@ exports.getMyReportSheet = async (req, res) => {
     // FETCH STUDENT-SPECIFIC PDF
     // --------------------------
     const pdfUrl =
-      targetStudent.reportCards?.[termId] ||
-      (targetStudent.reportCards &&
-        targetStudent.reportCards.get?.(termId));
+      targetStudent.reportCards?.[termKey] ||
+      targetStudent.reportCards?.get?.(termKey);
 
     // --------------------------
     // CASE 1 → INDIVIDUAL REPORT EXISTS
@@ -1280,7 +1292,7 @@ exports.getMyReportSheet = async (req, res) => {
     if (pdfUrl) {
       console.log("✅ Serving individual report", {
         studentId: targetStudent._id,
-        termId,
+        termId: termKey,
       });
 
       res.setHeader(
@@ -1295,7 +1307,8 @@ exports.getMyReportSheet = async (req, res) => {
     // --------------------------
     console.warn("⚠️ Missing individual report", {
       studentId: targetStudent._id,
-      termId,
+      termId: termKey,
+      availableTerms: Object.keys(targetStudent.reportCards || {}),
     });
 
     return res.status(404).json({
@@ -1310,6 +1323,7 @@ exports.getMyReportSheet = async (req, res) => {
     });
   }
 };
+
 
 
 // 🚀 GET true overall subject + class average (based on total marks of all subjects)
