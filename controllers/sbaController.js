@@ -190,41 +190,50 @@ exports.downloadClassTemplate = async (req, res) => {
 
     let resolvedTermId = null; // ✅ IMPORTANT: expose resolved termId
 
-    try {
-      let termDoc = null;
+try {
+  let termDoc = null;
 
-      // 1️⃣ Use class term if available
-      if (classDocFinal.termId) {
-        termDoc = await Term.findById(classDocFinal.termId).lean();
-      }
+  // 🔥 1️⃣ FIRST PRIORITY: termId from frontend filter
+  if (req.query.termId) {
+    termDoc = await Term.findOne({
+      _id: req.query.termId,
+      school: classDocFinal.school,
+    }).lean();
+  }
 
-      // 2️⃣ Fallback to active term by date
-      if (!termDoc) {
-        const today = new Date();
-        termDoc = await Term.findOne({
-          school: classDocFinal.school,
-          startDate: { $lte: today },
-          endDate: { $gte: today },
-        }).lean();
-      }
+  // 2️⃣ Use class term if available
+  if (!termDoc && classDocFinal.termId) {
+    termDoc = await Term.findById(classDocFinal.termId).lean();
+  }
 
-      // 3️⃣ Final fallback: most recent term
-      if (!termDoc) {
-        termDoc = await Term.findOne({ school: classDocFinal.school })
-          .sort({ startDate: -1 })
-          .lean();
-      }
+  // 3️⃣ Fallback to active term by date
+  if (!termDoc) {
+    const today = new Date();
+    termDoc = await Term.findOne({
+      school: classDocFinal.school,
+      startDate: { $lte: today },
+      endDate: { $gte: today },
+    }).lean();
+  }
 
-      // ✅ Apply resolved term
-      if (termDoc) {
-        termName = termDoc.term || "N/A";
-        academicYear = termDoc.academicYear || "N/A";
-        resolvedTermId = termDoc._id; // ✅ THIS FIXES ATTENDANCE
-      }
+  // 4️⃣ Final fallback: most recent term
+  if (!termDoc) {
+    termDoc = await Term.findOne({ school: classDocFinal.school })
+      .sort({ startDate: -1 })
+      .lean();
+  }
 
-    } catch (e) {
-      console.error("❌ Error resolving term:", e);
-    }
+  // ✅ Apply resolved term
+  if (termDoc) {
+    termName = termDoc.term || "N/A";
+    academicYear = termDoc.academicYear || "N/A";
+    resolvedTermId = termDoc._id; // ✅ THIS FIXES ATTENDANCE
+  }
+
+} catch (e) {
+  console.error("❌ Error resolving term:", e);
+}
+
 
     const bucket = admin.storage().bucket();
     const { className, classDisplayName } = resolveClassNames(classDocFinal);
@@ -565,30 +574,48 @@ exports.uploadClassTemplate = async (req, res) => {
     if (!school) return res.status(404).json({ message: "School not found" });
 
     // Term info
-    let termName = "N/A";
-    let academicYear = "N/A";
-    try {
-      let termDoc = null;
-      if (classDoc.termId) termDoc = await Term.findById(classDoc.termId).lean();
-      if (!termDoc) {
-        const today = new Date();
-        termDoc = await Term.findOne({
-          school: classDoc.school,
-          startDate: { $lte: today },
-          endDate: { $gte: today },
-        }).lean();
-      }
-      if (!termDoc) {
-        termDoc = await Term.findOne({ school: classDoc.school }).sort({ startDate: -1 }).lean();
-      }
-      if (termDoc) {
-        termName = termDoc.term || "N/A";
-        academicYear = termDoc.academicYear || "N/A";
-      }
-      console.log(`📅 Term: ${termName}, Academic Year: ${academicYear}`);
-    } catch (err) {
-      console.error("❌ Error fetching Term info (upload):", err);
-    }
+   let termName = "N/A";
+let academicYear = "N/A";
+try {
+  let termDoc = null;
+
+  // 1️⃣ FRONTEND-SELECTED TERM (display only)
+  if (req.body.termId && mongoose.Types.ObjectId.isValid(req.body.termId)) {
+    termDoc = await Term.findById(req.body.termId).lean();
+  }
+
+  // 2️⃣ CLASS-LINKED TERM (fallback)
+  if (!termDoc && classDoc.termId) {
+    termDoc = await Term.findById(classDoc.termId).lean();
+  }
+
+  // 3️⃣ ACTIVE TERM BY DATE
+  if (!termDoc) {
+    const today = new Date();
+    termDoc = await Term.findOne({
+      school: classDoc.school,
+      startDate: { $lte: today },
+      endDate: { $gte: today },
+    }).lean();
+  }
+
+  // 4️⃣ MOST RECENT TERM (last fallback)
+  if (!termDoc) {
+    termDoc = await Term.findOne({ school: classDoc.school })
+      .sort({ startDate: -1 })
+      .lean();
+  }
+
+  if (termDoc) {
+    termName = termDoc.term || "N/A";
+    academicYear = termDoc.academicYear || "N/A";
+  }
+
+  console.log(`📅 Term: ${termName}, Academic Year: ${academicYear}`);
+} catch (err) {
+  console.error("❌ Error fetching Term info (upload):", err);
+}
+
 
     // Enhanced class teacher detection
     const classTeacherId = classDoc.classTeacher;
@@ -985,11 +1012,11 @@ exports.uploadReportSheetPDF = [
       // ✅ 1️⃣ STRICTLY VALIDATE TERM ID
       // ====================================================
       // Check if termId is a valid MongoDB ObjectId
-      if (!ObjectId.isValid(termId)) {
-        return res.status(400).json({
-          message: "Invalid termId format. A valid MongoDB ObjectId is required."
-        });
-      }
+      if (!mongoose.Types.ObjectId.isValid(termId)) {
+  return res.status(400).json({
+    message: "Invalid termId format. A valid MongoDB ObjectId is required."
+  });
+}
 
       // Find the Term document to ensure it exists
       const termDoc = await Term.findById(termId).lean();
