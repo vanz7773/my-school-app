@@ -961,8 +961,6 @@ exports.adminDownloadClassWorkbook = async (req, res) => {
   }
 };
 
-const mongoose = require('mongoose');
-const { ObjectId } = mongoose.Types;
 
 exports.uploadReportSheetPDF = [
   upload.single("reportPdf"),
