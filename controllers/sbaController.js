@@ -961,6 +961,9 @@ exports.adminDownloadClassWorkbook = async (req, res) => {
   }
 };
 
+const mongoose = require('mongoose');
+const { ObjectId } = mongoose.Types;
+
 exports.uploadReportSheetPDF = [
   upload.single("reportPdf"),
   async (req, res) => {
@@ -981,10 +984,51 @@ exports.uploadReportSheetPDF = [
         });
       }
 
-      // 🔑 NORMALIZE TERM ID ONCE
-      const termKey = String(termId);
+      // ✅ 1️⃣ STRICTLY VALIDATE TERM ID
+      // ====================================================
+      // Check if termId is a valid MongoDB ObjectId
+      if (!ObjectId.isValid(termId)) {
+        return res.status(400).json({
+          message: "Invalid termId format. A valid MongoDB ObjectId is required."
+        });
+      }
 
-      console.log("📅 Uploading report for termId:", termKey);
+      // Find the Term document to ensure it exists
+      const termDoc = await Term.findById(termId).lean();
+      if (!termDoc) {
+        return res.status(400).json({
+          message: "Term not found. The provided termId does not exist in the database."
+        });
+      }
+      
+      // ✅ 2️⃣ NORMALIZE ONCE AND USE AS SINGLE SOURCE OF TRUTH
+      // ====================================================
+      const termKey = termDoc._id.toString(); // 🔥 Single, canonical term identifier
+      console.log("✅ Validated term:", {
+        termId: termKey,
+        termNumber: termDoc.term,
+        academicYear: termDoc.academicYear
+      });
+
+      // 🔥 REJECT term numbers or labels explicitly
+      // Additional check to prevent numeric or labeled termId
+      if (/^[0-9]+$/.test(termId)) {
+        return res.status(400).json({
+          message: "Numeric term IDs are not accepted. Please use the full MongoDB Term _id.",
+          hint: `Received '${termId}'. Use the full ObjectId like '${termKey}'`
+        });
+      }
+
+      if (termId.toLowerCase().includes('term')) {
+        return res.status(400).json({
+          message: "Term labels like 'Term 1' are not accepted. Please use the full MongoDB Term _id.",
+          hint: `Use the full ObjectId like '${termKey}' instead of '${termId}'`
+        });
+      }
+
+      // ====================================================
+      // REST OF THE CONTROLLER - NO CHANGES TO FIREBASE LOGIC
+      // ====================================================
 
       tempFilePath = req.file.path;
       const bucket = admin.storage().bucket();
@@ -1144,19 +1188,35 @@ exports.uploadReportSheetPDF = [
 
           uploadedReports[student._id] = studentUrl;
 
-          // 🔑 ALWAYS USE STRING TERM KEY
+          // ✅ 3️⃣ STORE STUDENT REPORT URLS USING ONLY termKey
+          // ====================================================
+          // 🔥 Store report cards using ONLY the termKey (ObjectId string)
+          // 🚫 Never store using: "1", "2", "Term 1", "Term 2", academic years, dates, or derived labels
           await Student.findByIdAndUpdate(student._id, {
-            $set: { [`reportCards.${termKey}`]: studentUrl }
+            $set: { 
+              [`reportCards.${termKey}`]: studentUrl,
+              // Optionally store metadata separately if needed (not as key)
+              reportCardMetadata: {
+                [termKey]: {
+                  termNumber: termDoc.term,
+                  academicYear: termDoc.academicYear,
+                  uploadedAt: new Date(),
+                  uploadedBy: req.user?._id
+                }
+              }
+            }
           });
 
           notifications.push({
             title: "New Report Card Available",
-            message: `Your Term ${termKey} report card has been uploaded.`,
+            message: `Your Term ${termDoc.term || 'Unknown'} report card has been uploaded.`,
             category: "report",
             audience: "student",
             class: classId,
             studentId: student._id,
-            termId: termKey,
+            termId: termKey, // Store the termKey (ObjectId string)
+            termNumber: termDoc.term, // Store term number separately for display
+            academicYear: termDoc.academicYear,
             fileUrl: studentUrl,
             school: schoolId,
             sender: req.user?._id,
@@ -1175,6 +1235,9 @@ exports.uploadReportSheetPDF = [
         }
       }
 
+      // ✅ 4️⃣ UPDATE TERM DOCUMENT USING termKey
+      // ====================================================
+      // Firebase storage paths remain unchanged and consistent
       await Term.findByIdAndUpdate(termKey, {
         $set: { [`reportSheets.${classId}`]: pdfUrl }
       });
@@ -1182,9 +1245,15 @@ exports.uploadReportSheetPDF = [
       res.json({
         message: "SUPER-TURBO upload complete",
         class: classDisplayName,
+        term: {
+          id: termKey,
+          number: termDoc.term,
+          academicYear: termDoc.academicYear
+        },
         totalStudents: students.length,
         uploadedCount: Object.keys(uploadedReports).length,
         classPdfUrl: pdfUrl,
+        storagePath: `reportcards/${schoolId}/${classId}/${termKey}/`,
         perStudent: uploadedReports
       });
     } catch (err) {
