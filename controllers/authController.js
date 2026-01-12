@@ -347,7 +347,7 @@ exports.requestAdminResetSelfService = async (req, res) => {
     if (!user) return sendError(res, 404, "No account found for this email");
 
     const existing = await AdminResetRequest.findOne({ email: normalizedEmail, status: "pending" }).lean();
-    if (existing) return sendError(res, 400, "A request is already pending");
+    if (existing) return sendError(res, 400, "You already have a pending password reset request. Please wait for approval");
 
     const reqDoc = await AdminResetRequest.create({
       user: user._id,
