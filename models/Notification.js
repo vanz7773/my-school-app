@@ -10,7 +10,7 @@ const VALID_TYPES = [
   'attendance',
   'teacher-attendance',   // ✅ ADDED
   'assignment',
-  'fee',
+  'feedingfee',
   'agenda',
   'online-quiz',
   'exam-report',
