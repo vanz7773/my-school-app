@@ -1162,10 +1162,10 @@ exports.uploadReportSheetPDF = [
 
         if (crestImage) {
   page.drawImage(crestImage, {
-  x: 55,
-  y: height - 145,
-  width: 70,
-  height: 70
+  x: 60,
+  y: height - 160,   // ⬇ lowered a bit
+  width: 65,
+  height: 65
 });
 
         }
