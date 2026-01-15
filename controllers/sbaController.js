@@ -394,9 +394,22 @@ try {
         
         console.log(`📊 Writing attendance for ${students.length} students`);
         
-        const firstAttendanceRow = 30;
-        const rowInterval = 40;
-        const attendanceColumn = "D";
+        let firstAttendanceRow = 30;
+let rowInterval = 40;
+let attendanceColumn = "D";
+
+// 📘 BASIC 1 – BASIC 6
+if (isBasic1to6(className)) {
+  firstAttendanceRow = 29;
+  rowInterval = 39;
+}
+
+// 🧸 KG 1, KG 2, NURSERY 1, NURSERY 2
+if (isKgClass(className) || isNurseryClass(className)) {
+  firstAttendanceRow = 24;
+  rowInterval = 34;
+}
+
         
         for (let i = 0; i < students.length; i++) {
           const student = students[i];
