@@ -1162,12 +1162,12 @@ exports.uploadReportSheetPDF = [
 
         if (crestImage) {
   page.drawImage(crestImage, {
-    x: 40,                 // ⬅ LEFT margin
-    y: height - 160,       // ⬆ Top alignment
-    width: 80,             // ⬇ Reduced width
-    height: 80             // ⬇ Reduced height
-  });
-}
+  x: 55,
+  y: height - 140,   // ⬇ lowered a bit
+  width: 65,
+  height: 65
+});
+        }
 
 
         const sigPos = await findTextPosition(rawPdfBuffer, pageIndex, "HEADTEACHER");
