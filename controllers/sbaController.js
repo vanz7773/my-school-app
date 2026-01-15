@@ -1162,8 +1162,8 @@ exports.uploadReportSheetPDF = [
 
         if (crestImage) {
   page.drawImage(crestImage, {
-  x: 55,
-  y: height - 140,   // ⬇ lowered a bit
+  x: 65,
+  y: height - 180,   // ⬇ lowered a bit
   width: 65,
   height: 65
 });
