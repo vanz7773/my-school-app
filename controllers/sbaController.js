@@ -1161,13 +1161,14 @@ exports.uploadReportSheetPDF = [
         const { width, height } = page.getSize();
 
         if (crestImage) {
-          page.drawImage(crestImage, {
-            x: width - 160,
-            y: height - 170,
-            width: 100,
-            height: 100
-          });
-        }
+  page.drawImage(crestImage, {
+    x: 40,                 // ⬅ LEFT margin
+    y: height - 160,       // ⬆ Top alignment
+    width: 80,             // ⬇ Reduced width
+    height: 80             // ⬇ Reduced height
+  });
+}
+
 
         const sigPos = await findTextPosition(rawPdfBuffer, pageIndex, "HEADTEACHER");
         if (sigPos && signatureImage) {
