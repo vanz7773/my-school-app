@@ -220,17 +220,24 @@ function buildAgendaFilter(user, from, to) {
 async function sendPushToUsers(userIds, title, message) {
   if (!Array.isArray(userIds) || userIds.length === 0) return;
 
-  const tokens = await PushToken.find({
-    userId: { $in: userIds },
-    disabled: false,
-  }).lean();
+  // 🔑 Get ONLY the latest token per user
+  const tokens = await PushToken.aggregate([
+    { $match: { userId: { $in: userIds.map(id => mongoose.Types.ObjectId(id)) }, disabled: false } },
+    { $sort: { updatedAt: -1 } },
+    {
+      $group: {
+        _id: "$userId",
+        token: { $first: "$token" },
+      }
+    }
+  ]);
 
   const validTokens = tokens
-    .filter(t => Expo.isExpoPushToken(t.token))
-    .map(t => t.token);
+    .map(t => t.token)
+    .filter(token => Expo.isExpoPushToken(token));
 
   if (validTokens.length === 0) {
-    console.log("⚠️ No valid Expo tokens for recipients");
+    console.log("⚠️ No valid Expo tokens after filtering");
     return;
   }
 
@@ -243,39 +250,58 @@ async function sendPushToUsers(userIds, title, message) {
   }));
 
   const chunks = expo.chunkPushNotifications(messages);
+
   for (const chunk of chunks) {
-    await expo.sendPushNotificationsAsync(chunk);
+    try {
+      const receipts = await expo.sendPushNotificationsAsync(chunk);
+
+      // 🧹 Auto-disable invalid tokens
+      receipts.forEach((r, i) => {
+        if (r.status === "error" && r.details?.error === "DeviceNotRegistered") {
+          PushToken.updateOne(
+            { token: chunk[i].to },
+            { $set: { disabled: true } }
+          ).catch(() => {});
+        }
+      });
+    } catch (err) {
+      console.error("Expo push chunk failed:", err);
+    }
   }
 }
 
 
+
 // --------------------------------------------------------------------
-// 🗓️ Create a new agenda (UPDATED WITH PUSH NOTIFICATIONS)
+// 🗓️ Create a new agenda (FIXED: notifications + push)
 // --------------------------------------------------------------------
 exports.createAgenda = async (req, res) => {
   try {
     const { title, description, date, time, audience, classId, color, studentId } = req.body;
-    const validAudiences = ['all', 'teacher', 'student', 'parent', 'class'];
+    const validAudiences = ["all", "teacher", "student", "parent", "class"];
 
     if (!validAudiences.includes(audience)) {
-      return res.status(400).json({ error: 'Invalid audience type' });
+      return res.status(400).json({ error: "Invalid audience type" });
     }
 
-    if (audience === 'class' && !classId) {
-      return res.status(400).json({ error: 'classId required for class audience' });
+    if (audience === "class" && !classId) {
+      return res.status(400).json({ error: "classId required for class audience" });
     }
 
     const plainUser = req.user.toObject ? req.user.toObject() : req.user;
     const schoolId = await resolveSchoolForUser(plainUser);
-    if (!schoolId) return res.status(403).json({ error: 'No school linked' });
+    if (!schoolId) return res.status(403).json({ error: "No school linked" });
 
+    // ------------------------------------------------------------
+    // 📌 CREATE AGENDA
+    // ------------------------------------------------------------
     const agenda = new AgendaEvent({
       title,
       description,
       date,
       time,
       audience,
-      class: audience === 'class' ? classId : null,
+      class: audience === "class" ? classId : null,
       color: color || getDefaultColor(audience),
       school: schoolId,
       createdBy: plainUser._id || null,
@@ -283,181 +309,83 @@ exports.createAgenda = async (req, res) => {
 
     await agenda.save();
 
-    // ============================================================
-    // 🔔 CREATE IN-APP NOTIFICATION (your existing logic)
-    // ============================================================
+    // ------------------------------------------------------------
+    // 🔔 RESOLVE RECIPIENT USERS (ONCE)
+    // ------------------------------------------------------------
     let recipientUsers = [];
 
-    if (audience === 'class' && classId) {
+    // CLASS → students + parents + teachers
+    if (audience === "class" && classId) {
       recipientUsers = await resolveRecipientUsersForClass(classId, true);
     }
 
-    if (audience === 'student' && studentId) {
-      try {
-        const studentDoc = await Student.findById(studentId).select('user parent parentIds').lean();
-        if (studentDoc?.user) recipientUsers.push(String(studentDoc.user));
-        if (studentDoc?.parent) recipientUsers.push(String(studentDoc.parent));
-        if (Array.isArray(studentDoc?.parentIds)) {
-          studentDoc.parentIds.forEach((pid) => pid && recipientUsers.push(String(pid)));
-        }
-      } catch (err) {
-        console.warn("createAgenda student lookup failed:", err);
+    // TEACHER → all teachers in school
+    if (audience === "teacher") {
+      const teachers = await User.find({
+        role: "teacher",
+        school: schoolId,
+      }).select("_id").lean();
+
+      recipientUsers = teachers.map(t => String(t._id));
+    }
+
+    // STUDENT → specific student
+    if (audience === "student" && studentId) {
+      const s = await Student.findById(studentId)
+        .select("user parent parentIds")
+        .lean();
+
+      if (s?.user) recipientUsers.push(String(s.user));
+      if (s?.parent) recipientUsers.push(String(s.parent));
+      if (Array.isArray(s?.parentIds)) {
+        s.parentIds.forEach(pid => pid && recipientUsers.push(String(pid)));
       }
     }
 
-    await Notification.create({
-      title: `New Agenda: ${title}`,
-      sender: req.user._id,
-      school: schoolId,
-      message: `New agenda: ${title}`,
-      type: "agenda",
-      audience,
-      class: classId || null,
-      recipientRoles:
-        audience === "all"
-          ? ["teacher", "student", "parent"]
-          : audience === "teacher"
-          ? ["teacher"]
-          : audience === "student"
-          ? ["student"]
-          : audience === "parent"
-          ? ["parent"]
-          : [],
-      recipientUsers:
-        recipientUsers.length ? Array.from(new Set(recipientUsers)) : undefined,
-    });
+    // STUDENT → whole class
+    if (audience === "student" && !studentId && classId) {
+      const students = await Student.find({
+        class: classId,
+        school: schoolId,
+      }).select("user").lean();
 
-    // ============================================================
-    // 📣 SEND EXPO PUSH NOTIFICATIONS (NEW)
-    // ============================================================
-    try {
-      let pushRecipients = [];
-
-      // 📌 CLASS (students + teachers + parents)
-      if (audience === "class" && classId) {
-        pushRecipients = await resolveRecipientUsersForClass(classId, true);
-      }
-
-      // 📌 SPECIFIC STUDENT
-      if (audience === "student" && studentId) {
-        const s = await Student.findById(studentId).select("user parent parentIds").lean();
-        if (s?.user) pushRecipients.push(String(s.user));
-        if (s?.parent) pushRecipients.push(String(s.parent));
-        if (Array.isArray(s?.parentIds)) {
-          pushRecipients.push(...s.parentIds.map(String));
-        }
-      }
-
-      // 📌 ALL STUDENTS
-      if (audience === "student" && !studentId) {
-        const students = await User.find({ role: "student", school: schoolId }).select("_id");
-        pushRecipients = students.map((s) => String(s._id));
-      }
-
-      // 📌 ALL PARENTS
-      if (audience === "parent") {
-        const parents = await User.find({ role: "parent", school: schoolId }).select("_id");
-        pushRecipients = parents.map((p) => String(p._id));
-      }
-
-      // 📌 EVERYONE IN SCHOOL
-      if (audience === "all") {
-        const allUsers = await User.find({ school: schoolId }).select("_id");
-        pushRecipients = allUsers.map((u) => String(u._id));
-      }
-
-      pushRecipients = [...new Set(pushRecipients)]; // dedupe
-
-      await sendPushToUsers(
-        pushRecipients,
-        "New Agenda Posted",
-        title
+      recipientUsers.push(
+        ...students.filter(s => s.user).map(s => String(s.user))
       );
-
-    } catch (pushErr) {
-      console.error("⚠️ Push notification failed:", pushErr);
     }
 
-    // ============================================================
-    // 📤 RETURN RESPONSE
-    // ============================================================
-    res.status(201).json(agenda);
+    // PARENT → all parents
+    if (audience === "parent") {
+      const parents = await User.find({
+        role: "parent",
+        school: schoolId,
+      }).select("_id").lean();
 
-  } catch (err) {
-    console.error("💥 createAgenda error:", err);
-    res.status(500).json({ error: "Internal server error" });
-  }
-};
-// --------------------------------------------------------------------
-// ✏️ Update an existing agenda (UPDATED WITH PUSH NOTIFICATIONS)
-// --------------------------------------------------------------------
-exports.updateAgenda = async (req, res) => {
-  try {
-    const { title, description, date, time, audience, classId, color, studentId } = req.body;
-    const validAudiences = ['all', 'teacher', 'student', 'parent', 'class'];
-
-    if (!validAudiences.includes(audience)) {
-      return res.status(400).json({ error: 'Invalid audience type' });
+      recipientUsers = parents.map(p => String(p._id));
     }
 
-    if (audience === 'class' && !classId) {
-      return res.status(400).json({ error: 'classId required for class audience' });
+    // ALL → everyone in school
+    if (audience === "all") {
+      const users = await User.find({ school: schoolId })
+        .select("_id")
+        .lean();
+
+      recipientUsers = users.map(u => String(u._id));
     }
 
-    const plainUser = req.user.toObject ? req.user.toObject() : req.user;
-    const schoolId = await resolveSchoolForUser(plainUser);
-    if (!schoolId) return res.status(403).json({ error: 'No school linked' });
+    recipientUsers = [...new Set(recipientUsers)];
 
-    const agenda = await AgendaEvent.findOneAndUpdate(
-      { _id: req.params.id, school: schoolId },
-      {
-        title,
-        description,
-        date,
-        time,
-        audience,
-        class: audience === 'class' ? classId : null,
-        color: color || getDefaultColor(audience),
-      },
-      { new: true }
-    );
-
-    if (!agenda) return res.status(404).json({ error: 'Agenda not found' });
-
-
-    // ============================================================
-    // 🔔 CREATE IN-APP NOTIFICATION (EXISTING LOGIC)
-    // ============================================================
-    try {
-      let recipientUsers = [];
-
-      if (audience === 'class' && classId) {
-        recipientUsers = await resolveRecipientUsersForClass(classId, true);
-      }
-
-      if (audience === 'student' && studentId) {
-        try {
-          const studentDoc = await Student.findById(studentId)
-            .select('user parent parentIds')
-            .lean();
-
-          if (studentDoc?.user) recipientUsers.push(String(studentDoc.user));
-          if (studentDoc?.parent) recipientUsers.push(String(studentDoc.parent));
-
-          if (Array.isArray(studentDoc?.parentIds)) {
-            studentDoc.parentIds.forEach((pid) => pid && recipientUsers.push(String(pid)));
-          }
-        } catch (sErr) {
-          console.warn('updateAgenda: student lookup failed for studentId', sErr);
-        }
-      }
-
+    // ------------------------------------------------------------
+    // 🔔 CREATE IN-APP NOTIFICATION (FIXED)
+    // ------------------------------------------------------------
+    if (recipientUsers.length > 0) {
       await Notification.create({
-        title: `Agenda Updated: ${title}`,
+        title: `New Agenda: ${title}`,
         sender: req.user._id,
         school: schoolId,
-        message: `Agenda updated: ${title}`,
+        message: `New agenda: ${title}`,
         type: "agenda",
+        agendaId: agenda._id, // ✅ REQUIRED
         audience,
         class: classId || null,
         recipientRoles:
@@ -470,115 +398,295 @@ exports.updateAgenda = async (req, res) => {
             : audience === "parent"
             ? ["parent"]
             : [],
-        recipientUsers:
-          recipientUsers.length ? Array.from(new Set(recipientUsers)) : undefined,
+        recipientUsers,
       });
-
-    } catch (notifErr) {
-      console.error('⚠️ updateAgenda: failed to create notification', notifErr);
     }
 
-
-    // ============================================================
-    // 📣 EXPO PUSH NOTIFICATIONS (NEW LOGIC)
-    // ============================================================
-    try {
-      let pushRecipients = [];
-
-      // 📌 CLASS
-      if (audience === "class" && classId) {
-        pushRecipients = await resolveRecipientUsersForClass(classId, true);
-      }
-
-      // 📌 SPECIFIC STUDENT
-      if (audience === "student" && studentId) {
-        const s = await Student.findById(studentId).select("user parent parentIds").lean();
-
-        if (s?.user) pushRecipients.push(String(s.user));
-        if (s?.parent) pushRecipients.push(String(s.parent));
-        if (Array.isArray(s?.parentIds)) {
-          pushRecipients.push(...s.parentIds.map(String));
-        }
-      }
-
-      // 📌 ALL STUDENTS
-      if (audience === "student" && !studentId) {
-        const students = await User.find({ role: "student", school: schoolId }).select("_id");
-        pushRecipients = students.map((s) => String(s._id));
-      }
-
-      // 📌 ALL PARENTS
-      if (audience === "parent") {
-        const parents = await User.find({ role: "parent", school: schoolId }).select("_id");
-        pushRecipients = parents.map((p) => String(p._id));
-      }
-
-      // 📌 SCHOOL-WIDE (everyone)
-      if (audience === "all") {
-        const allUsers = await User.find({ school: schoolId }).select("_id");
-        pushRecipients = allUsers.map((u) => String(u._id));
-      }
-
-      pushRecipients = [...new Set(pushRecipients)]; // clean duplicates
-
+    // ------------------------------------------------------------
+    // 📣 EXPO PUSH NOTIFICATION (USES SAME RECIPIENTS)
+    // ------------------------------------------------------------
+    if (recipientUsers.length > 0) {
       await sendPushToUsers(
-        pushRecipients,
-        "Agenda Updated",
-        `${title}`
+        recipientUsers,
+        "New Agenda Posted",
+        title
       );
-
-    } catch (pushErr) {
-      console.error("⚠️ Push notification (updateAgenda) failed:", pushErr);
     }
 
-
-    // ============================================================
-    // 📤 SEND BACK UPDATED AGENDA
-    // ============================================================
-    res.json(agenda);
+    // ------------------------------------------------------------
+    // 📤 RESPONSE
+    // ------------------------------------------------------------
+    res.status(201).json(agenda);
 
   } catch (err) {
-    console.error('💥 updateAgenda error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error("💥 createAgenda error:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 };
 
 // --------------------------------------------------------------------
+// ✏️ Update an existing agenda (FIXED: notifications + push)
+// --------------------------------------------------------------------
+exports.updateAgenda = async (req, res) => {
+  try {
+    const { title, description, date, time, audience, classId, color, studentId } = req.body;
+    const validAudiences = ["all", "teacher", "student", "parent", "class"];
+
+    if (!validAudiences.includes(audience)) {
+      return res.status(400).json({ error: "Invalid audience type" });
+    }
+
+    if (audience === "class" && !classId) {
+      return res.status(400).json({ error: "classId required for class audience" });
+    }
+
+    const plainUser = req.user.toObject ? req.user.toObject() : req.user;
+    const schoolId = await resolveSchoolForUser(plainUser);
+    if (!schoolId) return res.status(403).json({ error: "No school linked" });
+
+    // ------------------------------------------------------------
+    // 📌 UPDATE AGENDA
+    // ------------------------------------------------------------
+    const agenda = await AgendaEvent.findOneAndUpdate(
+      { _id: req.params.id, school: schoolId },
+      {
+        title,
+        description,
+        date,
+        time,
+        audience,
+        class: audience === "class" ? classId : null,
+        color: color || getDefaultColor(audience),
+      },
+      { new: true }
+    );
+
+    if (!agenda) {
+      return res.status(404).json({ error: "Agenda not found" });
+    }
+
+    // ------------------------------------------------------------
+    // 🔔 RESOLVE RECIPIENT USERS (ONCE)
+    // ------------------------------------------------------------
+    let recipientUsers = [];
+
+    // CLASS → students + parents + teachers
+    if (audience === "class" && classId) {
+      recipientUsers = await resolveRecipientUsersForClass(classId, true);
+    }
+
+    // TEACHER → all teachers in school
+    if (audience === "teacher") {
+      const teachers = await User.find({
+        role: "teacher",
+        school: schoolId,
+      }).select("_id").lean();
+
+      recipientUsers = teachers.map(t => String(t._id));
+    }
+
+    // STUDENT → specific student
+    if (audience === "student" && studentId) {
+      const s = await Student.findById(studentId)
+        .select("user parent parentIds")
+        .lean();
+
+      if (s?.user) recipientUsers.push(String(s.user));
+      if (s?.parent) recipientUsers.push(String(s.parent));
+      if (Array.isArray(s?.parentIds)) {
+        s.parentIds.forEach(pid => pid && recipientUsers.push(String(pid)));
+      }
+    }
+
+    // STUDENT → whole class
+    if (audience === "student" && !studentId && classId) {
+      const students = await Student.find({
+        class: classId,
+        school: schoolId,
+      }).select("user").lean();
+
+      recipientUsers.push(
+        ...students.filter(s => s.user).map(s => String(s.user))
+      );
+    }
+
+    // PARENT → all parents
+    if (audience === "parent") {
+      const parents = await User.find({
+        role: "parent",
+        school: schoolId,
+      }).select("_id").lean();
+
+      recipientUsers = parents.map(p => String(p._id));
+    }
+
+    // ALL → everyone in school
+    if (audience === "all") {
+      const users = await User.find({ school: schoolId })
+        .select("_id")
+        .lean();
+
+      recipientUsers = users.map(u => String(u._id));
+    }
+
+    recipientUsers = [...new Set(recipientUsers)];
+
+    // ------------------------------------------------------------
+    // 🔔 CREATE IN-APP NOTIFICATION (FIXED)
+    // ------------------------------------------------------------
+    if (recipientUsers.length > 0) {
+      await Notification.create({
+        title: `Agenda Updated: ${title}`,
+        sender: req.user._id,
+        school: schoolId,
+        message: `Agenda updated: ${title}`,
+        type: "agenda",
+        agendaId: agenda._id, // ✅ REQUIRED
+        audience,
+        class: classId || null,
+        recipientRoles:
+          audience === "all"
+            ? ["teacher", "student", "parent"]
+            : audience === "teacher"
+            ? ["teacher"]
+            : audience === "student"
+            ? ["student"]
+            : audience === "parent"
+            ? ["parent"]
+            : [],
+        recipientUsers,
+      });
+    }
+
+    // ------------------------------------------------------------
+    // 📣 EXPO PUSH NOTIFICATION (USES SAME RECIPIENTS)
+    // ------------------------------------------------------------
+    if (recipientUsers.length > 0) {
+      await sendPushToUsers(
+        recipientUsers,
+        "Agenda Updated",
+        title
+      );
+    }
+
+    // ------------------------------------------------------------
+    // 📤 RESPONSE
+    // ------------------------------------------------------------
+    res.json(agenda);
+
+  } catch (err) {
+    console.error("💥 updateAgenda error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+
+// --------------------------------------------------------------------
 // ❌ Delete an agenda (UPDATED WITH EXPO PUSH NOTIFICATIONS)
+// --------------------------------------------------------------------
+// --------------------------------------------------------------------
+// ❌ Delete an agenda (FIXED: notifications + push)
 // --------------------------------------------------------------------
 exports.deleteAgenda = async (req, res) => {
   try {
     const plainUser = req.user.toObject ? req.user.toObject() : req.user;
     const schoolId = await resolveSchoolForUser(plainUser);
-    if (!schoolId) return res.status(403).json({ error: "No school linked" });
+    if (!schoolId) {
+      return res.status(403).json({ error: "No school linked" });
+    }
 
+    // ------------------------------------------------------------
+    // 📌 DELETE AGENDA
+    // ------------------------------------------------------------
     const agenda = await AgendaEvent.findOneAndDelete({
       _id: req.params.id,
       school: schoolId,
     });
 
-    if (!agenda) return res.status(404).json({ error: "Agenda not found" });
+    if (!agenda) {
+      return res.status(404).json({ error: "Agenda not found" });
+    }
 
+    // ------------------------------------------------------------
+    // 🔔 RESOLVE RECIPIENT USERS (ONCE)
+    // ------------------------------------------------------------
+    let recipientUsers = [];
 
-    // ============================================================
-    // 🔔 CREATE IN-APP NOTIFICATION (existing system)
-    // ============================================================
-    try {
-      let recipientUsers = [];
+    // CLASS → students + parents + teachers
+    if (agenda.audience === "class" && agenda.class) {
+      recipientUsers = await resolveRecipientUsersForClass(
+        agenda.class,
+        true
+      );
+    }
 
-      if (agenda.audience === "class" && agenda.class) {
-        recipientUsers = await resolveRecipientUsersForClass(
-          agenda.class,
-          true
-        );
+    // TEACHER → all teachers
+    if (agenda.audience === "teacher") {
+      const teachers = await User.find({
+        role: "teacher",
+        school: schoolId,
+      }).select("_id").lean();
+
+      recipientUsers = teachers.map(t => String(t._id));
+    }
+
+    // STUDENT → specific student
+    if (agenda.audience === "student" && agenda.studentId) {
+      const s = await Student.findById(agenda.studentId)
+        .select("user parent parentIds")
+        .lean();
+
+      if (s?.user) recipientUsers.push(String(s.user));
+      if (s?.parent) recipientUsers.push(String(s.parent));
+      if (Array.isArray(s?.parentIds)) {
+        s.parentIds.forEach(pid => pid && recipientUsers.push(String(pid)));
       }
+    }
 
+    // STUDENT → whole class
+    if (agenda.audience === "student" && !agenda.studentId && agenda.class) {
+      const students = await Student.find({
+        class: agenda.class,
+        school: schoolId,
+      }).select("user").lean();
+
+      recipientUsers.push(
+        ...students.filter(s => s.user).map(s => String(s.user))
+      );
+    }
+
+    // PARENT → all parents
+    if (agenda.audience === "parent") {
+      const parents = await User.find({
+        role: "parent",
+        school: schoolId,
+      }).select("_id").lean();
+
+      recipientUsers = parents.map(p => String(p._id));
+    }
+
+    // ALL → everyone in school
+    if (agenda.audience === "all") {
+      const users = await User.find({ school: schoolId })
+        .select("_id")
+        .lean();
+
+      recipientUsers = users.map(u => String(u._id));
+    }
+
+    recipientUsers = [...new Set(recipientUsers)];
+
+    // ------------------------------------------------------------
+    // 🔔 CREATE IN-APP NOTIFICATION (FIXED)
+    // ------------------------------------------------------------
+    if (recipientUsers.length > 0) {
       await Notification.create({
         title: `Agenda Deleted: ${agenda.title}`,
         sender: req.user._id,
         school: schoolId,
         message: `Agenda deleted: ${agenda.title}`,
         type: "agenda",
+        agendaId: agenda._id, // ✅ REQUIRED
         audience: agenda.audience,
         class: agenda.class || null,
         recipientRoles:
@@ -591,83 +699,24 @@ exports.deleteAgenda = async (req, res) => {
             : agenda.audience === "parent"
             ? ["parent"]
             : [],
-        recipientUsers:
-          recipientUsers.length
-            ? Array.from(new Set(recipientUsers))
-            : undefined,
+        recipientUsers,
       });
-    } catch (notifErr) {
-      console.error("⚠️ deleteAgenda: failed to create notification", notifErr);
     }
 
-
-    // ============================================================
-    // 📣 EXPO PUSH NOTIFICATIONS (new logic)
-    // ============================================================
-    try {
-      let pushRecipients = [];
-
-      // CLASS → students + parents + teachers
-      if (agenda.audience === "class" && agenda.class) {
-        pushRecipients = await resolveRecipientUsersForClass(
-          agenda.class,
-          true
-        );
-      }
-
-      // STUDENT (for single-student agendas)
-      if (agenda.audience === "student" && agenda.studentId) {
-        const s = await Student.findById(agenda.studentId)
-          .select("user parent parentIds")
-          .lean();
-
-        if (s?.user) pushRecipients.push(String(s.user));
-        if (s?.parent) pushRecipients.push(String(s.parent));
-        if (Array.isArray(s?.parentIds)) {
-          s.parentIds.forEach((pid) => pid && pushRecipients.push(String(pid)));
-        }
-      }
-
-      // ALL STUDENTS
-      if (agenda.audience === "student" && !agenda.studentId) {
-        const students = await User.find({
-          role: "student",
-          school: schoolId,
-        }).select("_id");
-        pushRecipients = students.map((s) => String(s._id));
-      }
-
-      // ALL PARENTS
-      if (agenda.audience === "parent") {
-        const parents = await User.find({
-          role: "parent",
-          school: schoolId,
-        }).select("_id");
-        pushRecipients = parents.map((p) => String(p._id));
-      }
-
-      // WHOLE SCHOOL
-      if (agenda.audience === "all") {
-        const allUsers = await User.find({
-          school: schoolId,
-        }).select("_id");
-        pushRecipients = allUsers.map((u) => String(u._id));
-      }
-
-      pushRecipients = [...new Set(pushRecipients)]; // unique list
-
+    // ------------------------------------------------------------
+    // 📣 EXPO PUSH NOTIFICATION (SAME RECIPIENTS)
+    // ------------------------------------------------------------
+    if (recipientUsers.length > 0) {
       await sendPushToUsers(
-        pushRecipients,
+        recipientUsers,
         "Agenda Deleted",
         `${agenda.title} has been removed`
       );
-
-    } catch (pushErr) {
-      console.error("⚠️ Push notification (deleteAgenda) failed:", pushErr);
     }
 
-
-    // RESPONSE
+    // ------------------------------------------------------------
+    // 📤 RESPONSE
+    // ------------------------------------------------------------
     res.json({ message: "Agenda deleted successfully" });
 
   } catch (err) {

@@ -8,22 +8,42 @@ const PushTokenSchema = new mongoose.Schema({
     required: true,
     index: true,
   },
+
+  school: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "School",
+    required: true,
+    index: true,
+  },
+
   token: {
     type: String,
     required: true,
     unique: true,
   },
+
+  platform: {
+    type: String,
+    enum: ["ios", "android"],
+    required: true,
+    index: true,
+  },
+
   deviceInfo: {
     type: Object,
     default: {},
   },
+
   disabled: {
     type: Boolean,
     default: false,
+    index: true,
   },
+
   lastSeen: {
     type: Date,
     default: Date.now,
+    index: true,
   },
 }, { timestamps: true });
 

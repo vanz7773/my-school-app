@@ -9,34 +9,65 @@ const { Expo } = require("expo-server-sdk");
 const expo = new Expo();
 
 
-// 🔔 Reusable Push Sender
+// 🔔 Reusable Push Sender (FIXED)
 async function sendPush(userIds, title, body) {
   if (!Array.isArray(userIds) || userIds.length === 0) return;
 
-  const tokens = await PushToken.find({
-    userId: { $in: userIds },
-    disabled: false,
-  }).lean();
+  // 🔑 One active token per user (latest)
+  const tokens = await PushToken.aggregate([
+    {
+      $match: {
+        userId: { $in: userIds.map(id => mongoose.Types.ObjectId(id)) },
+        disabled: false,
+      },
+    },
+    { $sort: { updatedAt: -1 } },
+    {
+      $group: {
+        _id: "$userId",
+        token: { $first: "$token" },
+      },
+    },
+  ]);
 
   const validTokens = tokens
     .map(t => t.token)
     .filter(token => Expo.isExpoPushToken(token));
 
-  if (validTokens.length === 0) return;
+  if (validTokens.length === 0) {
+    console.log("⚠️ No valid Expo push tokens");
+    return;
+  }
 
   const messages = validTokens.map(token => ({
     to: token,
     sound: "default",
     title,
     body,
-    data: { type: "announcement" }
+    data: { type: "announcement" },
   }));
 
   const chunks = expo.chunkPushNotifications(messages);
+
   for (const chunk of chunks) {
-    await expo.sendPushNotificationsAsync(chunk);
+    try {
+      const receipts = await expo.sendPushNotificationsAsync(chunk);
+
+      // 🧹 Auto-disable dead tokens
+      receipts.forEach((r, i) => {
+        if (r.status === "error" && r.details?.error === "DeviceNotRegistered") {
+          PushToken.updateOne(
+            { token: chunk[i].to },
+            { $set: { disabled: true } }
+          ).catch(() => {});
+        }
+      });
+    } catch (err) {
+      console.error("❌ Expo push chunk failed:", err);
+    }
   }
 }
+
 
 // ==============================
 // Helper: Resolve class names safely
