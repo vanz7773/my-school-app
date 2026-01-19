@@ -13,60 +13,36 @@ const expo = new Expo();
 async function sendPush(userIds, title, body) {
   if (!Array.isArray(userIds) || userIds.length === 0) return;
 
-  // 🔑 One active token per user (latest)
-  const tokens = await PushToken.aggregate([
-    {
-      $match: {
-        userId: { $in: userIds.map(id => mongoose.Types.ObjectId(id)) },
-        disabled: false,
-      },
-    },
-    { $sort: { updatedAt: -1 } },
-    {
-      $group: {
-        _id: "$userId",
-        token: { $first: "$token" },
-      },
-    },
-  ]);
+  // ✅ FORCE STRING IDS (CRITICAL)
+  const safeUserIds = userIds.map(id => String(id));
+
+  const tokens = await PushToken.find({
+    userId: { $in: safeUserIds },
+    disabled: false,
+  })
+    .sort({ updatedAt: -1 })
+    .lean();
 
   const validTokens = tokens
     .map(t => t.token)
     .filter(token => Expo.isExpoPushToken(token));
 
-  if (validTokens.length === 0) {
-    console.log("⚠️ No valid Expo push tokens");
-    return;
-  }
+  if (validTokens.length === 0) return;
 
   const messages = validTokens.map(token => ({
     to: token,
     sound: "default",
     title,
     body,
-    data: { type: "announcement" },
+    data: { type: "announcement" }
   }));
 
   const chunks = expo.chunkPushNotifications(messages);
-
   for (const chunk of chunks) {
-    try {
-      const receipts = await expo.sendPushNotificationsAsync(chunk);
-
-      // 🧹 Auto-disable dead tokens
-      receipts.forEach((r, i) => {
-        if (r.status === "error" && r.details?.error === "DeviceNotRegistered") {
-          PushToken.updateOne(
-            { token: chunk[i].to },
-            { $set: { disabled: true } }
-          ).catch(() => {});
-        }
-      });
-    } catch (err) {
-      console.error("❌ Expo push chunk failed:", err);
-    }
+    await expo.sendPushNotificationsAsync(chunk);
   }
 }
+
 
 
 // ==============================
