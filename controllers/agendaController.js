@@ -220,24 +220,22 @@ function buildAgendaFilter(user, from, to) {
 async function sendPushToUsers(userIds, title, message) {
   if (!Array.isArray(userIds) || userIds.length === 0) return;
 
-  // 🔑 Get ONLY the latest token per user
-  const tokens = await PushToken.aggregate([
-    { $match: { userId: { $in: userIds.map(id => mongoose.Types.ObjectId(id)) }, disabled: false } },
-    { $sort: { updatedAt: -1 } },
-    {
-      $group: {
-        _id: "$userId",
-        token: { $first: "$token" },
-      }
-    }
-  ]);
+  // ✅ FORCE STRINGS (prevents ObjectId constructor crash)
+  const safeUserIds = userIds.map(id => String(id));
+
+  const tokens = await PushToken.find({
+    userId: { $in: safeUserIds },
+    disabled: false,
+  })
+    .sort({ updatedAt: -1 })
+    .lean();
 
   const validTokens = tokens
     .map(t => t.token)
     .filter(token => Expo.isExpoPushToken(token));
 
   if (validTokens.length === 0) {
-    console.log("⚠️ No valid Expo tokens after filtering");
+    console.log("⚠️ No valid Expo tokens for recipients");
     return;
   }
 
@@ -250,25 +248,11 @@ async function sendPushToUsers(userIds, title, message) {
   }));
 
   const chunks = expo.chunkPushNotifications(messages);
-
   for (const chunk of chunks) {
-    try {
-      const receipts = await expo.sendPushNotificationsAsync(chunk);
-
-      // 🧹 Auto-disable invalid tokens
-      receipts.forEach((r, i) => {
-        if (r.status === "error" && r.details?.error === "DeviceNotRegistered") {
-          PushToken.updateOne(
-            { token: chunk[i].to },
-            { $set: { disabled: true } }
-          ).catch(() => {});
-        }
-      });
-    } catch (err) {
-      console.error("Expo push chunk failed:", err);
-    }
+    await expo.sendPushNotificationsAsync(chunk);
   }
 }
+
 
 
 
