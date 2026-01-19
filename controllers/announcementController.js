@@ -185,22 +185,30 @@ exports.createAnnouncement = async (req, res) => {
     recipientUsers = [...new Set(recipientUsers)];
 
     // --------------------------------------------------
-    // 📣 CREATE NOTIFICATION DOC
-    // --------------------------------------------------
-    if (recipientUsers.length > 0) {
-      await Notification.create({
-        title: classId ? "New Class Announcement" : "New School Announcement",
-        sender: creator._id,
-        school: schoolId,
-        message: `Announcement: ${title || "New announcement"}`,
-        type: "announcement",
-        audience: classId ? "class" : "all",
-        class: classId || null,
-        recipientUsers,
-        recipientRoles: resolvedRoles,
-        announcementId: newAnnouncement._id,
-      });
-    }
+// 📣 CREATE NOTIFICATION DOC (FIXED)
+// --------------------------------------------------
+if (recipientUsers.length > 0) {
+  const audience =
+    classId
+      ? "class"
+      : resolvedRoles.length === 1
+        ? resolvedRoles[0]   // "teacher" | "student" | "parent"
+        : "all";             // true school-wide only
+
+  await Notification.create({
+    title: classId ? "New Class Announcement" : "New School Announcement",
+    sender: creator._id,
+    school: schoolId,
+    message: `Announcement: ${title || "New announcement"}`,
+    type: "announcement",
+    audience,                // ✅ FIX HERE
+    class: classId || null,
+    recipientUsers,
+    recipientRoles: resolvedRoles,
+    announcementId: newAnnouncement._id,
+  });
+}
+
 
     // --------------------------------------------------
     // 🔔 PUSH NOTIFICATION
@@ -932,22 +940,30 @@ exports.updateAnnouncement = async (req, res) => {
     recipientUsers = [...new Set(recipientUsers)];
 
     // --------------------------------------------------
-    // 📣 NOTIFICATION DOC
-    // --------------------------------------------------
-    if (recipientUsers.length > 0) {
-      await Notification.create({
-        title: "Announcement Updated",
-        sender: user._id,
-        school: user.school,
-        message: `Announcement updated: ${announcement.title}`,
-        type: "announcement",
-        audience: announcement.class ? "class" : "all",
-        class: announcement.class || null,
-        recipientUsers,
-        recipientRoles: resolvedRoles,
-        announcementId: announcement._id,
-      });
-    }
+// 📣 CREATE NOTIFICATION DOC (FIXED)
+// --------------------------------------------------
+if (recipientUsers.length > 0) {
+  const audience =
+    classId
+      ? "class"
+      : resolvedRoles.length === 1
+        ? resolvedRoles[0]   // "teacher" | "student" | "parent"
+        : "all";             // true school-wide only
+
+  await Notification.create({
+    title: classId ? "New Class Announcement" : "New School Announcement",
+    sender: creator._id,
+    school: schoolId,
+    message: `Announcement: ${title || "New announcement"}`,
+    type: "announcement",
+    audience,                // ✅ FIX HERE
+    class: classId || null,
+    recipientUsers,
+    recipientRoles: resolvedRoles,
+    announcementId: newAnnouncement._id,
+  });
+}
+
 
     // --------------------------------------------------
     // 🔔 PUSH NOTIFICATION
