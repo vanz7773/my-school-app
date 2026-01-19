@@ -66,51 +66,70 @@ exports.createAnnouncement = async (req, res) => {
     const creator = req.user;
 
     if (!schoolId) {
-      return res.status(400).json({ message: 'School info missing in user token.' });
+      return res.status(400).json({ message: "School info missing in user token." });
     }
 
-    // -----------------------------
-    // TEACHER VALIDATION
-    // -----------------------------
-    if (creator.role === 'teacher') {
+    // --------------------------------------------------
+    // 🧑‍🏫 TEACHER VALIDATION
+    // --------------------------------------------------
+    if (creator.role === "teacher") {
       if (!classId) {
-        return res.status(400).json({ message: 'Teachers must specify a classId.' });
+        return res.status(400).json({ message: "Teachers must specify a classId." });
       }
 
       const teacherDoc = await Teacher.findOne({ user: creator._id })
-        .select('assignedClass assignedClasses')
+        .select("assignedClass assignedClasses")
         .lean();
 
       if (!teacherDoc) {
-        return res.status(403).json({ message: 'No teacher record found.' });
+        return res.status(403).json({ message: "No teacher record found." });
       }
 
       const teacherClasses = [];
       if (teacherDoc.assignedClass) teacherClasses.push(String(teacherDoc.assignedClass));
-      if (Array.isArray(teacherDoc.assignedClasses)) teacherClasses.push(...teacherDoc.assignedClasses.map(String));
+      if (Array.isArray(teacherDoc.assignedClasses)) {
+        teacherClasses.push(...teacherDoc.assignedClasses.map(String));
+      }
 
       if (!teacherClasses.includes(String(classId))) {
-        return res.status(403).json({ message: 'You cannot create an announcement for this class.' });
+        return res
+          .status(403)
+          .json({ message: "You cannot create an announcement for this class." });
       }
     }
 
-    // -----------------------------
-    // ROLE RESOLUTION
-    // -----------------------------
+    // --------------------------------------------------
+    // 🎯 ROLE RESOLUTION (STRICT & EXPLICIT)
+    // --------------------------------------------------
     let resolvedRoles = [];
-    if (creator.role === "teacher") {
-      resolvedRoles = []; 
-    } else if (creator.role === "admin") {
-      resolvedRoles = classId
-        ? ["student", "parent"]
-        : ["student", "parent", "teacher"];
+
+    if (creator.role === "admin") {
+      if (!Array.isArray(targetRoles) || targetRoles.length === 0) {
+        return res.status(400).json({
+          message: "Admin must specify targetRoles",
+        });
+      }
+
+      // ✅ sanitize roles
+      const allowedRoles = ["student", "parent", "teacher", "admin", "all", "everyone"];
+      resolvedRoles = targetRoles.filter(r => allowedRoles.includes(r));
+
+      if (resolvedRoles.length === 0) {
+        return res.status(400).json({
+          message: "Invalid targetRoles supplied",
+        });
+      }
     }
 
-    // -----------------------------
-    // CREATE ANNOUNCEMENT
-    // -----------------------------
-    const newAnnouncement = new Announcement({
-      title: title || (creator.role === 'teacher' ? 'Class Announcement' : 'Announcement'),
+    if (creator.role === "teacher") {
+      resolvedRoles = ["student", "parent"];
+    }
+
+    // --------------------------------------------------
+    // 📝 CREATE ANNOUNCEMENT
+    // --------------------------------------------------
+    const newAnnouncement = await Announcement.create({
+      title: title || (creator.role === "teacher" ? "Class Announcement" : "Announcement"),
       message,
       targetRoles: resolvedRoles,
       class: classId || null,
@@ -118,18 +137,19 @@ exports.createAnnouncement = async (req, res) => {
       school: schoolId,
     });
 
-    await newAnnouncement.save();
-
-    // -----------------------------
-    // NOTIFICATION CREATION
-    // -----------------------------
+    // --------------------------------------------------
+    // 🔔 RESOLVE RECIPIENT USERS
+    // --------------------------------------------------
     let recipientUsers = [];
 
-    if (creator.role === 'teacher') {
+    // -------- TEACHER → CLASS STUDENTS & PARENTS --------
+    if (creator.role === "teacher") {
       const students = await Student.find({
         class: classId,
-        school: schoolId
-      }).select("user parent parentIds").lean();
+        school: schoolId,
+      })
+        .select("user parent parentIds")
+        .lean();
 
       students.forEach(s => {
         if (s.user) recipientUsers.push(String(s.user));
@@ -138,50 +158,46 @@ exports.createAnnouncement = async (req, res) => {
           s.parentIds.forEach(pid => recipientUsers.push(String(pid)));
         }
       });
-
-      recipientUsers = [...new Set(recipientUsers)];
-
-      if (recipientUsers.length > 0) {
-        await Notification.create({
-          title: "New Class Announcement",
-          sender: creator._id,
-          school: schoolId,
-          message: `Announcement: ${title || 'Class announcement'}`,
-          type: "announcement",
-          audience: "class",
-          class: classId,
-          recipientUsers,
-          recipientRoles: [],
-          announcementId: newAnnouncement._id
-        });
-      }
     }
 
-    if (creator.role === 'admin') {
-      // Admin broadcasts by roles
+    // -------- ADMIN → STRICT ROLE USERS --------
+    if (creator.role === "admin") {
       const users = await User.find({
         school: schoolId,
         role: { $in: resolvedRoles },
-      }).select("_id");
+      })
+        .select("_id role")
+        .lean();
 
-      recipientUsers = users.map(u => String(u._id));
+      // 🔒 defensive filter (prevents leaks)
+      recipientUsers = users
+        .filter(u => resolvedRoles.includes(u.role))
+        .map(u => String(u._id));
+    }
 
+    recipientUsers = [...new Set(recipientUsers)];
+
+    // --------------------------------------------------
+    // 📣 CREATE NOTIFICATION DOC
+    // --------------------------------------------------
+    if (recipientUsers.length > 0) {
       await Notification.create({
         title: classId ? "New Class Announcement" : "New School Announcement",
         sender: creator._id,
         school: schoolId,
-        message: `Announcement: ${title || 'New announcement'}`,
+        message: `Announcement: ${title || "New announcement"}`,
         type: "announcement",
         audience: classId ? "class" : "all",
         class: classId || null,
+        recipientUsers,
         recipientRoles: resolvedRoles,
-        announcementId: newAnnouncement._id
+        announcementId: newAnnouncement._id,
       });
     }
 
-    // -----------------------------
+    // --------------------------------------------------
     // 🔔 PUSH NOTIFICATION
-    // -----------------------------
+    // --------------------------------------------------
     if (recipientUsers.length > 0) {
       await sendPush(
         recipientUsers,
@@ -190,19 +206,22 @@ exports.createAnnouncement = async (req, res) => {
       );
     }
 
-    // -----------------------------
-    // RESPONSE
-    // -----------------------------
+    // --------------------------------------------------
+    // ✅ RESPONSE
+    // --------------------------------------------------
     return res.status(201).json({
-      message: 'Announcement created successfully',
+      message: "Announcement created successfully",
       announcement: newAnnouncement,
     });
-
   } catch (err) {
-    console.error('❌ Error creating announcement:', err);
-    res.status(500).json({ message: 'Error creating announcement', error: err.message });
+    console.error("❌ Error creating announcement:", err);
+    return res.status(500).json({
+      message: "Error creating announcement",
+      error: err.message,
+    });
   }
 };
+
 
 
 /**
@@ -280,7 +299,9 @@ exports.getMyAnnouncements = async (req, res) => {
       targetStudent = await Student.findOne({
         user: userId,
         school: schoolId
-      }).populate("class user", "name stream displayName").lean();
+      })
+        .populate("class user", "name stream displayName")
+        .lean();
 
       if (!targetStudent) {
         return res.status(404).json({ message: "Student record not found." });
@@ -290,7 +311,7 @@ exports.getMyAnnouncements = async (req, res) => {
     }
 
     // ----------------------------------------------------------
-    // 👪 PARENT → strict selection of ONE child
+    // 👪 PARENT → strictly ONE child
     // ----------------------------------------------------------
     if (userRole === "parent") {
       const targetId = childId || studentId;
@@ -305,7 +326,9 @@ exports.getMyAnnouncements = async (req, res) => {
           { parent: userId },
           { parentIds: { $in: [userId] } }
         ]
-      }).populate("class user", "name stream displayName").lean();
+      })
+        .populate("class user", "name stream displayName")
+        .lean();
 
       if (!targetStudent) {
         return res.status(403).json({ message: "Unauthorized childId" });
@@ -321,7 +344,9 @@ exports.getMyAnnouncements = async (req, res) => {
       const teacherDoc = await Teacher.findOne({
         user: userId,
         school: schoolId
-      }).select("assignedClass assignedClasses").lean();
+      })
+        .select("assignedClass assignedClasses")
+        .lean();
 
       if (teacherDoc?.assignedClass) {
         classIds.push(String(teacherDoc.assignedClass));
@@ -333,9 +358,9 @@ exports.getMyAnnouncements = async (req, res) => {
     }
 
     // ----------------------------------------------------------
-    // 🔍 BUILD FILTER (STRICT – NO CLASS LEAKS)
+    // 🔍 BASE FILTER
     // ----------------------------------------------------------
-    let filter = {
+    const filter = {
       school: schoolId,
       isDeleted: { $ne: true },
       $and: []
@@ -347,10 +372,13 @@ exports.getMyAnnouncements = async (req, res) => {
     if (userRole === "student") {
       filter.$and.push({
         $or: [
-          { class: { $in: classIds } }, // 🔒 class-scoped ONLY
+          {
+            class: { $in: classIds },
+            targetRoles: { $in: ["student"] }
+          },
           {
             class: null,
-            targetRoles: { $in: ["student", "all", "everyone"] }
+            targetRoles: { $in: ["student"] }
           }
         ]
       });
@@ -362,10 +390,13 @@ exports.getMyAnnouncements = async (req, res) => {
     if (userRole === "parent") {
       filter.$and.push({
         $or: [
-          { class: { $in: classIds } }, // 🔒 class-scoped ONLY
+          {
+            class: { $in: classIds },
+            targetRoles: { $in: ["parent"] }
+          },
           {
             class: null,
-            targetRoles: { $in: ["parent", "all", "everyone"] }
+            targetRoles: { $in: ["parent"] }
           }
         ]
       });
@@ -377,12 +408,15 @@ exports.getMyAnnouncements = async (req, res) => {
     if (userRole === "teacher") {
       filter.$and.push({
         $or: [
-          { class: { $in: classIds } }, // 🔒 class-scoped ONLY
-          { sentBy: userId },
+          {
+            class: { $in: classIds },
+            targetRoles: { $in: ["student", "parent"] }
+          },
           {
             class: null,
-            targetRoles: { $in: ["teacher", "all", "everyone"] }
-          }
+            targetRoles: { $in: ["teacher"] }
+          },
+          { sentBy: userId }
         ]
       });
     }
@@ -397,7 +431,7 @@ exports.getMyAnnouncements = async (req, res) => {
       .lean();
 
     // ----------------------------------------------------------
-    // 🔔 NOTIFICATION ENRICHMENT
+    // 🔔 NOTIFICATION ENRICHMENT (STRICT)
     // ----------------------------------------------------------
     const announcementIds = announcements.map(a => a._id);
 
@@ -407,9 +441,11 @@ exports.getMyAnnouncements = async (req, res) => {
       announcementId: { $in: announcementIds },
       $or: [
         { recipientUsers: userId },
-        { recipientRoles: { $in: [userRole] } }
+        { recipientRoles: userRole }
       ]
-    }).select("announcementId isRead").lean();
+    })
+      .select("announcementId isRead")
+      .lean();
 
     const notifMap = {};
     notifications.forEach(n => {
@@ -422,7 +458,7 @@ exports.getMyAnnouncements = async (req, res) => {
     }));
 
     // ----------------------------------------------------------
-    // 🔔 AUTO MARK AS READ
+    // 🔔 AUTO MARK AS READ (USER ONLY)
     // ----------------------------------------------------------
     await Notification.updateMany(
       {
@@ -434,7 +470,7 @@ exports.getMyAnnouncements = async (req, res) => {
     );
 
     // ----------------------------------------------------------
-    // 🧩 CLASS NAME NORMALIZATION (BASIC 9A FIX)
+    // 🧩 CLASS NAME NORMALIZATION
     // ----------------------------------------------------------
     announcements = announcements.map(a => {
       const { className, classDisplayName } = resolveClassNames(a.class);
@@ -442,7 +478,7 @@ exports.getMyAnnouncements = async (req, res) => {
     });
 
     // ----------------------------------------------------------
-    // 📋 STUDENT / PARENT ENRICHMENT
+    // 📋 CHILD CONTEXT (student / parent)
     // ----------------------------------------------------------
     if (userRole === "student" || userRole === "parent") {
       announcements = announcements.map(a => ({
@@ -472,6 +508,7 @@ exports.getMyAnnouncements = async (req, res) => {
 
 
 
+
 /**
  * Admin/Teacher: list announcements for the school (with optional filters).
  * - Admins see everything.
@@ -480,64 +517,132 @@ exports.getMyAnnouncements = async (req, res) => {
 exports.getAnnouncementsForSchool = async (req, res) => {
   try {
     const schoolId = req.user.school;
-    if (!schoolId) return res.status(400).json({ message: 'School info missing in user token.' });
+    const userRole = req.user.role;
+    const userId = req.user._id;
+
+    if (!schoolId) {
+      return res.status(400).json({ message: "School info missing in user token." });
+    }
 
     const { targetRole, classId, page = 1, limit = 50 } = req.query;
-    const filter = { school: schoolId, isDeleted: { $ne: true } };
 
-    // apply query filters (role/class) if provided
-    if (targetRole) {
-      const roles = String(targetRole).split(',').map(r => r.trim());
-      filter.targetRoles = { $in: roles };
+    // ----------------------------------------------------------
+    // 🔍 BASE FILTER
+    // ----------------------------------------------------------
+    const filter = {
+      school: schoolId,
+      isDeleted: { $ne: true },
+      $and: []
+    };
+
+    // ----------------------------------------------------------
+    // 🎯 OPTIONAL QUERY FILTERS (ADMIN ONLY)
+    // ----------------------------------------------------------
+    if (targetRole && userRole === "admin") {
+      const roles = String(targetRole)
+        .split(",")
+        .map(r => r.trim());
+
+      filter.$and.push({
+        targetRoles: { $in: roles }
+      });
     }
-    if (classId) filter.class = classId;
 
-    // If requester is a teacher, scope results to classes they teach OR announcements targeted to teacher/all
-    if (req.user.role === 'teacher') {
-      let teacherClasses = req.user.classes;
-      if (!Array.isArray(teacherClasses) || teacherClasses.length === 0) {
-        const teacher = await User.findById(req.user._id).select('classes').lean();
-        teacherClasses = teacher?.classes || [];
+    if (classId) {
+      filter.$and.push({ class: classId });
+    }
+
+    // ----------------------------------------------------------
+    // 🧑‍🏫 TEACHER SCOPING (STRICT)
+    // ----------------------------------------------------------
+    if (userRole === "teacher") {
+      const teacherDoc = await Teacher.findOne({
+        user: userId,
+        school: schoolId
+      })
+        .select("assignedClass assignedClasses")
+        .lean();
+
+      let teacherClasses = [];
+
+      if (teacherDoc?.assignedClass) {
+        teacherClasses.push(String(teacherDoc.assignedClass));
       }
 
-      // Build teacher-specific OR: targeted to teacher/all OR class in teacherClasses
-      const teacherOr = [
-        { targetRoles: { $in: ['teacher', 'all', 'everyone'] } }
-      ];
-      if (teacherClasses.length > 0) teacherOr.push({ class: { $in: teacherClasses } });
+      if (Array.isArray(teacherDoc?.assignedClasses)) {
+        teacherClasses.push(
+          ...teacherDoc.assignedClasses.map(c => String(c))
+        );
+      }
 
-      // combine with existing filter by wrapping in $and
-      filter.$and = filter.$and || [];
-      filter.$and.push({ $or: teacherOr });
+      filter.$and.push({
+        $or: [
+          // Announcements explicitly for teachers
+          { targetRoles: { $in: ["teacher"] } },
+
+          // Class announcements for classes they teach
+          ...(teacherClasses.length > 0
+            ? [{ class: { $in: teacherClasses } }]
+            : []),
+
+          // Announcements they created
+          { sentBy: userId }
+        ]
+      });
     }
 
-    const skip = (Math.max(parseInt(page, 10), 1) - 1) * Math.max(parseInt(limit, 10), 1);
+    // ----------------------------------------------------------
+    // 🔐 ADMIN SEES ALL (NO EXTRA FILTER)
+    // ----------------------------------------------------------
+    if (userRole !== "admin" && userRole !== "teacher") {
+      return res.status(403).json({
+        message: "You are not authorized to access this endpoint."
+      });
+    }
 
+    // ----------------------------------------------------------
+    // 📄 PAGINATION
+    // ----------------------------------------------------------
+    const pageNum = Math.max(parseInt(page, 10), 1);
+    const limitNum = Math.max(parseInt(limit, 10), 1);
+    const skip = (pageNum - 1) * limitNum;
+
+    // ----------------------------------------------------------
+    // 📥 FETCH DATA
+    // ----------------------------------------------------------
     const [announcements, total] = await Promise.all([
       Announcement.find(filter)
         .sort({ createdAt: -1 })
         .skip(skip)
-        .limit(Math.max(parseInt(limit, 10), 1))
-        .populate('sentBy', 'name role')
-        .populate('class', 'name')
+        .limit(limitNum)
+        .populate("sentBy", "name role")
+        .populate("class", "name stream displayName")
         .lean(),
       Announcement.countDocuments(filter)
     ]);
 
-    res.json({
+    // ----------------------------------------------------------
+    // ✅ RESPONSE
+    // ----------------------------------------------------------
+    return res.json({
       meta: {
         total,
-        page: Number(page),
-        limit: Number(limit),
-        pages: Math.ceil(total / Number(limit))
+        page: pageNum,
+        limit: limitNum,
+        pages: Math.ceil(total / limitNum)
       },
       data: announcements
     });
+
   } catch (err) {
-    console.error('Error fetching school announcements:', err);
-    res.status(500).json({ message: 'Error fetching announcements', error: err.message });
+    console.error("❌ Error fetching school announcements:", err);
+    return res.status(500).json({
+      message: "Error fetching announcements",
+      error: err.message
+    });
   }
 };
+
 
 /**
  * Fetch a single announcement (ensure it belongs to the same school).
@@ -546,90 +651,169 @@ exports.getAnnouncementsForSchool = async (req, res) => {
 exports.getAnnouncementById = async (req, res) => {
   try {
     const { id } = req.params;
-    const schoolId = req.user.school;
-    if (!schoolId) return res.status(400).json({ message: 'School info missing in user token.' });
+    const user = req.user;
+    const schoolId = user.school;
+
+    if (!schoolId) {
+      return res.status(400).json({ message: "School info missing in user token." });
+    }
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: 'Invalid announcement id.' });
+      return res.status(400).json({ message: "Invalid announcement id." });
     }
 
-    const announcement = await Announcement.findOne({ _id: id, school: schoolId, isDeleted: { $ne: true } })
-      .populate('sentBy', 'name role')
-      .populate('class', 'name')
+    const announcement = await Announcement.findOne({
+      _id: id,
+      school: schoolId,
+      isDeleted: { $ne: true }
+    })
+      .populate("sentBy", "name role")
+      .populate("class", "name stream displayName")
       .lean();
 
-    if (!announcement) return res.status(404).json({ message: 'Announcement not found.' });
-
-    // If requester is teacher, ensure relevance
-    if (req.user.role === 'teacher') {
-      let teacherClasses = req.user.classes;
-      if (!Array.isArray(teacherClasses) || teacherClasses.length === 0) {
-        const teacher = await User.findById(req.user._id).select('classes').lean();
-        teacherClasses = teacher?.classes || [];
-      }
-
-      const targetsTeacher = Array.isArray(announcement.targetRoles)
-        ? announcement.targetRoles.includes('teacher') || announcement.targetRoles.includes('all') || announcement.targetRoles.includes('everyone')
-        : ['teacher', 'all', 'everyone'].includes(announcement.targetRoles);
-
-      const classIsOurs = announcement.class && teacherClasses.some(c => String(c) === String(announcement.class._id));
-
-      if (!targetsTeacher && !classIsOurs) {
-        return res.status(403).json({ message: 'You are not allowed to view this announcement.' });
-      }
+    if (!announcement) {
+      return res.status(404).json({ message: "Announcement not found." });
     }
 
-    // If requester is student, ensure it's for their class or school-wide for students
-    if (req.user.role === 'student') {
-      const student = await Student.findOne({ user: req.user._id, school: schoolId });
-      if (!student) return res.status(404).json({ message: 'Student record not found.' });
-
-      const isForTheirClass = announcement.class && String(announcement.class._id) === String(student.class);
-      const isSchoolWideForStudents = !announcement.class && 
-        Array.isArray(announcement.targetRoles) && 
-        announcement.targetRoles.some(role => ['student', 'all', 'everyone'].includes(role));
-
-      if (!isForTheirClass && !isSchoolWideForStudents) {
-        return res.status(403).json({ message: 'You are not allowed to view this announcement.' });
-      }
+    // ----------------------------------------------------------
+    // 🔐 ADMIN — FULL ACCESS
+    // ----------------------------------------------------------
+    if (user.role === "admin") {
+      return res.json(announcement);
     }
 
-    // If requester is parent, ensure it's for their child's class or school-wide for parents
-    if (req.user.role === 'parent') {
+    // ----------------------------------------------------------
+    // 🧑‍🏫 TEACHER ACCESS
+    // ----------------------------------------------------------
+    if (user.role === "teacher") {
+      const teacherDoc = await Teacher.findOne({
+        user: user._id,
+        school: schoolId
+      })
+        .select("assignedClass assignedClasses")
+        .lean();
+
+      const teacherClasses = [];
+      if (teacherDoc?.assignedClass) {
+        teacherClasses.push(String(teacherDoc.assignedClass));
+      }
+      if (Array.isArray(teacherDoc?.assignedClasses)) {
+        teacherClasses.push(
+          ...teacherDoc.assignedClasses.map(c => String(c))
+        );
+      }
+
+      const targetsTeacher =
+        Array.isArray(announcement.targetRoles) &&
+        announcement.targetRoles.includes("teacher");
+
+      const classIsOurs =
+        announcement.class &&
+        teacherClasses.includes(String(announcement.class._id));
+
+      const createdByMe =
+        String(announcement.sentBy._id) === String(user._id);
+
+      if (!targetsTeacher && !classIsOurs && !createdByMe) {
+        return res.status(403).json({
+          message: "You are not allowed to view this announcement."
+        });
+      }
+
+      return res.json(announcement);
+    }
+
+    // ----------------------------------------------------------
+    // 🎓 STUDENT ACCESS
+    // ----------------------------------------------------------
+    if (user.role === "student") {
+      const student = await Student.findOne({
+        user: user._id,
+        school: schoolId
+      }).lean();
+
+      if (!student) {
+        return res.status(404).json({ message: "Student record not found." });
+      }
+
+      const isForTheirClass =
+        announcement.class &&
+        String(announcement.class._id) === String(student.class);
+
+      const targetsStudent =
+        Array.isArray(announcement.targetRoles) &&
+        announcement.targetRoles.includes("student");
+
+      if (!isForTheirClass || !targetsStudent) {
+        return res.status(403).json({
+          message: "You are not allowed to view this announcement."
+        });
+      }
+
+      return res.json(announcement);
+    }
+
+    // ----------------------------------------------------------
+    // 👪 PARENT ACCESS
+    // ----------------------------------------------------------
+    if (user.role === "parent") {
       const { childId, studentId } = req.query;
       const targetId = childId || studentId;
-      
+
       if (!targetId) {
-        return res.status(400).json({ message: 'Missing childId or studentId for parent access.' });
+        return res.status(400).json({
+          message: "Missing childId or studentId."
+        });
       }
 
       const student = await Student.findOne({
         _id: targetId,
         school: schoolId,
         $or: [
-          { parent: req.user._id },
-          { parentIds: { $in: [req.user._id] } }
+          { parent: user._id },
+          { parentIds: { $in: [user._id] } }
         ]
-      });
+      }).lean();
 
-      if (!student) return res.status(403).json({ message: 'Unauthorized access to student record.' });
-
-      const isForTheirClass = announcement.class && String(announcement.class._id) === String(student.class);
-      const isSchoolWideForParents = !announcement.class && 
-        Array.isArray(announcement.targetRoles) && 
-        announcement.targetRoles.some(role => ['parent', 'all', 'everyone'].includes(role));
-
-      if (!isForTheirClass && !isSchoolWideForParents) {
-        return res.status(403).json({ message: 'You are not allowed to view this announcement.' });
+      if (!student) {
+        return res.status(403).json({
+          message: "Unauthorized child access."
+        });
       }
+
+      const isForTheirClass =
+        announcement.class &&
+        String(announcement.class._id) === String(student.class);
+
+      const targetsParent =
+        Array.isArray(announcement.targetRoles) &&
+        announcement.targetRoles.includes("parent");
+
+      if (!isForTheirClass || !targetsParent) {
+        return res.status(403).json({
+          message: "You are not allowed to view this announcement."
+        });
+      }
+
+      return res.json(announcement);
     }
 
-    res.json(announcement);
+    // ----------------------------------------------------------
+    // 🚫 FALLBACK
+    // ----------------------------------------------------------
+    return res.status(403).json({
+      message: "You are not authorized to view this announcement."
+    });
+
   } catch (err) {
-    console.error('Error fetching announcement by id:', err);
-    res.status(500).json({ message: 'Error fetching announcement', error: err.message });
+    console.error("❌ Error fetching announcement by id:", err);
+    return res.status(500).json({
+      message: "Error fetching announcement",
+      error: err.message
+    });
   }
 };
+
 
 /**
  * Update an announcement (admin or owning teacher)
@@ -641,25 +825,45 @@ exports.updateAnnouncement = async (req, res) => {
     const user = req.user;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: 'Invalid announcement id.' });
+      return res.status(400).json({ message: "Invalid announcement id." });
     }
 
-    const announcement = await Announcement.findOne({ _id: id, school: user.school, isDeleted: { $ne: true } });
-    if (!announcement) return res.status(404).json({ message: 'Announcement not found.' });
+    const announcement = await Announcement.findOne({
+      _id: id,
+      school: user.school,
+      isDeleted: { $ne: true },
+    });
 
-    if (user.role === 'teacher' && String(announcement.sentBy) !== String(user._id)) {
-      return res.status(403).json({ message: 'You are not allowed to edit this announcement.' });
+    if (!announcement) {
+      return res.status(404).json({ message: "Announcement not found." });
     }
 
-    if (updates.class && user.role !== 'admin') {
-      return res.status(403).json({ message: 'Teachers cannot change the class.' });
+    // --------------------------------------------------
+    // 🔐 PERMISSIONS
+    // --------------------------------------------------
+    if (user.role === "teacher" && String(announcement.sentBy) !== String(user._id)) {
+      return res.status(403).json({
+        message: "You are not allowed to edit this announcement.",
+      });
     }
 
-    const allowedForAll = ['title', 'message', 'targetRoles'];
-    const allowedForAdminOnly = ['class'];
+    if (updates.class && user.role !== "admin") {
+      return res.status(403).json({
+        message: "Teachers cannot change the class.",
+      });
+    }
+
+    // --------------------------------------------------
+    // 🧹 SANITIZE UPDATES
+    // --------------------------------------------------
+    const allowedForAll = ["title", "message", "targetRoles"];
+    const allowedForAdminOnly = ["class"];
 
     Object.keys(updates).forEach(key => {
-      if (allowedForAll.includes(key) || (user.role === 'admin' && allowedForAdminOnly.includes(key))) {
+      if (
+        allowedForAll.includes(key) ||
+        (user.role === "admin" && allowedForAdminOnly.includes(key))
+      ) {
         announcement[key] = updates[key];
       }
     });
@@ -667,61 +871,106 @@ exports.updateAnnouncement = async (req, res) => {
     announcement.updatedAt = new Date();
     await announcement.save();
 
-    // CREATE NOTIFICATION
-    const notif = await Notification.create({
-      title: "Announcement Updated",
-      sender: user._id,
-      school: user.school,
-      message: `Announcement updated: ${announcement.title}`,
-      type: "announcement",
-      audience: announcement.class ? "class" : "all",
-      class: announcement.class || null,
-      recipientRoles: announcement.class ? ["student", "parent"] : ["student", "parent", "teacher"],
-      announcementId: announcement._id
-    });
+    // --------------------------------------------------
+    // 🎯 RESOLVE RECIPIENT ROLES (STRICT)
+    // --------------------------------------------------
+    const resolvedRoles = Array.isArray(announcement.targetRoles)
+      ? announcement.targetRoles
+      : [];
 
-    // GET RECIPIENT USERS (from announcement)
     let recipientUsers = [];
 
+    // --------------------------------------------------
+    // 👨‍🏫 CLASS-BASED ANNOUNCEMENT
+    // --------------------------------------------------
     if (announcement.class) {
       const students = await Student.find({
         class: announcement.class,
-        school: user.school
-      }).select("user parent parentIds");
+        school: user.school,
+      })
+        .select("user parent parentIds")
+        .lean();
 
       students.forEach(s => {
-        if (s.user) recipientUsers.push(String(s.user));
-        if (s.parent) recipientUsers.push(String(s.parent));
-        if (Array.isArray(s.parentIds))
-          s.parentIds.forEach(pid => recipientUsers.push(String(pid)));
+        if (resolvedRoles.includes("student") && s.user) {
+          recipientUsers.push(String(s.user));
+        }
+
+        if (resolvedRoles.includes("parent")) {
+          if (s.parent) recipientUsers.push(String(s.parent));
+          if (Array.isArray(s.parentIds)) {
+            s.parentIds.forEach(pid => recipientUsers.push(String(pid)));
+          }
+        }
       });
-    } else {
+    }
+
+    // --------------------------------------------------
+    // 🌍 SCHOOL-WIDE ANNOUNCEMENT
+    // --------------------------------------------------
+    else {
       const users = await User.find({
         school: user.school,
-        role: { $in: ["student", "parent", "teacher"] }
-      }).select("_id");
+        role: { $in: resolvedRoles },
+      })
+        .select("_id role")
+        .lean();
 
-      recipientUsers = users.map(u => String(u._id));
+      // 🔒 defensive role filtering
+      recipientUsers = users
+        .filter(u => resolvedRoles.includes(u.role))
+        .map(u => String(u._id));
     }
 
     recipientUsers = [...new Set(recipientUsers)];
 
-    // 🔔 PUSH
-    await sendPush(
-      recipientUsers,
-      "Announcement Updated",
-      `Updated: ${announcement.title}`
-    );
+    // --------------------------------------------------
+    // 📣 NOTIFICATION DOC
+    // --------------------------------------------------
+    if (recipientUsers.length > 0) {
+      await Notification.create({
+        title: "Announcement Updated",
+        sender: user._id,
+        school: user.school,
+        message: `Announcement updated: ${announcement.title}`,
+        type: "announcement",
+        audience: announcement.class ? "class" : "all",
+        class: announcement.class || null,
+        recipientUsers,
+        recipientRoles: resolvedRoles,
+        announcementId: announcement._id,
+      });
+    }
 
+    // --------------------------------------------------
+    // 🔔 PUSH NOTIFICATION
+    // --------------------------------------------------
+    if (recipientUsers.length > 0) {
+      await sendPush(
+        recipientUsers,
+        "Announcement Updated",
+        `Updated: ${announcement.title}`
+      );
+    }
+
+    // --------------------------------------------------
+    // ✅ RESPONSE
+    // --------------------------------------------------
     const populated = await Announcement.findById(announcement._id)
-      .populate('sentBy', 'name role')
-      .populate('class', 'name')
+      .populate("sentBy", "name role")
+      .populate("class", "name")
       .lean();
 
-    res.json({ message: 'Announcement updated', announcement: populated });
+    return res.json({
+      message: "Announcement updated",
+      announcement: populated,
+    });
   } catch (err) {
-    console.error('Error updating announcement:', err);
-    res.status(500).json({ message: 'Error updating announcement', error: err.message });
+    console.error("❌ Error updating announcement:", err);
+    return res.status(500).json({
+      message: "Error updating announcement",
+      error: err.message,
+    });
   }
 };
 
