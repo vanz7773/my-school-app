@@ -108,40 +108,18 @@ function isKgClass(className = "") {
 /**
  * Determines SBA master key (e.g. Basic_1, Basic_2, KG_1, Nursery_1, etc.)
  */
-function getClassLevelKey(className = "") {
-  const name = className.toLowerCase().trim();
+function getClassLevelKey(className) {
+  if (!className) return null;
+  const cleaned = className.trim().replace(/\s+/g, "_");
 
-  // 🥇 GRADE → BASIC mapping (MAIN FIX)
-  for (let i = 1; i <= 6; i++) {
-    if (name.includes(`grade ${i}`)) {
-      return `Basic_${i}`;
-    }
-  }
+  if (isJhsClass(className)) return cleaned;
+  if (isBasic1to6(className)) return cleaned;
+  if (isNurseryClass(className)) return cleaned;
+  if (isKgClass(className)) return cleaned;
 
-  // 📘 BASIC 1–6
-  for (let i = 1; i <= 6; i++) {
-    if (name.includes(`basic ${i}`)) {
-      return `Basic_${i}`;
-    }
-  }
-
-  // 🎓 JHS (Basic 7–9)
-  if (name.includes("basic 7")) return "Basic_7";
-  if (name.includes("basic 8")) return "Basic_8";
-  if (name.includes("basic 9")) return "Basic_9";
-
-  // 🧸 KG
-  if (name.includes("kg 1")) return "KG_1";
-  if (name.includes("kg 2")) return "KG_2";
-
-  // 🧒 Nursery
-  if (name.includes("nursery 1")) return "Nursery_1";
-  if (name.includes("nursery 2")) return "Nursery_2";
-
-  // ❌ Unsupported class type
-  throw new Error(`Unsupported class level for SBA: "${className}"`);
+  // fallback — allow any other class names as-is
+  return cleaned;
 }
-
 
 async function getStudentTermAttendance(studentId, termId, schoolId) {
   const result = await StudentAttendance.aggregate([
