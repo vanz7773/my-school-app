@@ -86,39 +86,347 @@ function templateKeyToDestination(key) {
   return `templates/SBA-${cleaned.replace(/[^A-Za-z0-9_\-]/g, "_")}.xlsx`;
 }
 
-// JHS check
+// JHS check - flexible
 function isJhsClass(className = "") {
-  return /\bbasic\s*7\b|\bbasic\s*8\b|\bbasic\s*9\b/i.test(className);
+  return /\b(basic\s*7|basic\s*8|basic\s*9|grade\s*7|grade\s*8|grade\s*9|jhs\s*1|jhs\s*2|jhs\s*3|class\s*7|class\s*8|class\s*9)\b/i.test(className);
 }
 
-// BASIC 1–6 check
+// BASIC 1–6 check - flexible
 function isBasic1to6(className = "") {
-  return /\bbasic\s*[1-6]\b/i.test(className);
+  return /\b(basic\s*[1-6]|grade\s*[1-6]|class\s*[1-6]|primary\s*[1-6]|std\s*[1-6]|p\s*[1-6])\b/i.test(className);
 }
 
-// ✅ NEW: Nursery & KG checks
+// ✅ NEW: Nursery & KG checks - flexible
 function isNurseryClass(className = "") {
-  return /\bnursery\s*[1-2]\b/i.test(className);
+  return /\b(nursery\s*[1-2]|pre-nursery|nurs\s*[1-2])\b/i.test(className);
 }
 
 function isKgClass(className = "") {
-  return /\bkg\s*[1-2]\b/i.test(className);
+  return /\b(kg\s*[1-2]|kindergarten\s*[1-2]|k\s*g\s*[1-2])\b/i.test(className);
+}
+
+// Helper function for logging (add this at the top of your controller)
+function log(message, data = null) {
+  const timestamp = new Date().toISOString();
+  const logEntry = data ? `[${timestamp}] ${message}: ${JSON.stringify(data)}` : `[${timestamp}] ${message}`;
+  console.log(logEntry);
+  return logEntry;
 }
 
 /**
- * Determines SBA master key (e.g. Basic_1, Basic_2, KG_1, Nursery_1, etc.)
+ * Determines SBA master key with flexible class name mappings
  */
 function getClassLevelKey(className) {
   if (!className) return null;
-  const cleaned = className.trim().replace(/\s+/g, "_");
-
-  if (isJhsClass(className)) return cleaned;
-  if (isBasic1to6(className)) return cleaned;
-  if (isNurseryClass(className)) return cleaned;
-  if (isKgClass(className)) return cleaned;
-
-  // fallback — allow any other class names as-is
+  
+  const cleaned = className.trim().replace(/\s+/g, "_").toUpperCase();
+  
+  console.log(`📝 Raw class name: "${className}" → Cleaned: "${cleaned}"`);
+  
+  // 📚 FLEXIBLE CLASS NAME MAPPINGS
+  const classMappings = {
+    // Map GRADE_X to BASIC_X
+    'GRADE_1': 'BASIC_1',
+    'GRADE_2': 'BASIC_2',
+    'GRADE_3': 'BASIC_3',
+    'GRADE_4': 'BASIC_4',
+    'GRADE_5': 'BASIC_5',
+    'GRADE_6': 'BASIC_6',
+    'GRADE_7': 'BASIC_7',
+    'GRADE_8': 'BASIC_8',
+    'GRADE_9': 'BASIC_9',
+    
+    // Map CLASS_X to BASIC_X
+    'CLASS_1': 'BASIC_1',
+    'CLASS_2': 'BASIC_2',
+    'CLASS_3': 'BASIC_3',
+    'CLASS_4': 'BASIC_4',
+    'CLASS_5': 'BASIC_5',
+    'CLASS_6': 'BASIC_6',
+    'CLASS_7': 'BASIC_7',
+    'CLASS_8': 'BASIC_8',
+    'CLASS_9': 'BASIC_9',
+    
+    // Map PRIMARY_X to BASIC_X
+    'PRIMARY_1': 'BASIC_1',
+    'PRIMARY_2': 'BASIC_2',
+    'PRIMARY_3': 'BASIC_3',
+    'PRIMARY_4': 'BASIC_4',
+    'PRIMARY_5': 'BASIC_5',
+    'PRIMARY_6': 'BASIC_6',
+    
+    // Map STD_X to BASIC_X
+    'STD_1': 'BASIC_1',
+    'STD_2': 'BASIC_2',
+    'STD_3': 'BASIC_3',
+    'STD_4': 'BASIC_4',
+    'STD_5': 'BASIC_5',
+    'STD_6': 'BASIC_6',
+    
+    // Map JHS_X to BASIC_X+3
+    'JHS_1': 'BASIC_7',
+    'JHS_2': 'BASIC_8',
+    'JHS_3': 'BASIC_9',
+    
+    // Map P_X to BASIC_X
+    'P_1': 'BASIC_1',
+    'P_2': 'BASIC_2',
+    'P_3': 'BASIC_3',
+    'P_4': 'BASIC_4',
+    'P_5': 'BASIC_5',
+    'P_6': 'BASIC_6',
+    
+    // KG variations
+    'KINDERGARTEN_1': 'KG_1',
+    'KINDERGARTEN_2': 'KG_2',
+    'KINDERGARTEN_3': 'KG_3',
+    'K_G_1': 'KG_1',
+    'K_G_2': 'KG_2',
+    
+    // Nursery variations
+    'NURSERY_ONE': 'NURSERY_1',
+    'NURSERY_TWO': 'NURSERY_2',
+    'PRE_NURSERY': 'NURSERY_1',
+  };
+  
+  // Check if we have a direct mapping
+  if (classMappings[cleaned]) {
+    const mappedKey = classMappings[cleaned];
+    console.log(`🗺️ Class name mapped: "${cleaned}" → "${mappedKey}"`);
+    return mappedKey;
+  }
+  
+  // Check patterns with regex for flexibility
+  const patterns = [
+    // Match GRADE/CLASS/PRIMARY/STD/P followed by number
+    { regex: /^(GRADE|CLASS|PRIMARY|STD|P)_([1-9])$/i, 
+      replacer: (match, prefix, num) => {
+        const number = parseInt(num);
+        return `BASIC_${number}`; // BASIC_1 through BASIC_9
+      }
+    },
+    // Match JHS followed by number
+    { regex: /^JHS_([1-3])$/i, 
+      replacer: (match, num) => `BASIC_${parseInt(num) + 6}` // JHS_1 → BASIC_7
+    },
+    // Match KG variations
+    { regex: /^(KG|KINDERGARTEN|K_G)_([1-3])$/i, 
+      replacer: (match, prefix, num) => `KG_${num}`
+    },
+    // Match Nursery variations
+    { regex: /^(NURSERY|PRE_NURSERY|NURS)_([1-2]|ONE|TWO)$/i, 
+      replacer: (match, prefix, num) => {
+        if (num === 'ONE') return 'NURSERY_1';
+        if (num === 'TWO') return 'NURSERY_2';
+        return `NURSERY_${num}`;
+      }
+    }
+  ];
+  
+  for (const pattern of patterns) {
+    const match = cleaned.match(pattern.regex);
+    if (match) {
+      const mappedKey = pattern.replacer(...match);
+      console.log(`🔀 Pattern matched: "${cleaned}" → "${mappedKey}"`);
+      return mappedKey;
+    }
+  }
+  
+  // Check if it's already a standard key
+  const standardKeys = [
+    'BASIC_1', 'BASIC_2', 'BASIC_3', 'BASIC_4', 'BASIC_5', 'BASIC_6',
+    'BASIC_7', 'BASIC_8', 'BASIC_9',
+    'KG_1', 'KG_2', 'KG_3',
+    'NURSERY_1', 'NURSERY_2'
+  ];
+  
+  if (standardKeys.includes(cleaned)) {
+    console.log(`✅ Already standard key: "${cleaned}"`);
+    return cleaned;
+  }
+  
+  // Try to extract number from any class name
+  const numberMatch = cleaned.match(/(\d+)/);
+  if (numberMatch) {
+    const num = parseInt(numberMatch[1]);
+    if (num >= 1 && num <= 6) {
+      const key = `BASIC_${num}`;
+      console.log(`🔢 Extracted number ${num} from "${cleaned}" → "${key}"`);
+      return key;
+    } else if (num >= 7 && num <= 9) {
+      const key = `BASIC_${num}`;
+      console.log(`🔢 Extracted number ${num} from "${cleaned}" → "${key}"`);
+      return key;
+    }
+  }
+  
+  console.log(`⚠️ No mapping found for: "${cleaned}", using as-is`);
   return cleaned;
+}
+
+// Helper function to debug available templates
+async function debugAvailableTemplates(schoolId, classLevelKey) {
+  console.log(`[DEBUG] Checking templates for school: ${schoolId}, classKey: ${classLevelKey}`);
+  
+  // 1. Check global templates
+  const globalTemplates = await SbaTemplate.find({}).lean();
+  console.log(`[DEBUG] Global templates available: ${globalTemplates.map(t => t.key).join(', ')}`);
+  
+  // 2. Check school's sbaMaster
+  const school = await School.findById(schoolId).select('sbaMaster').lean();
+  if (school?.sbaMaster) {
+    console.log(`[DEBUG] School SBA master keys: ${Object.keys(school.sbaMaster).join(', ')}`);
+  } else {
+    console.log('[DEBUG] School has no SBA master');
+  }
+  
+  // 3. Check all class names in the school to understand patterns
+  const classes = await Class.find({ school: schoolId }).select('name displayName').lean();
+  console.log(`[DEBUG] All class names in school:`);
+  classes.forEach(cls => {
+    console.log(`[DEBUG]   - "${cls.name}" (display: "${cls.displayName}") → key: "${getClassLevelKey(cls.name)}"`);
+  });
+  
+  return {
+    globalTemplates: globalTemplates.map(t => t.key),
+    schoolKeys: school?.sbaMaster ? Object.keys(school.sbaMaster) : [],
+    classNames: classes.map(c => ({ name: c.name, key: getClassLevelKey(c.name) }))
+  };
+}
+
+// Helper function for flexible template fallback
+async function findFlexibleTemplate(school, classLevelKey) {
+  console.log(`🔍 Starting flexible template search for key: ${classLevelKey}`);
+  
+  // 1. First, check for alternative global template keys
+  const globalTemplateKeys = await SbaTemplate.find({}).distinct('key');
+  console.log(`🔍 Available global template keys: ${globalTemplateKeys.join(', ')}`);
+  
+  let globalTemplate = null;
+  let usedKey = classLevelKey;
+  
+  // Try exact match first
+  globalTemplate = await SbaTemplate.findOne({ key: classLevelKey }).lean();
+  
+  // If not found, try case-insensitive
+  if (!globalTemplate) {
+    globalTemplate = await SbaTemplate.findOne({
+      key: { $regex: new RegExp(`^${classLevelKey}$`, 'i') }
+    }).lean();
+    if (globalTemplate) {
+      console.log(`🔍 Found global template (case-insensitive): ${globalTemplate.key}`);
+      usedKey = globalTemplate.key;
+    }
+  }
+  
+  // If still not found, try to find any template with same number
+  if (!globalTemplate) {
+    const numMatch = classLevelKey.match(/\d+/);
+    if (numMatch) {
+      const num = numMatch[0];
+      const templatesWithSameNumber = await SbaTemplate.find({
+        key: new RegExp(num + '$')
+      }).lean();
+      
+      console.log(`🔍 Templates with number ${num}: ${templatesWithSameNumber.map(t => t.key).join(', ')}`);
+      
+      if (templatesWithSameNumber.length > 0) {
+        // Prioritize BASIC templates for numbers 1-9
+        const basicTemplate = templatesWithSameNumber.find(t => 
+          t.key.toUpperCase().startsWith('BASIC_')
+        );
+        if (basicTemplate) {
+          globalTemplate = basicTemplate;
+          usedKey = basicTemplate.key;
+          console.log(`🔍 Found BASIC template with same number: ${usedKey}`);
+        } else {
+          globalTemplate = templatesWithSameNumber[0];
+          usedKey = globalTemplate.key;
+          console.log(`🔍 Found template with same number: ${usedKey}`);
+        }
+      }
+    }
+  }
+  
+  // If still not found, check school's existing templates for similar key
+  if (!globalTemplate && school?.sbaMaster) {
+    const schoolKeys = Object.keys(school.sbaMaster);
+    console.log(`🔍 Checking school templates for fallback: ${schoolKeys.join(', ')}`);
+    
+    // Look for templates with same number
+    const numMatch = classLevelKey.match(/\d+/);
+    if (numMatch) {
+      const num = numMatch[0];
+      const similarSchoolKey = schoolKeys.find(key => key.includes(num));
+      
+      if (similarSchoolKey) {
+        console.log(`🔍 Found school template with same number: ${similarSchoolKey}`);
+        // We can't return this directly, but we can use it to find corresponding global template
+        globalTemplate = await SbaTemplate.findOne({
+          key: { $regex: new RegExp(similarSchoolKey.replace(/\d+$/, ''), 'i') }
+        }).lean();
+        
+        if (globalTemplate) {
+          usedKey = globalTemplate.key;
+          console.log(`🔍 Found corresponding global template: ${usedKey}`);
+        }
+      }
+    }
+  }
+  
+  return {
+    found: !!globalTemplate,
+    template: globalTemplate,
+    usedKey,
+    availableKeys: globalTemplateKeys
+  };
+}
+
+// Helper function to find similar key in school SBA master
+function findSimilarSchoolKey(school, classLevelKey) {
+  if (!school?.sbaMaster) return null;
+  
+  const allKeys = Object.keys(school.sbaMaster);
+  console.log(`🔍 Looking for similar key among: ${allKeys.join(', ')}`);
+  
+  // 1. Case-insensitive exact match
+  const caseInsensitiveMatch = allKeys.find(key => 
+    key.toUpperCase() === classLevelKey.toUpperCase()
+  );
+  if (caseInsensitiveMatch) {
+    console.log(`🔍 Found case-insensitive match: ${caseInsensitiveMatch}`);
+    return caseInsensitiveMatch;
+  }
+  
+  // 2. Match by number
+  const numMatch = classLevelKey.match(/\d+/);
+  if (numMatch) {
+    const num = numMatch[0];
+    const sameNumberKey = allKeys.find(key => {
+      const keyNum = (key.match(/\d+/) || [])[0];
+      return keyNum === num;
+    });
+    
+    if (sameNumberKey) {
+      console.log(`🔍 Found key with same number (${num}): ${sameNumberKey}`);
+      return sameNumberKey;
+    }
+  }
+  
+  // 3. Match by level (Basic vs JHS vs KG vs Nursery)
+  const levelMatch = allKeys.find(key => {
+    const level1 = classLevelKey.split('_')[0]; // e.g., "BASIC" from "BASIC_1"
+    const level2 = key.split('_')[0]; // e.g., "BASIC" from "BASIC_2"
+    return level1 === level2;
+  });
+  
+  if (levelMatch) {
+    console.log(`🔍 Found key with same level: ${levelMatch}`);
+    return levelMatch;
+  }
+  
+  console.log(`🔍 No similar key found for: ${classLevelKey}`);
+  return null;
 }
 
 async function getStudentTermAttendance(studentId, termId, schoolId) {
@@ -420,42 +728,79 @@ exports.downloadClassTemplate = async (req, res) => {
     const subject = teacher.subject;
     log("📚 Teacher subject", { subject });
 
-    // Check if school master exists
-    log("🔍 Checking school SBA master", {
+    // ====================================================
+    // ✅ FLEXIBLE TEMPLATE HANDLING SECTION (UPDATED)
+    // ====================================================
+    log("🔍 Checking school SBA master with flexible matching", {
       sbaMasterExists: !!school.sbaMaster,
       classLevelKey,
-      hasKey: school.sbaMaster?.[classLevelKey] ? true : false
+      hasKey: school.sbaMaster?.[classLevelKey] ? true : false,
+      allSchoolKeys: Object.keys(school.sbaMaster || {})
     });
 
+    // ✅ FLEXIBLE TEMPLATE FALLBACK
+    let actualMasterKey = classLevelKey;
+
+    // If school doesn't have this key, try to find a similar one
     if (!school.sbaMaster?.[classLevelKey]) {
-      log("📄 School master missing, cloning global template");
+      log("📄 School master missing for exact key, checking alternatives...");
       
-      const globalTemplate = await SbaTemplate.findOne({ key: classLevelKey }).lean();
-      log("🔍 Global template search", {
-        found: !!globalTemplate,
-        key: classLevelKey,
-        template: globalTemplate ? {
-          path: globalTemplate.path,
-          url: globalTemplate.url
+      const similarKey = findSimilarSchoolKey(school, classLevelKey);
+      
+      if (similarKey) {
+        log(`🔄 Using similar key instead: ${similarKey}`);
+        actualMasterKey = similarKey;
+        log(`✅ Found school template for key: ${similarKey}`);
+      } else {
+        log("❌ No similar school key found, will attempt to clone global template");
+      }
+    }
+
+    if (!school.sbaMaster?.[actualMasterKey]) {
+      log("📄 School master missing, attempting to clone global template with flexible search");
+      
+      const templateSearch = await findFlexibleTemplate(school, classLevelKey);
+      
+      log("🔍 Global template search result", {
+        found: !!templateSearch.template,
+        originalKey: classLevelKey,
+        usedKey: templateSearch.usedKey,
+        availableKeys: templateSearch.availableKeys,
+        template: templateSearch.template ? {
+          path: templateSearch.template.path,
+          url: templateSearch.template.url,
+          key: templateSearch.template.key
         } : null
       });
 
-      if (!globalTemplate) {
-        log("❌ ERROR: Global template not found");
+      if (!templateSearch.template) {
+        // Run debug to show what's available
+        const debugInfo = await debugAvailableTemplates(school._id, classLevelKey);
+        
+        log("❌ ERROR: No suitable global template found");
         return res.status(404).json({
-          message: "SBA template has not been uploaded yet. Please contact the administrator.",
-          logs: logMessages
+          message: `SBA template for "${className}" has not been uploaded yet.`,
+          details: {
+            requestedClass: className,
+            requestedKey: classLevelKey,
+            availableGlobalTemplates: debugInfo.globalTemplates,
+            availableSchoolTemplates: debugInfo.schoolKeys,
+            classNamesInSchool: debugInfo.classNames,
+            suggestion: `Please upload a template for "${classLevelKey}" or use one of: ${debugInfo.globalTemplates.join(', ')}`
+          },
+          logs: logMessages.slice(-20) // Last 20 logs for context
         });
       }
 
+      // Clone the found template
       let buffer;
-      if (globalTemplate.path) {
-        log("📥 Downloading template from Firebase path", { path: globalTemplate.path });
-        [buffer] = await bucket.file(globalTemplate.path).download();
-      } else if (globalTemplate.url) {
-        log("🌐 Downloading template from URL", { url: globalTemplate.url });
+      if (templateSearch.template.path) {
+        log("📥 Downloading template from Firebase path", { path: templateSearch.template.path });
+        [buffer] = await bucket.file(templateSearch.template.path).download();
+      } else if (templateSearch.template.url) {
+        log("🌐 Downloading template from URL", { url: templateSearch.template.url });
         const axios = require("axios");
-        const resp = await axios.get(globalTemplate.url, { responseType: "arraybuffer" });
+        const resp = await axios.get(templateSearch.template.url, { responseType: "arraybuffer" });
         buffer = resp.data;
       } else {
         log("❌ ERROR: Global template missing file reference");
@@ -465,6 +810,7 @@ exports.downloadClassTemplate = async (req, res) => {
         });
       }
 
+      // Use the original classLevelKey for the school path, not the found key
       const schoolPath = `templates/${school._id}/${classLevelKey}_master.xlsx`;
       tempFilePath = path.join("uploads", `clone_${school._id}_${Date.now()}.xlsx`);
       
@@ -490,12 +836,14 @@ exports.downloadClassTemplate = async (req, res) => {
           [`sbaMaster.${classLevelKey}`]: {
             path: schoolPath,
             url: `https://storage.googleapis.com/${bucket.name}/${schoolPath}`,
+            sourceTemplate: templateSearch.template.key, // Track which template was used
             createdAt: new Date(),
             updatedAt: new Date(),
           },
         },
       });
       
+      // Update local school object for this request
       school.sbaMaster = school.sbaMaster || {};
       school.sbaMaster[classLevelKey] = {
         path: schoolPath,
@@ -504,16 +852,26 @@ exports.downloadClassTemplate = async (req, res) => {
       
       log("✅ School master initialized", {
         schoolPath,
-        url: school.sbaMaster[classLevelKey].url
+        url: school.sbaMaster[classLevelKey].url,
+        sourceTemplate: templateSearch.template.key
       });
     }
 
     // Download master file
     log("📥 Downloading master file from Firebase", {
-      path: school.sbaMaster[classLevelKey].path
+      path: school.sbaMaster?.[classLevelKey]?.path || school.sbaMaster?.[actualMasterKey]?.path
     });
     
-    const masterFile = bucket.file(school.sbaMaster[classLevelKey].path);
+    const masterFilePath = school.sbaMaster?.[classLevelKey]?.path || school.sbaMaster?.[actualMasterKey]?.path;
+    if (!masterFilePath) {
+      log("❌ ERROR: No master file path found");
+      return res.status(500).json({ 
+        message: "No master file path found",
+        logs: logMessages 
+      });
+    }
+    
+    const masterFile = bucket.file(masterFilePath);
     const [masterBuffer] = await masterFile.download();
     log("✅ Master file downloaded", { size: masterBuffer.length });
 
@@ -707,7 +1065,11 @@ exports.downloadClassTemplate = async (req, res) => {
     log("📤 Sending response", {
       filename,
       bufferSize: finalBuffer.length,
-      isClassTeacher
+      isClassTeacher,
+      classDisplayName,
+      classLevelKey,
+      actualMasterKey,
+      templateSource: school.sbaMaster?.[classLevelKey]?.sourceTemplate || 'direct'
     });
 
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
