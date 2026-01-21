@@ -457,6 +457,15 @@ exports.downloadClassTemplate = async (req, res) => {
   let tempFilePath = null;
   let logMessages = []; // Array to collect all logs for debugging
   
+  // Helper function to clean strings for HTTP headers
+  const safeForHeader = (str) => {
+    if (!str) return '';
+    return String(str)
+      .replace(/[\r\n\t]/g, ' ')  // Replace control characters with spaces
+      .replace(/[^\x20-\x7E]/g, '') // Remove non-printable ASCII
+      .substring(0, 1000); // Limit length
+  };
+  
   const log = (message, data = null) => {
     const timestamp = new Date().toISOString();
     const logEntry = data ? `[${timestamp}] ${message}: ${JSON.stringify(data)}` : `[${timestamp}] ${message}`;
@@ -1072,15 +1081,37 @@ exports.downloadClassTemplate = async (req, res) => {
       templateSource: school.sbaMaster?.[classLevelKey]?.sourceTemplate || 'direct'
     });
 
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    // Set headers safely
+    const safeFilename = safeForHeader(filename);
+    res.setHeader("Content-Disposition", `attachment; filename="${safeFilename}"`);
     res.setHeader(
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     );
-    res.setHeader("X-Log-Count", logMessages.length);
     
-    // Send logs in response for debugging (you might want to remove this in production)
-    res.setHeader("X-Debug-Logs", JSON.stringify(logMessages.slice(-20))); // Last 20 logs
+    // Optional: Send log count (safe string)
+    res.setHeader("X-Log-Count", String(logMessages.length));
+    
+    // Only send debug logs in development mode or as base64
+    if (process.env.NODE_ENV === 'development') {
+      try {
+        // Clean logs for headers
+        const debugLogs = logMessages.slice(-20).map(log => safeForHeader(log));
+        const safeLogsString = debugLogs.join(' | ');
+        
+        // Check if it's safe for headers
+        if (/^[\x20-\x7E]*$/.test(safeLogsString)) {
+          res.setHeader("X-Debug-Logs", safeLogsString);
+        } else {
+          // If not safe, encode as base64
+          const encodedLogs = Buffer.from(safeLogsString).toString('base64');
+          res.setHeader("X-Debug-Logs-Encoded", encodedLogs);
+        }
+      } catch (headerErr) {
+        console.warn("Could not add debug logs to headers:", headerErr.message);
+        // Continue without debug headers
+      }
+    }
     
     res.send(finalBuffer);
 
@@ -1095,10 +1126,12 @@ exports.downloadClassTemplate = async (req, res) => {
     });
     
     // Send detailed error with logs
+    const safeLogs = logMessages.map(log => safeForHeader(log));
+    
     res.status(500).json({
       message: "Server error downloading class template",
       error: err.message,
-      logs: logMessages, // Include all logs in error response
+      logs: safeLogs, // Include all logs in error response
       timestamp: new Date().toISOString()
     });
   } finally {
