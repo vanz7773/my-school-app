@@ -147,132 +147,343 @@ async function getStudentTermAttendance(studentId, termId, schoolId) {
 
 exports.downloadClassTemplate = async (req, res) => {
   let tempFilePath = null;
+  let logMessages = []; // Array to collect all logs for debugging
+  
+  const log = (message, data = null) => {
+    const timestamp = new Date().toISOString();
+    const logEntry = data ? `[${timestamp}] ${message}: ${JSON.stringify(data)}` : `[${timestamp}] ${message}`;
+    console.log(logEntry);
+    logMessages.push(logEntry);
+    return logEntry;
+  };
+
   try {
-    console.log("🚀 Hybrid Download class template started");
+    log("🚀 ========== START DOWNLOAD CLASS TEMPLATE ==========");
+    log("Request received", {
+      teacherId: req.params.teacherId,
+      query: req.query,
+      headers: req.headers,
+      timestamp: new Date().toISOString()
+    });
+
     const { teacherId } = req.params;
-    if (!teacherId)
-      return res.status(400).json({ message: "teacherId is required" });
+    if (!teacherId) {
+      log("❌ ERROR: teacherId is required but missing");
+      return res.status(400).json({ 
+        message: "teacherId is required",
+        logs: logMessages 
+      });
+    }
 
+    log("🔍 Looking for teacher", { teacherId });
     const teacher = await Teacher.findById(teacherId).lean();
-    if (!teacher) return res.status(404).json({ message: "Teacher not found" });
-    const userId = teacher.user;
+    if (!teacher) {
+      log("❌ ERROR: Teacher not found");
+      return res.status(404).json({ 
+        message: "Teacher not found",
+        logs: logMessages 
+      });
+    }
+    log("✅ Teacher found", {
+      teacherId: teacher._id,
+      teacherName: teacher.name,
+      userId: teacher.user
+    });
 
+    const userId = teacher.user;
+    
     // Locate class
+    log("🔍 Looking for class by classTeacher", { userId });
     const classDoc = await Class.findOne({ classTeacher: userId }).lean();
+    
+    log("🔍 Class search result", {
+      found: !!classDoc,
+      classId: classDoc?._id,
+      className: classDoc?.name
+    });
+
     let targetClassId = classDoc?._id;
     let isClassTeacher = !!classDoc;
 
-    if (!targetClassId && teacher.assignedClasses?.length)
+    if (!targetClassId && teacher.assignedClasses?.length) {
+      log("⚠️ No class by classTeacher, using assignedClasses", {
+        assignedClasses: teacher.assignedClasses
+      });
       targetClassId = teacher.assignedClasses[0];
-    if (!targetClassId)
-      return res.status(400).json({ message: "No class found for this teacher" });
+    }
+
+    if (!targetClassId) {
+      log("❌ ERROR: No class found for this teacher");
+      return res.status(400).json({ 
+        message: "No class found for this teacher",
+        logs: logMessages 
+      });
+    }
+
+    log("🎯 Target class ID determined", { targetClassId, isClassTeacher });
 
     const classDocFinal = classDoc || (await Class.findById(targetClassId).lean());
+    if (!classDocFinal) {
+      log("❌ ERROR: Final class document not found");
+      return res.status(404).json({ 
+        message: "Class not found",
+        logs: logMessages 
+      });
+    }
+
+    log("✅ Final class document", {
+      classId: classDocFinal._id,
+      className: classDocFinal.name,
+      displayName: classDocFinal.displayName,
+      classTeacher: classDocFinal.classTeacher,
+      school: classDocFinal.school
+    });
+
     const students = await Student.find({ class: targetClassId })
       .populate("user", "name")
       .lean();
 
-    if (!students.length)
-      return res.status(400).json({ message: "No students found for this class" });
+    log("📊 Students in class", {
+      count: students.length,
+      studentIds: students.map(s => s._id),
+      studentNames: students.map(s => s.user?.name || 'No name')
+    });
+
+    if (!students.length) {
+      log("❌ ERROR: No students found for this class");
+      return res.status(400).json({ 
+        message: "No students found for this class",
+        logs: logMessages 
+      });
+    }
 
     const school = await School.findById(classDocFinal.school).lean();
-    if (!school) return res.status(404).json({ message: "School not found" });
+    if (!school) {
+      log("❌ ERROR: School not found");
+      return res.status(404).json({ 
+        message: "School not found",
+        logs: logMessages 
+      });
+    }
+
+    log("✅ School found", {
+      schoolId: school._id,
+      schoolName: school.name,
+      hasSbaMaster: !!school.sbaMaster,
+      sbaMasterKeys: Object.keys(school.sbaMaster || {})
+    });
 
     // Term / Academic Year info
     let classTeacherName = "N/A";
     if (classDocFinal.classTeacher) {
       const ct = await User.findById(classDocFinal.classTeacher).lean();
       classTeacherName = ct?.name || "N/A";
+      log("👨‍🏫 Class teacher info", {
+        classTeacherId: classDocFinal.classTeacher,
+        classTeacherName
+      });
     }
 
-    let termName = "N/A",
-      academicYear = "N/A";
+    let termName = "N/A";
+    let academicYear = "N/A";
+    let resolvedTermId = null;
 
-    let resolvedTermId = null; // ✅ IMPORTANT: expose resolved termId
+    log("📅 STARTING TERM RESOLUTION LOGIC");
+    log("Request query termId", { queryTermId: req.query.termId });
 
-try {
-  let termDoc = null;
+    try {
+      let termDoc = null;
 
-  // 🔥 1️⃣ FIRST PRIORITY: termId from frontend filter
-  if (req.query.termId) {
-    termDoc = await Term.findOne({
-      _id: req.query.termId,
-      school: classDocFinal.school,
-    }).lean();
-  }
+      // 🔥 1️⃣ FIRST PRIORITY: termId from frontend filter
+      if (req.query.termId) {
+        log("🔄 Step 1: Looking for term by frontend termId", { 
+          termId: req.query.termId,
+          schoolId: classDocFinal.school 
+        });
+        
+        termDoc = await Term.findOne({
+          _id: req.query.termId,
+          school: classDocFinal.school,
+        }).lean();
+        
+        log("🔍 Step 1 result", {
+          found: !!termDoc,
+          termDoc: termDoc ? {
+            _id: termDoc._id,
+            term: termDoc.term,
+            academicYear: termDoc.academicYear,
+            startDate: termDoc.startDate,
+            endDate: termDoc.endDate
+          } : null
+        });
+      } else {
+        log("⚠️ Step 1: No termId in query params");
+      }
 
-  // 2️⃣ Use class term if available
-  if (!termDoc && classDocFinal.termId) {
-    termDoc = await Term.findById(classDocFinal.termId).lean();
-  }
+      // 2️⃣ Use class term if available
+      if (!termDoc && classDocFinal.termId) {
+        log("🔄 Step 2: Looking for term by class.termId", { 
+          classTermId: classDocFinal.termId 
+        });
+        
+        termDoc = await Term.findById(classDocFinal.termId).lean();
+        
+        log("🔍 Step 2 result", {
+          found: !!termDoc,
+          termDoc: termDoc ? {
+            _id: termDoc._id,
+            term: termDoc.term,
+            academicYear: termDoc.academicYear
+          } : null
+        });
+      }
 
-  // 3️⃣ Fallback to active term by date
-  if (!termDoc) {
-    const today = new Date();
-    termDoc = await Term.findOne({
-      school: classDocFinal.school,
-      startDate: { $lte: today },
-      endDate: { $gte: today },
-    }).lean();
-  }
+      // 3️⃣ Fallback to active term by date
+      if (!termDoc) {
+        const today = new Date();
+        log("🔄 Step 3: Looking for active term by date", { 
+          today: today.toISOString(),
+          schoolId: classDocFinal.school 
+        });
+        
+        termDoc = await Term.findOne({
+          school: classDocFinal.school,
+          startDate: { $lte: today },
+          endDate: { $gte: today },
+        }).lean();
+        
+        log("🔍 Step 3 result", {
+          found: !!termDoc,
+          termDoc: termDoc ? {
+            _id: termDoc._id,
+            term: termDoc.term,
+            startDate: termDoc.startDate,
+            endDate: termDoc.endDate
+          } : null
+        });
+      }
 
-  // 4️⃣ Final fallback: most recent term
-  if (!termDoc) {
-    termDoc = await Term.findOne({ school: classDocFinal.school })
-      .sort({ startDate: -1 })
-      .lean();
-  }
+      // 4️⃣ Final fallback: most recent term
+      if (!termDoc) {
+        log("🔄 Step 4: Looking for most recent term");
+        
+        termDoc = await Term.findOne({ school: classDocFinal.school })
+          .sort({ startDate: -1 })
+          .lean();
+        
+        log("🔍 Step 4 result", {
+          found: !!termDoc,
+          termDoc: termDoc ? {
+            _id: termDoc._id,
+            term: termDoc.term,
+            startDate: termDoc.startDate
+          } : null
+        });
+      }
 
-  // ✅ Apply resolved term
-  if (termDoc) {
-    termName = termDoc.term || "N/A";
-    academicYear = termDoc.academicYear || "N/A";
-    resolvedTermId = termDoc._id; // ✅ THIS FIXES ATTENDANCE
-  }
+      // ✅ Apply resolved term
+      if (termDoc) {
+        termName = termDoc.term || "N/A";
+        academicYear = termDoc.academicYear || "N/A";
+        resolvedTermId = termDoc._id;
+        
+        log("✅ TERM RESOLVED SUCCESSFULLY", {
+          resolvedTermId,
+          termName,
+          academicYear
+        });
+      } else {
+        log("⚠️ WARNING: No term document found at all");
+      }
 
-} catch (e) {
-  console.error("❌ Error resolving term:", e);
-}
+    } catch (e) {
+      log("❌ ERROR in term resolution", {
+        error: e.message,
+        stack: e.stack
+      });
+    }
 
+    log("📊 Final term info", {
+      resolvedTermId: resolvedTermId ? resolvedTermId.toString() : null,
+      termName,
+      academicYear,
+      queryTermId: req.query.termId
+    });
 
     const bucket = admin.storage().bucket();
     const { className, classDisplayName } = resolveClassNames(classDocFinal);
-    const classLevelKey = getClassLevelKey(className); // Use className for logic
+    log("📝 Class name resolution", { className, classDisplayName });
+    
+    const classLevelKey = getClassLevelKey(className);
+    log("🔑 Class level key", { classLevelKey });
+    
     const subject = teacher.subject;
+    log("📚 Teacher subject", { subject });
 
-    // Ensure school master exists
+    // Check if school master exists
+    log("🔍 Checking school SBA master", {
+      sbaMasterExists: !!school.sbaMaster,
+      classLevelKey,
+      hasKey: school.sbaMaster?.[classLevelKey] ? true : false
+    });
+
     if (!school.sbaMaster?.[classLevelKey]) {
-      console.log("📄 School master missing, cloning global template");
+      log("📄 School master missing, cloning global template");
+      
       const globalTemplate = await SbaTemplate.findOne({ key: classLevelKey }).lean();
+      log("🔍 Global template search", {
+        found: !!globalTemplate,
+        key: classLevelKey,
+        template: globalTemplate ? {
+          path: globalTemplate.path,
+          url: globalTemplate.url
+        } : null
+      });
+
       if (!globalTemplate) {
+        log("❌ ERROR: Global template not found");
         return res.status(404).json({
-          message: "SBA template has not been uploaded yet. Please contact the administrator."
+          message: "SBA template has not been uploaded yet. Please contact the administrator.",
+          logs: logMessages
         });
       }
 
       let buffer;
       if (globalTemplate.path) {
+        log("📥 Downloading template from Firebase path", { path: globalTemplate.path });
         [buffer] = await bucket.file(globalTemplate.path).download();
       } else if (globalTemplate.url) {
+        log("🌐 Downloading template from URL", { url: globalTemplate.url });
         const axios = require("axios");
         const resp = await axios.get(globalTemplate.url, { responseType: "arraybuffer" });
         buffer = resp.data;
       } else {
-        return res.status(500).json({ message: "Global template missing file reference" });
+        log("❌ ERROR: Global template missing file reference");
+        return res.status(500).json({ 
+          message: "Global template missing file reference",
+          logs: logMessages 
+        });
       }
 
       const schoolPath = `templates/${school._id}/${classLevelKey}_master.xlsx`;
       tempFilePath = path.join("uploads", `clone_${school._id}_${Date.now()}.xlsx`);
+      
+      log("💾 Saving temporary file", { tempFilePath });
       fs.writeFileSync(tempFilePath, buffer);
 
+      log("☁️ Uploading to Firebase Storage", { destination: schoolPath });
       await bucket.upload(tempFilePath, {
         destination: schoolPath,
         metadata: {
           contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         },
       });
+      
       await bucket.file(schoolPath).makePublic();
+
+      log("🧹 Cleaning up temp file");
       fs.unlinkSync(tempFilePath);
+      tempFilePath = null;
 
       await School.findByIdAndUpdate(school._id, {
         $set: {
@@ -284,22 +495,38 @@ try {
           },
         },
       });
+      
       school.sbaMaster = school.sbaMaster || {};
       school.sbaMaster[classLevelKey] = {
         path: schoolPath,
         url: `https://storage.googleapis.com/${bucket.name}/${schoolPath}`,
       };
-      console.log("✅ School master initialized");
+      
+      log("✅ School master initialized", {
+        schoolPath,
+        url: school.sbaMaster[classLevelKey].url
+      });
     }
 
-    // Download master file (direct from Firebase)
+    // Download master file
+    log("📥 Downloading master file from Firebase", {
+      path: school.sbaMaster[classLevelKey].path
+    });
+    
     const masterFile = bucket.file(school.sbaMaster[classLevelKey].path);
     const [masterBuffer] = await masterFile.download();
+    log("✅ Master file downloaded", { size: masterBuffer.length });
 
-    // 🧠 Load workbook using XlsxPopulate (preserves hyperlinks + formulas)
+    // Load workbook
+    log("📊 Loading workbook with XlsxPopulate");
     const xpWorkbook = await XlsxPopulate.fromDataAsync(masterBuffer);
+    log("✅ Workbook loaded", {
+      sheetCount: xpWorkbook.sheets().length,
+      sheetNames: xpWorkbook.sheets().map(s => s.name())
+    });
 
-    // Fill sheets using XlsxPopulate - use classDisplayName for display
+    // Fill sheets
+    log("✏️ Filling sheet data");
     const homeSheet = xpWorkbook.sheet("HOME") || xpWorkbook.sheet("Home");
     if (homeSheet) {
       homeSheet.cell("B9").value(school.name || "N/A");
@@ -307,6 +534,7 @@ try {
       homeSheet.cell("K9").value(classDisplayName);
       homeSheet.cell("I18").value(termName || "N/A");
       homeSheet.cell("K18").value(students.length || 0);
+      log("✅ HOME sheet filled");
     }
 
     const home2Sheet = xpWorkbook.sheet("HOME2") || xpWorkbook.sheet("Home2");
@@ -315,6 +543,7 @@ try {
       home2Sheet.cell("P8").value(classDisplayName);
       home2Sheet.cell("P11").value(termName || "N/A");
       home2Sheet.cell("Q14").value(academicYear || "N/A");
+      log("✅ HOME2 sheet filled");
     }
 
     const namesSheet = xpWorkbook.sheet("NAMES");
@@ -323,160 +552,96 @@ try {
       students.forEach((stu, i) => {
         namesSheet.cell(`E${startRow + i}`).value(stu.user?.name || "N/A");
       });
+      log("✅ NAMES sheet filled with students");
     }
 
     // ===============================
-    // 📊 FIRST: Let's examine the template structure
+    // 📊 ATTENDANCE INJECTION
     // ===============================
-    console.log("🔍 === TEMPLATE ANALYSIS ===");
-    const allSheets = xpWorkbook.sheets();
-    console.log(`Total sheets: ${allSheets.length}`);
-    allSheets.forEach((sheet, index) => {
-      console.log(`Sheet ${index + 1}: "${sheet.name()}"`);
-      
-      // Check if this sheet contains student names
-      const usedRange = sheet.usedRange();
-      if (usedRange) {
-        const start = usedRange.startCell();
-        const end = usedRange.endCell();
-        console.log(`   Range: ${start.address()} to ${end.address()}`);
-        
-        // Look for "Attendance" headers in first 50 rows
-        for (let r = 1; r <= Math.min(50, end.rowNumber()); r++) {
-          for (let c = 1; c <= Math.min(10, end.columnNumber()); c++) {
-            const cell = sheet.cell(r, c);
-            const value = cell.value();
-            if (value && value.toString().toLowerCase().includes("attendance")) {
-              console.log(`   Found "Attendance" at ${cell.address()}: "${value}"`);
-            }
-            if (value && value.toString().toLowerCase().includes("total")) {
-              console.log(`   Found "Total" at ${cell.address()}: "${value}"`);
-            }
-          }
-        }
-      }
+    log("📊 STARTING ATTENDANCE INJECTION");
+    log("Attendance injection prerequisites", {
+      hasResolvedTermId: !!resolvedTermId,
+      resolvedTermId: resolvedTermId ? resolvedTermId.toString() : null,
+      studentCount: students.length
     });
-    console.log("🔍 === END TEMPLATE ANALYSIS ===");
 
-    // ===============================
-    // 📊 Inject Attendance per Student (CORRECTED POSITION)
-    // ===============================
     if (resolvedTermId) {
+      log("✅ Attendance injection enabled - term found");
       const reportSheet = xpWorkbook.sheet("REPORT");
       
       if (!reportSheet) {
-        console.warn("⚠️ REPORT sheet not found");
+        log("⚠️ WARNING: REPORT sheet not found in template");
       } else {
-        console.log(`✅ Found REPORT sheet. Writing attendance...`);
+        log("✅ REPORT sheet found");
         
-        // Based on template analysis: "ATTENDANCE:" is at B30
-        // Let's find where to write the actual attendance values
-        
-        console.log("🔍 Examining cells around B30:");
-        for (let col = 1; col <= 6; col++) {
-          const colLetter = String.fromCharCode(64 + col); // A, B, C...
-          const cellAddr = `${colLetter}30`;
-          const cellValue = reportSheet.cell(cellAddr).value();
-          console.log(`   ${cellAddr}: "${cellValue}"`);
-        }
-        
-        // Check row pattern (40-row intervals)
-        console.log("🔍 Checking attendance row pattern:");
-        const attendanceRows = [30, 70, 110, 150, 190, 230, 270, 310, 350, 390];
-        
-        for (const row of attendanceRows) {
-          const headerCell = reportSheet.cell(`B${row}`).value();
-          if (headerCell && headerCell.toString().includes("ATTENDANCE")) {
-            console.log(`   Found "ATTENDANCE" at B${row}`);
-            console.log(`   Cell D${row} current value: "${reportSheet.cell(`D${row}`).value()}"`);
-          }
-        }
-        
-        console.log(`📊 Writing attendance for ${students.length} students`);
-        
-        let firstAttendanceRow = 30;
-let rowInterval = 40;
-let attendanceColumn = "D";
-
-// 📘 BASIC 1 – BASIC 6
-if (isBasic1to6(className)) {
-  firstAttendanceRow = 29;
-  rowInterval = 39;
-}
-
-// 🧸 KG 1, KG 2, NURSERY 1, NURSERY 2
-if (isKgClass(className) || isNurseryClass(className)) {
-  firstAttendanceRow = 24;
-  rowInterval = 34;
-}
-
-        
+        // Inject attendance for each student
         for (let i = 0; i < students.length; i++) {
           const student = students[i];
           
+          log(`📊 Processing attendance for student ${i+1}/${students.length}`, {
+            studentId: student._id,
+            studentName: student.user?.name
+          });
+          
           const totalAttendance = await getStudentTermAttendance(
             student._id,
-            resolvedTermId,              // ✅ FIXED
+            resolvedTermId,
             classDocFinal.school
           );
           
+          log(`📝 Student attendance result`, {
+            studentId: student._id,
+            totalAttendance,
+            termId: resolvedTermId.toString()
+          });
+          
+          // Determine position based on class type
+          let firstAttendanceRow = 30;
+          let rowInterval = 40;
+          let attendanceColumn = "D";
+
+          if (isBasic1to6(className)) {
+            firstAttendanceRow = 29;
+            rowInterval = 39;
+          }
+
+          if (isKgClass(className) || isNurseryClass(className)) {
+            firstAttendanceRow = 24;
+            rowInterval = 34;
+          }
+
           const targetRow = firstAttendanceRow + (i * rowInterval);
           const targetCell = `${attendanceColumn}${targetRow}`;
           
-          console.log(`📝 Student ${i + 1}: ${student.user?.name || student._id}`);
-          console.log(`   Writing to ${targetCell}: ${totalAttendance} days`);
+          log(`📝 Writing attendance to cell`, {
+            targetCell,
+            attendanceValue: totalAttendance,
+            rowInterval,
+            firstAttendanceRow
+          });
           
           reportSheet.cell(targetCell).value(totalAttendance);
           reportSheet.cell(targetCell).style("numberFormat", "0");
-          
-          const nameCellC = reportSheet.cell(`C${targetRow}`).value();
-          const nameCellE = reportSheet.cell(`E${targetRow}`).value();
-          console.log(`   Nearby cells: C${targetRow}="${nameCellC}", E${targetRow}="${nameCellE}"`);
         }
         
-        // TOTAL ATTENDANCE (optional summary)
-        console.log("🔍 Looking for TOTAL ATTENDANCE summary cell...");
-        for (let r = 1; r <= 50; r++) {
-          for (let c = 1; c <= 10; c++) {
-            const colLetter = String.fromCharCode(64 + c);
-            const cell = reportSheet.cell(`${colLetter}${r}`);
-            const value = cell.value();
-            
-            if (value && value.toString().toLowerCase().includes("total attendance")) {
-              console.log(`✅ Found TOTAL ATTENDANCE at ${colLetter}${r}: "${value}"`);
-              
-              let totalAllAttendance = 0;
-              for (let i = 0; i < students.length; i++) {
-                totalAllAttendance += await getStudentTermAttendance(
-                  students[i]._id,
-                  resolvedTermId,          // ✅ FIXED
-                  classDocFinal.school
-                );
-              }
-              
-              const totalCell = reportSheet.cell(
-                `${String.fromCharCode(64 + c + 1)}${r}`
-              );
-              totalCell.value(totalAllAttendance);
-              totalCell.style("numberFormat", "0");
-              
-              console.log(`   Written total attendance: ${totalAllAttendance}`);
-            }
-          }
-        }
-        
-        console.log("✅ Attendance writing completed!");
+        log("✅ Attendance writing completed!");
       }
     } else {
-      console.log("⚠️ No resolvedTermId found, skipping attendance injection");
+      log("⚠️ SKIPPING ATTENDANCE INJECTION: No resolvedTermId found");
     }
 
     // 🧹 Remove unused sheets if not class teacher
+    log("🎭 Checking teacher role for sheet pruning", {
+      isClassTeacher,
+      teacherSubject: teacher.subject
+    });
+
     if (!isClassTeacher) {
+      log("🔪 Pruning sheets for subject teacher");
       const allSheets = xpWorkbook.sheets();
       const normalizedSubject = (subject || "").trim().toUpperCase();
 
-      // 1️⃣ Build keep list
+      // Build keep list
       const keepList = allSheets
         .filter((s) => {
           const sheetName = s.name().trim().toUpperCase();
@@ -489,16 +654,19 @@ if (isKgClass(className) || isNurseryClass(className)) {
         })
         .map((s) => s.name());
 
-      console.log("🎯 Keeping sheets:", keepList);
+      log("📋 Sheets to keep", { keepList });
 
-      // 2️⃣ Find fallback active sheet
+      // Find fallback active sheet
       const fallbackSheet =
         allSheets.find((s) => keepList.includes(s.name()) && !s.hidden()) ||
         allSheets.find((s) => !s.hidden());
 
-      if (fallbackSheet) xpWorkbook.activeSheet(fallbackSheet.name());
+      if (fallbackSheet) {
+        xpWorkbook.activeSheet(fallbackSheet.name());
+        log("📌 Set active sheet to", { activeSheet: fallbackSheet.name() });
+      }
 
-      // 3️⃣ Delete everything else safely
+      // Delete everything else
       allSheets.forEach((s) => {
         const sheetName = s.name();
         if (!keepList.includes(sheetName)) {
@@ -506,44 +674,92 @@ if (isKgClass(className) || isNurseryClass(className)) {
             const nextVisible = xpWorkbook
               .sheets()
               .find((x) => keepList.includes(x.name()) && !x.hidden());
-            if (nextVisible) xpWorkbook.activeSheet(nextVisible.name());
+            if (nextVisible) {
+              xpWorkbook.activeSheet(nextVisible.name());
+              log("🔄 Changed active sheet for deletion", { 
+                from: sheetName, 
+                to: nextVisible.name() 
+              });
+            }
           }
           xpWorkbook.deleteSheet(sheetName);
-          console.log(`🗑️ Deleted sheet: ${sheetName}`);
+          log(`🗑️ Deleted sheet: ${sheetName}`);
         }
       });
 
-      // 4️⃣ Handle missing subject sheet gracefully
+      // Handle missing subject sheet
       if (!xpWorkbook.sheet(subject)) {
-        console.warn(`⚠️ Subject sheet "${subject}" not found in template`);
+        log(`⚠️ Subject sheet "${subject}" not found in template`);
       }
 
-      console.log("📝 Pruned workbook for subject teacher (only subject + core sheets kept)");
+      log("✅ Sheet pruning completed");
     }
 
-    // ✨ Output final file directly (no ExcelJS rewrite!)
+    // ✨ Output final file
+    log("💾 Generating final buffer");
     const finalBuffer = await xpWorkbook.outputAsync("nodebuffer");
+    log("✅ Final buffer generated", { size: finalBuffer.length });
 
     const filename = isClassTeacher
       ? `${classDisplayName}_FULL_SBA.xlsx`
       : `${subject}_SBA.xlsx`;
+
+    log("📤 Sending response", {
+      filename,
+      bufferSize: finalBuffer.length,
+      isClassTeacher
+    });
 
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.setHeader(
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     );
+    res.setHeader("X-Log-Count", logMessages.length);
+    
+    // Send logs in response for debugging (you might want to remove this in production)
+    res.setHeader("X-Debug-Logs", JSON.stringify(logMessages.slice(-20))); // Last 20 logs
+    
     res.send(finalBuffer);
 
-    console.log("✅ Download complete — formulas + hyperlinks preserved");
+    log("✅ Download complete — formulas + hyperlinks preserved");
+    log("========== END DOWNLOAD CLASS TEMPLATE ==========");
+
   } catch (err) {
-    console.error("❌ Error in downloadClassTemplate:", err);
+    log("❌ ERROR in downloadClassTemplate", {
+      error: err.message,
+      stack: err.stack,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Send detailed error with logs
     res.status(500).json({
       message: "Server error downloading class template",
       error: err.message,
+      logs: logMessages, // Include all logs in error response
+      timestamp: new Date().toISOString()
     });
   } finally {
-    if (tempFilePath && fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+    if (tempFilePath && fs.existsSync(tempFilePath)) {
+      log("🧹 Cleaning up temporary file", { tempFilePath });
+      fs.unlinkSync(tempFilePath);
+    }
+    
+    // Also log to a file for persistent debugging
+    try {
+      const logDir = path.join(__dirname, '../logs');
+      if (!fs.existsSync(logDir)) {
+        fs.mkdirSync(logDir, { recursive: true });
+      }
+      
+      const logFileName = `download_${new Date().toISOString().replace(/[:.]/g, '-')}.log`;
+      const logFile = path.join(logDir, logFileName);
+      
+      fs.writeFileSync(logFile, logMessages.join('\n'));
+      console.log(`📝 Full logs saved to: ${logFile}`);
+    } catch (fileErr) {
+      console.error("Failed to save logs to file:", fileErr);
+    }
   }
 };
 
