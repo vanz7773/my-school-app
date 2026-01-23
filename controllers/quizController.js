@@ -777,8 +777,19 @@ const getQuizzesForClass = async (req, res) => {
     if (cached) return res.json(cached);
 
     // Base filter
-    const filter = { school, class: toObjectId(classId) };
-    if (role === "student") filter.isPublished = true;
+    const filter = {
+  school,
+  class: toObjectId(classId),
+};
+
+if (role === "student") {
+  filter.isPublished = true;
+}
+
+if (role === "teacher") {
+  filter.teacher = req.user._id; // 🔐 THIS LINE WAS MISSING
+}
+
 
     // Fetch quizzes
     const quizzes = await executeWithTimeout(
@@ -2156,9 +2167,11 @@ const getAllClassQuizResultsForTeacher = async (req, res) => {
     // 🎯 Fetch quizzes with optimized query
     const quizzes = await executeWithTimeout(
       QuizSession.find({
-        class: { $in: classIdsArray },
-        school,
-      })
+  class: { $in: classIdsArray },
+  school,
+  teacher: teacherUserId, // 🔐 REQUIRED
+})
+
         .select("_id class title subject subjectName totalPoints")
         .populate({ path: "subject", select: "name shortName" })
         .lean()
