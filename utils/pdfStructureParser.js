@@ -1,12 +1,12 @@
 const fs = require("fs");
 const pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
+
 /**
  * STEP 1: Extract raw text from PDF
  * (Node 18 / Render safe)
  */
 async function extractPdfText(pdfPath) {
   const data = new Uint8Array(fs.readFileSync(pdfPath));
-
   const pdf = await pdfjsLib.getDocument({ data }).promise;
 
   let fullText = "";
@@ -14,12 +14,23 @@ async function extractPdfText(pdfPath) {
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
     const page = await pdf.getPage(pageNum);
     const content = await page.getTextContent();
-
     const pageText = content.items.map(item => item.str).join(" ");
     fullText += pageText + "\n";
   }
 
   return fullText.trim();
+}
+
+/**
+ * STEP 2: Normalize PDF text
+ */
+function normalizeText(text) {
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/\s+\n/g, "\n")
+    .trim();
 }
 
 /**
@@ -49,7 +60,6 @@ function detectStructure(text) {
  */
 function parseSection(section, text) {
   const cleaned = text.replace(/(SECTION|Section)\s+[A-E]/i, "").trim();
-
   const lines = cleaned.split("\n").map(l => l.trim()).filter(Boolean);
 
   let instruction = "";
