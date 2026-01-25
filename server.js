@@ -113,6 +113,7 @@ const subjectRoutes = require("./routes/subjectRoutes");
 const questionSourceRoutes = require("./routes/questionSource.routes");
 const questionBlock = require("./routes/questionBlock.routes");
 const examQuestion = require("./routes/examQuestion.routes");
+const pdfTest = require("./routes/pdfTest.routes");
 // Define API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/students', studentRoutes);
@@ -148,8 +149,9 @@ app.use('/api/device-binding', deviceBindingRoutes);
 app.use('/api/sba', sbaRoutes);
 app.use("/api/subjects", subjectRoutes);
 app.use("/api/question-sources", questionSourceRoutes);
-app.use("/api/question-blocks", questionBlock.routes);
-app.use("/api/exam-questions", examQuestion.routes);
+app.use("/api/question-blocks", questionBlock.route);
+app.use("/api/exam-questions", examQuestion.route);
+app.use("/api/test", pdfTest.route);
 
 
 
