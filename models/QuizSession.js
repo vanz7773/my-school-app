@@ -27,6 +27,22 @@ const QuestionSchema = new mongoose.Schema({
   tags: [{ type: String }]
 });
 
+// ----------------- Quiz Section Schema (NEW) -----------------
+const QuizSectionSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: true, // Section A, Section B
+    trim: true
+  },
+
+  instruction: {
+    type: String,
+    required: true // Section-specific instruction (THIS is what you want)
+  },
+
+  questions: [QuestionSchema]
+});
+
 // ----------------- QuizSession Schema -----------------
 const QuizSessionSchema = new mongoose.Schema({
   school: { type: mongoose.Schema.Types.ObjectId, ref: 'School', required: true },
@@ -50,7 +66,16 @@ const QuizSessionSchema = new mongoose.Schema({
   description: { type: String },
   notesText: String,
 
+  /**
+   * BACKWARD COMPATIBILITY
+   * Old quizzes can still use flat questions
+   */
   questions: [QuestionSchema],
+
+  /**
+   * NEW: Section-based exams (English Paper 1, etc.)
+   */
+  sections: [QuizSectionSchema],
 
   timeLimit: { type: Number, default: null },
   startTime: { type: Date, default: null },
@@ -82,6 +107,7 @@ const QuizSessionSchema = new mongoose.Schema({
 QuizSessionSchema.index({ school: 1, class: 1 });
 QuizSessionSchema.index({ school: 1, isPublished: 1, startTime: 1, dueDate: 1 });
 QuizSessionSchema.index({ fromQuestionBank: 1, 'questions.tags': 1 });
+QuizSessionSchema.index({ 'sections.questions.tags': 1 });
 
 // ----------------- Middleware -----------------
 QuizSessionSchema.pre('save', async function (next) {
@@ -117,6 +143,17 @@ QuizSessionSchema.virtual('isAvailable').get(function () {
 });
 
 QuizSessionSchema.virtual('totalPoints').get(function () {
+  // Prefer sections if present
+  if (this.sections && this.sections.length) {
+    return this.sections.reduce((sum, section) => {
+      return (
+        sum +
+        section.questions.reduce((s, q) => s + (q.points || 0), 0)
+      );
+    }, 0);
+  }
+
+  // Fallback to flat questions
   if (!this.questions || !Array.isArray(this.questions)) return 0;
   return this.questions.reduce((sum, q) => sum + (q.points || 0), 0);
 });
@@ -135,6 +172,28 @@ QuizSessionSchema.virtual('teacherSubjects', {
 
 // ----------------- Methods -----------------
 QuizSessionSchema.methods.getShuffledQuestions = function () {
+  // SECTION-BASED
+  if (this.sections && this.sections.length) {
+    return this.sections.map(section => {
+      let questions = [...section.questions];
+      if (this.shuffleQuestions) questions = questions.sort(() => Math.random() - 0.5);
+
+      questions = questions.map(q => {
+        if (q.type === 'multiple-choice' && this.shuffleOptions) {
+          const options = [...q.options].sort(() => Math.random() - 0.5);
+          return { ...q.toObject(), options };
+        }
+        return q;
+      });
+
+      return {
+        ...section.toObject(),
+        questions
+      };
+    });
+  }
+
+  // FLAT QUIZZES (OLD)
   let questions = [...this.questions];
   if (this.shuffleQuestions) questions = questions.sort(() => Math.random() - 0.5);
 
