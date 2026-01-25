@@ -149,9 +149,9 @@ app.use('/api/device-binding', deviceBindingRoutes);
 app.use('/api/sba', sbaRoutes);
 app.use("/api/subjects", subjectRoutes);
 app.use("/api/question-sources", questionSourceRoutes);
-app.use("/api/question-blocks", questionBlock.route);
-app.use("/api/exam-questions", examQuestion.route);
-app.use("/api/test", pdfTest.route);
+app.use("/api/question-blocks", questionBlock);
+app.use("/api/exam-questions", examQuestion);
+app.use("/api/test", pdfTest);
 
 
 
