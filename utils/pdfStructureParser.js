@@ -7,24 +7,20 @@ const fs = require("fs");
 async function extractPdfText(pdfPath) {
   const buffer = fs.readFileSync(pdfPath);
 
-  // ✅ Correct way to load pdf-parse in CommonJS on Node 18+
-  const pdfParseModule = await import("pdf-parse");
-  const pdfParse = pdfParseModule.default;
+  const mod = await import("pdf-parse");
+
+  // 🔥 unwrap until we get the actual function
+  let pdfParse = mod;
+  while (pdfParse && typeof pdfParse !== "function") {
+    pdfParse = pdfParse.default;
+  }
+
+  if (typeof pdfParse !== "function") {
+    throw new Error("Failed to load pdf-parse as a function");
+  }
 
   const data = await pdfParse(buffer);
   return data.text || "";
-}
-
-/**
- * STEP 2: Normalize PDF text
- */
-function normalizeText(text) {
-  return text
-    .replace(/\r\n/g, "\n")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/\s+\n/g, "\n")
-    .trim();
 }
 
 /**
