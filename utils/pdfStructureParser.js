@@ -1,16 +1,16 @@
 const fs = require("fs");
 
-const pdfParseModule = require("pdf-parse");
-const pdfParse =
-  typeof pdfParseModule === "function"
-    ? pdfParseModule
-    : pdfParseModule.default;
-
 /**
  * STEP 1: Extract raw text from PDF
+ * (Node 18 / Render safe)
  */
 async function extractPdfText(pdfPath) {
   const buffer = fs.readFileSync(pdfPath);
+
+  // ✅ Correct way to load pdf-parse in CommonJS on Node 18+
+  const pdfParseModule = await import("pdf-parse");
+  const pdfParse = pdfParseModule.default;
+
   const data = await pdfParse(buffer);
   return data.text || "";
 }
