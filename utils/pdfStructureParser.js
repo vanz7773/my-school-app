@@ -3,7 +3,7 @@ const pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
 
 /**
  * STEP 1: Extract raw text from PDF
- * (Node 18 / Render safe)
+ * (Stable on Node 18 / Render)
  */
 async function extractPdfText(pdfPath) {
   const data = new Uint8Array(fs.readFileSync(pdfPath));
@@ -34,51 +34,66 @@ function normalizeText(text) {
 }
 
 /**
- * STEP 3: Detect sections, instructions, passages
+ * STEP 3: Detect PAPER 1 / PAPER 2
+ * (BECE-aware, with safe fallback)
  */
 function detectStructure(text) {
-  const sectionRegex = /(SECTION|Section)\s+([A-E])/g;
-  const matches = [...text.matchAll(sectionRegex)];
+  const paperRegex = /(PAPER\s+[12])/gi;
+  const matches = [...text.matchAll(paperRegex)];
+
+  // 🔹 Fallback: no explicit PAPER found
+  if (matches.length === 0) {
+    return [
+      parsePaper("PAPER", text)
+    ];
+  }
 
   const sections = [];
 
   for (let i = 0; i < matches.length; i++) {
-    const sectionLetter = matches[i][2];
+    const paperLabel = matches[i][1].toUpperCase();
     const startIndex = matches[i].index;
     const endIndex =
       i + 1 < matches.length ? matches[i + 1].index : text.length;
 
-    const sectionText = text.slice(startIndex, endIndex).trim();
-    sections.push(parseSection(sectionLetter, sectionText));
+    const paperText = text.slice(startIndex, endIndex).trim();
+    sections.push(parsePaper(paperLabel, paperText));
   }
 
   return sections;
 }
 
 /**
- * Parse one section block
+ * Parse one PAPER block
  */
-function parseSection(section, text) {
-  const cleaned = text.replace(/(SECTION|Section)\s+[A-E]/i, "").trim();
+function parsePaper(paper, text) {
+  // Remove "PAPER 1 / PAPER 2" heading
+  const cleaned = text.replace(/PAPER\s+[12]/i, "").trim();
+
   const lines = cleaned.split("\n").map(l => l.trim()).filter(Boolean);
 
   let instruction = "";
   let stimulus = null;
   let bodyLines = [];
 
+  // Detect instruction (usually first line)
   if (
     lines.length &&
-    /^(Choose|Answer|Read|In the following|Study)/i.test(lines[0])
+    /^(Choose|Answer|Read|In the following|Study|Attempt)/i.test(lines[0])
   ) {
     instruction = lines.shift();
   }
 
+  // Detect passage (before numbered questions)
   const firstQuestionIndex = lines.findIndex(line => /^\d+\./.test(line));
 
   if (firstQuestionIndex > 0) {
     const possiblePassage = lines.slice(0, firstQuestionIndex).join(" ");
     if (possiblePassage.length > 150) {
-      stimulus = { type: "passage", content: possiblePassage };
+      stimulus = {
+        type: "passage",
+        content: possiblePassage,
+      };
       bodyLines = lines.slice(firstQuestionIndex);
     } else {
       bodyLines = lines;
@@ -88,7 +103,7 @@ function parseSection(section, text) {
   }
 
   return {
-    section,
+    paper,              // "PAPER 1" | "PAPER 2"
     instruction,
     stimulus,
     bodyText: bodyLines.join("\n"),
