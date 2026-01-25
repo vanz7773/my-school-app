@@ -2,329 +2,247 @@ const fs = require("fs");
 const pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
 
 /**
- * Enhanced Exam Parser for BECE and other exam formats
- * Focused on PAPER 1 and PAPER 2 detection
+ * Simple but Effective BECE Exam Parser
+ * Focused on detecting PAPER 1 and PAPER 2
  */
 
-// Enhanced configuration for exam patterns with explicit paper detection
-const EXAM_PATTERNS = {
-  BECE: {
-    papers: [
-      {
-        id: "PAPER 1",
-        name: "OBJECTIVE",
-        markers: [
-          "paper 1", 
-          "answer all questions", 
-          "each question is followed by four options",
-          "multiple choice",
-          "options a to d",
-          "shade in pencil"
-        ],
-        type: "objective",
-        questionPattern: /^\d+\.\s/
-      },
-      {
-        id: "PAPER 2", 
-        name: "ESSAY",
-        markers: [
-          "paper 2",
-          "essay",
-          "answer four questions only",
-          "show workings",
-          "marks will not be awarded"
-        ],
-        type: "essay",
-        questionPattern: /^\d+\.\s/
-      }
-    ],
-    commonHeaders: ["BECE", "BASIC EDUCATION CERTIFICATE EXAMINATION", "MATHEMATICS"]
-  },
-  WASSCE: {
-    papers: [
-      { id: "PAPER 1", name: "OBJECTIVE", markers: ["paper 1", "objective"], type: "objective" },
-      { id: "PAPER 2", name: "ESSAY/THEORY", markers: ["paper 2", "essay", "theory"], type: "essay" },
-      { id: "PAPER 3", name: "PRACTICAL", markers: ["paper 3", "practical"], type: "practical" }
-    ]
-  },
-  GENERAL: {
-    papers: [
-      { id: "PAPER 1", name: "OBJECTIVE", markers: ["paper 1", "objective", "multiple choice"], type: "objective" },
-      { id: "PAPER 2", name: "ESSAY", markers: ["paper 2", "essay", "structured"], type: "essay" }
-    ]
-  }
-};
-
-/**
- * 1. Extract text from PDF with improved paper detection
- */
 async function extractPdfText(pdfPath) {
   try {
+    console.log(`Extracting text from: ${pdfPath}`);
     const data = new Uint8Array(fs.readFileSync(pdfPath));
     const pdf = await pdfjsLib.getDocument({ data }).promise;
     
     let fullText = "";
-    const pages = [];
     
     for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
       const page = await pdf.getPage(pageNum);
       const content = await page.getTextContent();
       
-      // Group text by lines
-      const lines = {};
-      for (const item of content.items) {
-        const y = Math.round(item.transform[5]);
-        if (!lines[y]) lines[y] = [];
-        lines[y].push({
-          text: item.str,
-          x: item.transform[4]
-        });
-      }
+      // Simple text extraction - focus on getting all text
+      const pageText = content.items
+        .map(item => item.str)
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
       
-      // Sort lines and join text
-      const pageLines = Object.keys(lines)
-        .sort((a, b) => b - a)
-        .map(y => {
-          return lines[y]
-            .sort((a, b) => a.x - b.x)
-            .map(item => item.text)
-            .join(" ");
-        });
-      
-      const pageText = pageLines.join("\n");
-      pages.push({
-        page: pageNum,
-        text: pageText,
-        lines: pageLines
-      });
-      
-      fullText += pageText + "\n\n";
+      fullText += `=== PAGE ${pageNum} ===\n${pageText}\n\n`;
     }
     
-    return {
-      text: fullText.trim(),
-      pages,
-      metadata: {
-        totalPages: pdf.numPages,
-        extractedAt: new Date().toISOString()
-      }
-    };
+    return fullText.trim();
   } catch (error) {
-    throw new Error(`PDF extraction failed: ${error.message}`);
+    console.error("Extraction error:", error);
+    throw error;
   }
 }
 
 /**
- * 2. Detect and extract PAPER 1 and PAPER 2 sections
+ * Simple paper detection - looks for PAPER 1 and PAPER 2 markers
  */
-function detectPapers(text, format = "BECE") {
+function findPapers(text) {
+  console.log("Looking for papers in text...");
+  
   const papers = [];
-  const patterns = EXAM_PATTERNS[format] || EXAM_PATTERNS.GENERAL;
-  const textLower = text.toLowerCase();
+  const lines = text.split("\n").map(line => line.trim());
   
-  // Initialize papers array with default structure
-  patterns.papers.forEach(paperConfig => {
-    papers.push({
-      id: paperConfig.id,
-      name: paperConfig.name,
-      type: paperConfig.type,
-      content: "",
-      detected: false,
-      startIndex: -1,
-      endIndex: -1,
-      markersFound: []
-    });
-  });
+  // Look for PAPER 1
+  const paper1Start = lines.findIndex(line => 
+    line.toLowerCase().includes("paper 1") || 
+    line.toLowerCase().includes("answer all questions") ||
+    /^\s*1\s*$/.test(line) && lines[lines.indexOf(line) + 1]?.toLowerCase().includes("answer all questions")
+  );
   
-  // First pass: Find paper markers in text
-  const lines = text.split("\n");
+  // Look for PAPER 2
+  const paper2Start = lines.findIndex(line => 
+    line.toLowerCase().includes("paper 2") || 
+    line.toLowerCase().includes("answer four questions") ||
+    line.toLowerCase().includes("essay")
+  );
   
-  papers.forEach(paper => {
-    const paperConfig = patterns.papers.find(p => p.id === paper.id);
+  console.log(`Paper 1 start index: ${paper1Start}`);
+  console.log(`Paper 2 start index: ${paper2Start}`);
+  
+  // If we found PAPER 2, extract it
+  if (paper2Start !== -1) {
+    const paper2End = paper1Start !== -1 && paper1Start > paper2Start ? 
+      paper1Start : lines.length;
     
-    // Look for paper markers in each line
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].toLowerCase();
-      
-      // Check if this line contains any marker for this paper
-      const matchingMarker = paperConfig.markers.find(marker => 
-        line.includes(marker.toLowerCase())
-      );
-      
-      if (matchingMarker && !paper.detected) {
-        paper.detected = true;
-        paper.startIndex = i;
-        paper.markersFound.push(matchingMarker);
-        
-        // Look for paper boundary (next paper or end)
-        for (let j = i + 1; j < lines.length; j++) {
-          const nextLine = lines[j].toLowerCase();
-          
-          // Check if next paper starts
-          const nextPaper = patterns.papers.find(p => 
-            p.id !== paper.id && 
-            p.markers.some(m => nextLine.includes(m.toLowerCase()))
-          );
-          
-          if (nextPaper) {
-            paper.endIndex = j;
-            paper.content = lines.slice(i, j).join("\n");
-            break;
-          }
-          
-          // If we reach the end of text
-          if (j === lines.length - 1) {
-            paper.endIndex = lines.length;
-            paper.content = lines.slice(i).join("\n");
-            break;
-          }
-        }
-        
-        break;
-      }
-    }
-  });
+    const paper2Content = lines.slice(paper2Start, paper2End).join("\n");
+    const paper2Questions = extractQuestionsFromPaper(paper2Content, "essay");
+    
+    papers.push({
+      id: "PAPER 2",
+      name: "ESSAY",
+      type: "essay",
+      detected: true,
+      startLine: paper2Start,
+      content: paper2Content.substring(0, 1000),
+      fullContent: paper2Content,
+      questions: paper2Questions,
+      questionCount: paper2Questions.length,
+      instructions: extractInstructions(paper2Content)
+    });
+  }
   
-  // Second pass: If papers weren't detected by markers, try to find them by content patterns
-  papers.forEach(paper => {
-    if (!paper.detected) {
-      // Look for paper by question patterns
-      const paperConfig = patterns.papers.find(p => p.id === paper.id);
-      
-      if (paperConfig.type === "objective") {
-        // Look for objective paper patterns
-        const objectiveMarkers = ["A.", "B.", "C.", "D.", "shade", "options"];
-        for (let i = 0; i < lines.length; i++) {
-          if (objectiveMarkers.some(m => lines[i].includes(m))) {
-            paper.detected = true;
-            paper.startIndex = i;
-            // Find end (look for next paper or end)
-            for (let j = i + 1; j < lines.length; j++) {
-              if (papers.some(p => p.id !== paper.id && lines[j].includes(p.id))) {
-                paper.endIndex = j;
-                break;
-              }
-            }
-            if (paper.endIndex === -1) paper.endIndex = lines.length;
-            paper.content = lines.slice(paper.startIndex, paper.endIndex).join("\n");
-            break;
-          }
-        }
-      } else if (paperConfig.type === "essay") {
-        // Look for essay paper patterns
-        const essayMarkers = ["show workings", "essay", "marks", "explain"];
-        for (let i = 0; i < lines.length; i++) {
-          if (essayMarkers.some(m => lines[i].toLowerCase().includes(m))) {
-            paper.detected = true;
-            paper.startIndex = i;
-            // Find end
-            for (let j = i + 1; j < lines.length; j++) {
-              if (lines[j].includes("PAPER 1") || lines[j].includes("Answer all questions")) {
-                paper.endIndex = j;
-                break;
-              }
-            }
-            if (paper.endIndex === -1) paper.endIndex = lines.length;
-            paper.content = lines.slice(paper.startIndex, paper.endIndex).join("\n");
-            break;
-          }
-        }
-      }
+  // If we found PAPER 1, extract it
+  if (paper1Start !== -1) {
+    const paper1End = lines.length;
+    
+    const paper1Content = lines.slice(paper1Start, paper1End).join("\n");
+    const paper1Questions = extractQuestionsFromPaper(paper1Content, "objective");
+    
+    papers.push({
+      id: "PAPER 1",
+      name: "OBJECTIVE",
+      type: "objective",
+      detected: true,
+      startLine: paper1Start,
+      content: paper1Content.substring(0, 1000),
+      fullContent: paper1Content,
+      questions: paper1Questions,
+      questionCount: paper1Questions.length,
+      instructions: extractInstructions(paper1Content)
+    });
+  }
+  
+  // Fallback: If no papers found by markers, try to split by question patterns
+  if (papers.length === 0) {
+    console.log("No papers found by markers, trying alternative detection...");
+    return findPapersByQuestions(text);
+  }
+  
+  console.log(`Found ${papers.length} papers`);
+  return papers;
+}
+
+/**
+ * Alternative detection by looking for question patterns
+ */
+function findPapersByQuestions(text) {
+  const papers = [];
+  const lines = text.split("\n").map(line => line.trim());
+  
+  // Count different types of questions
+  const essayQuestions = [];
+  const objectiveQuestions = [];
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    
+    // Look for essay question patterns (numbered questions with parts)
+    if (/^\d+\.\s+[A-Z].*\([a-d]\)/i.test(line) || 
+        /^\d+\.\s+.*show.*workings/i.test(line) ||
+        /^\d+\.\s+.*calculate.*/i.test(line) && line.length > 50) {
+      essayQuestions.push({ line: i, text: line });
     }
-  });
+    
+    // Look for objective question patterns (numbered with options)
+    if (/^\d+\.\s+.*A\.\s+.*B\.\s+.*C\.\s+.*D\./i.test(line) ||
+        /^\d+\.\s+.*[A-D]\.\s+.*[A-D]\.\s+.*[A-D]\.\s+.*[A-D]\./i.test(line)) {
+      objectiveQuestions.push({ line: i, text: line });
+    }
+  }
+  
+  console.log(`Found ${essayQuestions.length} potential essay questions`);
+  console.log(`Found ${objectiveQuestions.length} potential objective questions`);
+  
+  // If we found more essay-like questions, assume that's PAPER 2
+  if (essayQuestions.length > objectiveQuestions.length && essayQuestions.length > 0) {
+    const essayStart = Math.max(0, essayQuestions[0].line - 10);
+    const essayEnd = objectiveQuestions.length > 0 ? 
+      Math.min(objectiveQuestions[0].line, lines.length) : lines.length;
+    
+    const essayContent = lines.slice(essayStart, essayEnd).join("\n");
+    
+    papers.push({
+      id: "PAPER 2",
+      name: "ESSAY",
+      type: "essay",
+      detected: true,
+      detectionMethod: "question_pattern",
+      startLine: essayStart,
+      content: essayContent.substring(0, 1000),
+      questions: extractQuestionsFromPaper(essayContent, "essay"),
+      questionCount: essayQuestions.length
+    });
+  }
+  
+  // If we found objective questions
+  if (objectiveQuestions.length > 0) {
+    const objectiveStart = objectiveQuestions[0].line - 5;
+    const objectiveEnd = lines.length;
+    
+    const objectiveContent = lines.slice(objectiveStart, objectiveEnd).join("\n");
+    
+    papers.push({
+      id: "PAPER 1",
+      name: "OBJECTIVE",
+      type: "objective",
+      detected: true,
+      detectionMethod: "question_pattern",
+      startLine: objectiveStart,
+      content: objectiveContent.substring(0, 1000),
+      questions: extractQuestionsFromPaper(objectiveContent, "objective"),
+      questionCount: objectiveQuestions.length
+    });
+  }
   
   return papers;
 }
 
 /**
- * 3. Parse questions from a paper
+ * Extract questions from paper content
  */
-function parsePaperQuestions(paperContent, paperType) {
+function extractQuestionsFromPaper(content, paperType) {
   const questions = [];
-  const lines = paperContent.split("\n").map(l => l.trim()).filter(Boolean);
+  const lines = content.split("\n").map(line => line.trim()).filter(line => line.length > 0);
   
   let currentQuestion = null;
-  let currentPart = null;
-  let inQuestion = false;
+  let questionNumber = 0;
   
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     
-    // Detect question number (e.g., "1.", "2.", etc.)
-    const questionMatch = line.match(/^(\d+)\.\s*(.*)/);
+    // Look for question numbers
+    const match = line.match(/^(\d+)\.\s+(.*)/);
     
-    if (questionMatch) {
+    if (match) {
       // Save previous question
       if (currentQuestion) {
         questions.push(currentQuestion);
       }
       
-      // Start new question
+      questionNumber = parseInt(match[1]);
       currentQuestion = {
-        number: parseInt(questionMatch[1]),
-        text: questionMatch[2],
+        number: questionNumber,
+        text: match[2],
         type: paperType,
         parts: [],
-        options: [],
-        marks: null
+        options: []
       };
-      inQuestion = true;
-      currentPart = null;
-      continue;
-    }
-    
-    // For essay papers: detect parts (a), (b), etc.
-    if (paperType === "essay" && currentQuestion) {
-      const partMatch = line.match(/^\(([a-d])\)\s*(.*)/i);
-      if (partMatch) {
-        currentPart = {
-          letter: partMatch[1].toLowerCase(),
-          text: partMatch[2],
-          subparts: []
-        };
-        currentQuestion.parts.push(currentPart);
-        continue;
+    } else if (currentQuestion) {
+      // Continue current question
+      currentQuestion.text += " " + line;
+      
+      // For objective papers, look for options
+      if (paperType === "objective") {
+        const optionMatch = line.match(/^([A-D])[\.\)]\s+(.*)/i);
+        if (optionMatch) {
+          currentQuestion.options.push({
+            letter: optionMatch[1].toUpperCase(),
+            text: optionMatch[2]
+          });
+        }
       }
       
-      // Detect subparts (i), (ii), etc.
-      const subpartMatch = line.match(/^\(([i-v]+)\)\s*(.*)/i);
-      if (subpartMatch && currentPart) {
-        currentPart.subparts.push({
-          number: subpartMatch[1],
-          text: subpartMatch[2]
-        });
-        continue;
-      }
-    }
-    
-    // For objective papers: detect options A, B, C, D
-    if (paperType === "objective" && currentQuestion) {
-      const optionMatch = line.match(/^([A-D])[\.\)]\s*(.*)/i);
-      if (optionMatch) {
-        currentQuestion.options.push({
-          letter: optionMatch[1].toUpperCase(),
-          text: optionMatch[2]
-        });
-        continue;
-      }
-    }
-    
-    // Continue text for current element
-    if (inQuestion && line.length > 0) {
-      if (currentPart) {
-        if (currentPart.subparts && currentPart.subparts.length > 0) {
-          // Append to last subpart
-          const lastSubpart = currentPart.subparts[currentPart.subparts.length - 1];
-          lastSubpart.text += " " + line;
-        } else {
-          currentPart.text += " " + line;
+      // For essay papers, look for parts
+      if (paperType === "essay") {
+        const partMatch = line.match(/^\(([a-d])\)\s+(.*)/i);
+        if (partMatch) {
+          currentQuestion.parts.push({
+            letter: partMatch[1].toLowerCase(),
+            text: partMatch[2]
+          });
         }
-      } else if (currentQuestion.options && currentQuestion.options.length > 0) {
-        // Append to last option
-        const lastOption = currentQuestion.options[currentQuestion.options.length - 1];
-        lastOption.text += " " + line;
-      } else {
-        currentQuestion.text += " " + line;
       }
     }
   }
@@ -334,132 +252,56 @@ function parsePaperQuestions(paperContent, paperType) {
     questions.push(currentQuestion);
   }
   
-  // Post-process questions
   return questions.map(q => ({
     ...q,
-    text: cleanText(q.text),
-    marks: extractMarks(q.text) || (paperType === "essay" ? 10 : 1)
+    text: cleanText(q.text.substring(0, 500))
   }));
 }
 
 /**
- * 4. Extract instructions from paper content
+ * Extract instructions from paper
  */
-function extractPaperInstructions(paperContent, paperId) {
-  const lines = paperContent.split("\n").map(l => l.trim()).filter(Boolean);
-  const instructions = [];
+function extractInstructions(content) {
+  const lines = content.split("\n").map(line => line.trim());
   
-  // Look for instruction lines (usually first few lines after paper marker)
-  let inInstructions = true;
-  
+  // Look for instruction lines in first 10 lines
+  const instructionLines = [];
   for (let i = 0; i < Math.min(10, lines.length); i++) {
     const line = lines[i];
-    
-    // Skip empty lines at the beginning
-    if (i === 0 && line.length === 0) continue;
-    
-    // Check if this is still part of instructions (not a question yet)
-    if (inInstructions) {
-      if (/^\d+\.\s/.test(line) || /^\([a-d]\)/.test(line) || /^[A-D]\./.test(line)) {
-        inInstructions = false;
-        break;
-      }
-      if (line.length > 0) {
-        instructions.push(line);
-      }
+    if (line.toLowerCase().includes('answer') || 
+        line.toLowerCase().includes('question') ||
+        line.toLowerCase().includes('choose') ||
+        line.toLowerCase().includes('select') ||
+        line.toLowerCase().includes('write') ||
+        line.toLowerCase().includes('show')) {
+      instructionLines.push(line);
     }
   }
   
-  return instructions.join(" ").substring(0, 500);
+  return instructionLines.join(' ').substring(0, 300);
 }
 
 /**
- * 5. Main parsing function - parsePdfStructure
+ * Main parsing function
  */
-async function parsePdfStructure(pdfPath, options = {}) {
-  const {
-    format = "BECE",
-    extractQuestions = true,
-    includeRawText = false
-  } = options;
-  
+async function parsePdfStructure(pdfPath) {
   try {
-    // Step 1: Extract text from PDF
-    const extractionResult = await extractPdfText(pdfPath);
-    const text = extractionResult.text;
+    console.log(`Starting PDF parsing for: ${pdfPath}`);
     
-    // Step 2: Detect papers (PAPER 1, PAPER 2, etc.)
-    const papers = detectPapers(text, format);
+    // Extract text
+    const text = await extractPdfText(pdfPath);
+    console.log(`Extracted ${text.length} characters`);
     
-    // Step 3: Process each paper
-    const processedPapers = papers.map(paper => {
-      if (!paper.detected || !paper.content) {
-        return {
-          id: paper.id,
-          name: paper.name,
-          type: paper.type,
-          detected: false,
-          content: null,
-          questions: [],
-          questionCount: 0,
-          instructions: ""
-        };
-      }
-      
-      // Extract instructions
-      const instructions = extractPaperInstructions(paper.content, paper.id);
-      
-      // Parse questions
-      const questions = extractQuestions ? parsePaperQuestions(paper.content, paper.type) : [];
-      
-      // Calculate question count
-      const questionCount = questions.length || 
-        (paper.content.match(/^\d+\.\s/gm) || []).length;
-      
-      // Clean paper content for display
-      const cleanContent = cleanText(paper.content.substring(0, 2000));
-      
-      return {
-        id: paper.id,
-        name: paper.name,
-        type: paper.type,
-        detected: true,
-        markers: paper.markersFound,
-        content: cleanContent + (paper.content.length > 2000 ? "..." : ""),
-        fullContentLength: paper.content.length,
-        instructions,
-        questions,
-        questionCount,
-        startLine: paper.startIndex + 1,
-        endLine: paper.endIndex + 1
-      };
-    });
+    // Find papers
+    const papers = findPapers(text);
     
-    // Step 4: Organize output by papers
-    const output = {
-      papers: processedPapers.filter(p => p.detected),
-      metadata: {
-        totalPapersDetected: processedPapers.filter(p => p.detected).length,
-        totalQuestions: processedPapers.reduce((sum, paper) => sum + paper.questionCount, 0),
-        format,
-        extractionDate: extractionResult.metadata.extractedAt,
-        totalPages: extractionResult.metadata.totalPages
-      }
-    };
-    
-    // Add raw text if requested
-    if (includeRawText) {
-      output.rawText = text.substring(0, 5000) + (text.length > 5000 ? "..." : "");
-    }
-    
-    // Transform to sections format for backward compatibility
-    const sections = output.papers.map(paper => ({
+    // Transform to sections for backward compatibility
+    const sections = papers.map(paper => ({
       paper: paper.id,
-      name: paper.name,
-      instruction: paper.instructions,
+      instruction: paper.instructions || "",
       stimulus: paper.content ? {
         type: "paper_content",
-        content: paper.content.substring(0, 1000)
+        content: paper.content.substring(0, 500)
       } : null,
       bodyText: paper.content,
       questions: paper.questions,
@@ -467,81 +309,56 @@ async function parsePdfStructure(pdfPath, options = {}) {
     }));
     
     return {
-      papers: output.papers,
-      sections, // For backward compatibility
-      metadata: output.metadata,
-      success: true
+      papers,
+      sections,
+      metadata: {
+        totalPapersDetected: papers.length,
+        totalQuestions: papers.reduce((sum, paper) => sum + (paper.questionCount || 0), 0),
+        format: "BECE",
+        extractionDate: new Date().toISOString(),
+        textSample: text.substring(0, 500)
+      },
+      success: true,
+      debug: {
+        textLength: text.length,
+        first500Chars: text.substring(0, 500),
+        paperDetection: papers.map(p => ({
+          id: p.id,
+          detected: p.detected,
+          questionCount: p.questionCount,
+          startLine: p.startLine
+        }))
+      }
     };
     
   } catch (error) {
-    console.error("PDF parsing error:", error);
+    console.error("Parse error:", error);
     return {
-      success: false,
-      error: error.message,
       papers: [],
       sections: [],
-      metadata: {}
+      metadata: {
+        totalPapersDetected: 0,
+        totalQuestions: 0,
+        format: "BECE",
+        extractionDate: new Date().toISOString(),
+        error: error.message
+      },
+      success: false,
+      error: error.message
     };
   }
 }
 
 /**
- * 6. Alternative function: parseExamPdf
- */
-async function parseExamPdf(pdfPath, options = {}) {
-  return await parsePdfStructure(pdfPath, options);
-}
-
-/**
- * 7. Helper functions
+ * Helper function
  */
 function cleanText(text) {
   if (!text) return "";
-  
   return text
     .replace(/\s+/g, " ")
     .replace(/\s+([.,;:])/g, "$1")
     .replace(/([.,;:])\s+/g, "$1 ")
-    .replace(/image\[\[.*?\]\]/g, "[IMAGE]")
-    .replace(/[\u00A0\u200B\uFEFF]/g, " ")
-    .replace(/\\notin/g, "¢")
-    .replace(/\\mathrm\{GH\}/g, "GH¢")
     .trim();
 }
 
-function extractMarks(text) {
-  const markMatch = text.match(/\[(\d+)\s*(?:marks?|points?)\]/i);
-  if (markMatch) return parseInt(markMatch[1]);
-  
-  const parenMatch = text.match(/\((\d+)\s*(?:m|marks?)\)/i);
-  if (parenMatch) return parseInt(parenMatch[1]);
-  
-  const wordMatch = text.match(/(\d+)\s*(?:marks?|points?)/i);
-  if (wordMatch) return parseInt(wordMatch[1]);
-  
-  return null;
-}
-
-/**
- * 8. Export functions
- */
-module.exports = {
-  // Main parsing functions
-  parsePdfStructure,  // Returns papers array with PAPER 1, PAPER 2 structure
-  parseExamPdf,       // Alias for parsePdfStructure
-  
-  // Helper functions
-  extractPdfText,
-  detectPapers,
-  parsePaperQuestions,
-  extractPaperInstructions,
-  cleanText,
-  extractMarks,
-  
-  // Configuration
-  EXAM_PATTERNS,
-  
-  // Version info
-  version: "3.0.0",
-  description: "Exam PDF Parser focused on PAPER 1 and PAPER 2 detection"
-};
+module.exports = { parsePdfStructure };
