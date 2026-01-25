@@ -1,4 +1,4 @@
-const QuestionSource = require("../../models/QuestionSource");
+const QuestionSource = require("../models/QuestionSource");
 
 exports.createSource = async (req, res) => {
   try {
