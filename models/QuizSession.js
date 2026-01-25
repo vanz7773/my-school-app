@@ -31,17 +31,20 @@ const QuestionSchema = new mongoose.Schema({
 const QuizSectionSchema = new mongoose.Schema({
   name: {
     type: String,
-    required: true, // Section A, Section B
+    default: null,   // ✅ optional, subject-agnostic
     trim: true
   },
-
   instruction: {
     type: String,
-    required: true // Section-specific instruction (THIS is what you want)
+    required: true,
+    trim: true
   },
-
-  questions: [QuestionSchema]
+  questions: {
+    type: [QuestionSchema],
+    required: true
+  }
 });
+
 
 // ----------------- QuizSession Schema -----------------
 const QuizSessionSchema = new mongoose.Schema({
