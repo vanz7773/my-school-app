@@ -5,7 +5,7 @@ const {
   createSource,
   getSources,
   archiveSource,
-} = require("../../controllers/questionSource.controller");
+} = require("../controllers/questionSource.controller");
 
 // No middleware — admin routes assumed secure
 router.post("/", createSource);
