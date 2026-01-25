@@ -14,24 +14,26 @@ async function extractPdfText(pdfPath) {
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
     const page = await pdf.getPage(pageNum);
     const content = await page.getTextContent();
-    const pageText = content.items.map(item => item.str).join(" ");
-    fullText += pageText + "\n";
+
+    const lines = {};
+
+    for (const item of content.items) {
+      const y = Math.round(item.transform[5]);
+      if (!lines[y]) lines[y] = [];
+      lines[y].push(item.str);
+    }
+
+    const pageText = Object.keys(lines)
+      .sort((a, b) => b - a)
+      .map(y => lines[y].join(" "))
+      .join("\n");
+
+    fullText += pageText + "\n\n";
   }
 
   return fullText.trim();
 }
 
-/**
- * STEP 2: Normalize PDF text
- */
-function normalizeText(text) {
-  return text
-    .replace(/\r\n/g, "\n")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/\s+\n/g, "\n")
-    .trim();
-}
 
 /**
  * STEP 3: Detect PAPER 1 / PAPER 2
