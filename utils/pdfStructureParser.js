@@ -1,5 +1,10 @@
 const fs = require("fs");
-const pdfParse = require("pdf-parse/lib/pdf-parse");
+
+const pdfParseModule = require("pdf-parse");
+const pdfParse =
+  typeof pdfParseModule === "function"
+    ? pdfParseModule
+    : pdfParseModule.default;
 
 /**
  * STEP 1: Extract raw text from PDF
@@ -38,7 +43,6 @@ function detectStructure(text) {
       i + 1 < matches.length ? matches[i + 1].index : text.length;
 
     const sectionText = text.slice(startIndex, endIndex).trim();
-
     sections.push(parseSection(sectionLetter, sectionText));
   }
 
@@ -49,7 +53,6 @@ function detectStructure(text) {
  * Parse one section block
  */
 function parseSection(section, text) {
-  // Remove "SECTION X"
   const cleaned = text.replace(/(SECTION|Section)\s+[A-E]/i, "").trim();
 
   const lines = cleaned.split("\n").map(l => l.trim()).filter(Boolean);
@@ -58,7 +61,6 @@ function parseSection(section, text) {
   let stimulus = null;
   let bodyLines = [];
 
-  // Instruction usually appears first
   if (
     lines.length &&
     /^(Choose|Answer|Read|In the following|Study)/i.test(lines[0])
@@ -66,19 +68,12 @@ function parseSection(section, text) {
     instruction = lines.shift();
   }
 
-  // Detect passage (long paragraph before numbered questions)
-  const firstQuestionIndex = lines.findIndex(line =>
-    /^\d+\./.test(line)
-  );
+  const firstQuestionIndex = lines.findIndex(line => /^\d+\./.test(line));
 
   if (firstQuestionIndex > 0) {
     const possiblePassage = lines.slice(0, firstQuestionIndex).join(" ");
-
     if (possiblePassage.length > 150) {
-      stimulus = {
-        type: "passage",
-        content: possiblePassage
-      };
+      stimulus = { type: "passage", content: possiblePassage };
       bodyLines = lines.slice(firstQuestionIndex);
     } else {
       bodyLines = lines;
@@ -91,7 +86,7 @@ function parseSection(section, text) {
     section,
     instruction,
     stimulus,
-    bodyText: bodyLines.join("\n")
+    bodyText: bodyLines.join("\n"),
   };
 }
 
@@ -103,11 +98,7 @@ async function parsePdfStructure(pdfPath) {
   const normalizedText = normalizeText(rawText);
   const sections = detectStructure(normalizedText);
 
-  return {
-    sections
-  };
+  return { sections };
 }
 
-module.exports = {
-  parsePdfStructure
-};
+module.exports = { parsePdfStructure };
