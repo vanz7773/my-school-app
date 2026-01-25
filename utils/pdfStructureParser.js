@@ -1,6 +1,5 @@
 const fs = require("fs");
-const pdfParse = require("pdf-parse");
-
+const pdfParse = require("pdf-parse/lib/pdf-parse");
 
 /**
  * STEP 1: Extract raw text from PDF
@@ -27,13 +26,13 @@ function normalizeText(text) {
  * STEP 3: Detect sections, instructions, passages
  */
 function detectStructure(text) {
-  const sectionRegex = /SECTION\s+([A-E])/gi;
+  const sectionRegex = /(SECTION|Section)\s+([A-E])/g;
   const matches = [...text.matchAll(sectionRegex)];
 
   const sections = [];
 
   for (let i = 0; i < matches.length; i++) {
-    const sectionLetter = matches[i][1];
+    const sectionLetter = matches[i][2];
     const startIndex = matches[i].index;
     const endIndex =
       i + 1 < matches.length ? matches[i + 1].index : text.length;
@@ -51,7 +50,7 @@ function detectStructure(text) {
  */
 function parseSection(section, text) {
   // Remove "SECTION X"
-  const cleaned = text.replace(/SECTION\s+[A-E]/i, "").trim();
+  const cleaned = text.replace(/(SECTION|Section)\s+[A-E]/i, "").trim();
 
   const lines = cleaned.split("\n").map(l => l.trim()).filter(Boolean);
 
