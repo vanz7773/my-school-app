@@ -1,26 +1,25 @@
 const fs = require("fs");
-
+const pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
 /**
  * STEP 1: Extract raw text from PDF
  * (Node 18 / Render safe)
  */
 async function extractPdfText(pdfPath) {
-  const buffer = fs.readFileSync(pdfPath);
+  const data = new Uint8Array(fs.readFileSync(pdfPath));
 
-  const mod = await import("pdf-parse");
+  const pdf = await pdfjsLib.getDocument({ data }).promise;
 
-  // 🔥 unwrap until we get the actual function
-  let pdfParse = mod;
-  while (pdfParse && typeof pdfParse !== "function") {
-    pdfParse = pdfParse.default;
+  let fullText = "";
+
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    const page = await pdf.getPage(pageNum);
+    const content = await page.getTextContent();
+
+    const pageText = content.items.map(item => item.str).join(" ");
+    fullText += pageText + "\n";
   }
 
-  if (typeof pdfParse !== "function") {
-    throw new Error("Failed to load pdf-parse as a function");
-  }
-
-  const data = await pdfParse(buffer);
-  return data.text || "";
+  return fullText.trim();
 }
 
 /**
