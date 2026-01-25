@@ -406,7 +406,7 @@ function parseQuestions(sectionContent, sectionType) {
 }
 
 /**
- * 6. Main parsing function
+ * 6. Main parsing function - parseExamPdf
  */
 async function parseExamPdf(pdfPath, options = {}) {
   const {
@@ -481,7 +481,66 @@ async function parseExamPdf(pdfPath, options = {}) {
 }
 
 /**
- * 7. Helper functions
+ * 7. parsePdfStructure function - The function your route is calling
+ * This is a wrapper around parseExamPdf to match the expected structure
+ */
+async function parsePdfStructure(pdfPath, options = {}) {
+  try {
+    // Use parseExamPdf as the main parser
+    const result = await parseExamPdf(pdfPath, options);
+    
+    // Transform the result to match the expected structure from your route
+    if (result.success) {
+      return {
+        sections: result.sections.map(section => ({
+          paper: section.type || section.name,
+          instruction: extractInstructions(section.content),
+          stimulus: section.content ? { 
+            type: "text", 
+            content: section.content.substring(0, 500) + (section.content.length > 500 ? "..." : "")
+          } : null,
+          bodyText: section.content,
+          questions: section.questions || [],
+          questionCount: section.questionCount || 0
+        }))
+      };
+    } else {
+      throw new Error(result.error || "Failed to parse PDF");
+    }
+  } catch (error) {
+    console.error("parsePdfStructure error:", error);
+    throw error;
+  }
+}
+
+/**
+ * Helper: Extract instructions from section content
+ */
+function extractInstructions(content) {
+  if (!content) return "";
+  
+  const lines = content.split("\n").map(l => l.trim()).filter(Boolean);
+  let instructions = [];
+  
+  // Look for instruction-like lines (usually at the beginning)
+  for (let i = 0; i < Math.min(5, lines.length); i++) {
+    const line = lines[i];
+    if (line.match(/^(Answer|Read|Study|Attempt|Do not|Write your|This booklet|Each question)/i)) {
+      instructions.push(line);
+    } else if (line.length < 100 && instructions.length > 0) {
+      // Continue if line is short and we're already collecting instructions
+      instructions.push(line);
+    } else if (instructions.length > 0) {
+      // Stop if we hit a long line (likely question text)
+      break;
+    }
+  }
+  
+  return instructions.join(" ").substring(0, 300);
+}
+
+/**
+ * 8. Helper functions
  */
 function cleanText(text) {
   if (!text) return "";
@@ -543,11 +602,12 @@ function analyzeExamPatterns(text, sections) {
 }
 
 /**
- * 8. Export functions for different use cases
+ * 9. Export functions for different use cases
  */
 module.exports = {
-  // Main parsing function
-  parseExamPdf,
+  // Main parsing functions
+  parsePdfStructure,  // <- This is the function your route is calling
+  parseExamPdf,       // Alternative main function
   
   // Individual components for customization
   extractPdfText,
@@ -561,6 +621,7 @@ module.exports = {
   // Utilities
   cleanText,
   extractMarks,
+  extractInstructions,
   
   // Version info
   version: "2.0.0",
