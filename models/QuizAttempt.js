@@ -1,5 +1,8 @@
 const mongoose = require("mongoose");
 
+// ============================================================================
+// QUIZ ATTEMPT SCHEMA
+// ============================================================================
 const QuizAttemptSchema = new mongoose.Schema(
   {
     quizId: {
@@ -70,7 +73,27 @@ const QuizAttemptSchema = new mongoose.Schema(
       index: true,
     },
 
-    // Answers are stored incrementally during the attempt
+    /**
+     * ANSWERS STORAGE (AUTHORITATIVE)
+     *
+     * Key formats:
+     *
+     * 1️⃣ Normal Multiple Choice / True-False / Short Answer
+     *    questionId -> value
+     *
+     *    Example:
+     *    answers["64fa...a1"] = "B"
+     *
+     * 2️⃣ Cloze (MCQ with blanks)
+     *    questionId:blankNumber -> value
+     *
+     *    Example:
+     *    answers["64fa...a2:21"] = "feed"
+     *    answers["64fa...a2:22"] = "diligence"
+     *
+     * RULE:
+     * - If a question has blanks, NEVER store answer on questionId alone
+     */
     answers: {
       type: Map,
       of: mongoose.Schema.Types.Mixed,
@@ -82,10 +105,10 @@ const QuizAttemptSchema = new mongoose.Schema(
   }
 );
 
-/* ------------------------------------------------------------------
-   🔒 HARD GUARANTEE (CRITICAL)
-   One and only ONE active attempt per quiz per student
-------------------------------------------------------------------- */
+// ============================================================================
+// 🔒 HARD GUARANTEE (CRITICAL)
+// One and only ONE active attempt per quiz per student
+// ============================================================================
 QuizAttemptSchema.index(
   { quizId: 1, studentId: 1 },
   {
@@ -94,14 +117,70 @@ QuizAttemptSchema.index(
   }
 );
 
-/* ------------------------------------------------------------------
-   📊 HISTORY & ANALYTICS
-------------------------------------------------------------------- */
+// ============================================================================
+// 📊 HISTORY & ANALYTICS
+// ============================================================================
 QuizAttemptSchema.index({ quizId: 1, studentId: 1, attemptNumber: 1 });
 
-/* ------------------------------------------------------------------
-   ⚡ PERFORMANCE
-------------------------------------------------------------------- */
+// ============================================================================
+// ⚡ PERFORMANCE
+// ============================================================================
 QuizAttemptSchema.index({ status: 1, expiresAt: 1 });
 
+// ============================================================================
+// 🧠 INSTANCE HELPERS (STRONGLY RECOMMENDED)
+// ============================================================================
+/**
+ * Build a safe answer key
+ * - Normal question → questionId
+ * - Cloze blank → questionId:blankNumber
+ */
+QuizAttemptSchema.methods.buildAnswerKey = function (
+  questionId,
+  blankNumber = null
+) {
+  return blankNumber !== null
+    ? `${questionId}:${blankNumber}`
+    : `${questionId}`;
+};
+
+/**
+ * Save or update an answer safely
+ */
+QuizAttemptSchema.methods.setAnswer = function (
+  questionId,
+  value,
+  blankNumber = null
+) {
+  const key = this.buildAnswerKey(questionId, blankNumber);
+  this.answers.set(key, value);
+  this.lastActivity = new Date();
+};
+
+/**
+ * Read an answer safely
+ */
+QuizAttemptSchema.methods.getAnswer = function (
+  questionId,
+  blankNumber = null
+) {
+  const key = this.buildAnswerKey(questionId, blankNumber);
+  return this.answers.get(key);
+};
+
+/**
+ * Remove an answer (useful when changing options)
+ */
+QuizAttemptSchema.methods.clearAnswer = function (
+  questionId,
+  blankNumber = null
+) {
+  const key = this.buildAnswerKey(questionId, blankNumber);
+  this.answers.delete(key);
+  this.lastActivity = new Date();
+};
+
+// ============================================================================
+// EXPORT
+// ============================================================================
 module.exports = mongoose.model("QuizAttempt", QuizAttemptSchema);

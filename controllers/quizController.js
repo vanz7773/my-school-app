@@ -340,11 +340,11 @@ const createQuiz = async (req, res) => {
 
   try {
     console.log("🚀 [CREATE QUIZ] Incoming request body:", req.body);
-    
-    const { 
+
+    const {
       title,
       questions,
-      sections,              // 🔴 ADD
+      sections,              // 🔴 SECTION SUPPORT
       classId,
       dueDate,
       timeLimit,
@@ -380,67 +380,74 @@ const createQuiz = async (req, res) => {
       });
     }
 
-    // 🎯 Parallel validation checks
-    const [schoolCheck, classInfo] = await Promise.all([
-      executeWithTimeout(
-        Class.findOne({ school }).lean().maxTimeMS(5000)
-      ),
-      executeWithTimeout(
-        Class.findOne({ _id: toObjectId(classId), school }).lean().maxTimeMS(5000)
-      )
-    ]);
+    // --------------------------------------------------
+    // 🧪 COMMON QUESTION VALIDATOR (USED BY BOTH MODES)
+    // --------------------------------------------------
+    const validateQuestion = async (q, label) => {
+      if (!q.questionText || !q.type) {
+        throw new Error(`${label} is missing questionText or type`);
+      }
 
-    if (!schoolCheck) {
-      await session.abortTransaction();
-      return res.status(400).json({ message: "User does not have a valid school assigned" });
-    }
+      const type = q.type.toLowerCase();
 
-    if (!classInfo) {
-      await session.abortTransaction();
-      return res.status(404).json({ message: "Class not found in your school" });
-    }
+      // 🟢 MULTIPLE CHOICE
+      if (type === "multiple-choice") {
+        if (!Array.isArray(q.options) || q.options.length < 2) {
+          throw new Error(`${label}: MCQ requires at least 2 options`);
+        }
+        if (!q.options.includes(q.correctAnswer)) {
+          throw new Error(`${label}: correctAnswer must be one of the options`);
+        }
+      }
+
+      // 🟢 TRUE / FALSE
+      if (type === "true-false" && typeof q.correctAnswer !== "boolean") {
+        throw new Error(`${label}: True/False requires boolean correctAnswer`);
+      }
+
+      // 🟣 CLOZE (MCQ WITH BLANKS)
+      if (type === "cloze") {
+        if (!Array.isArray(q.blanks) || q.blanks.length === 0) {
+          throw new Error(`${label}: Cloze question must have blanks`);
+        }
+
+        for (let i = 0; i < q.blanks.length; i++) {
+          const b = q.blanks[i];
+
+          if (typeof b.blankNumber !== "number") {
+            throw new Error(`${label}: Blank ${i + 1} missing blankNumber`);
+          }
+
+          if (!Array.isArray(b.options) || b.options.length < 2) {
+            throw new Error(`${label}: Blank ${b.blankNumber} needs ≥2 options`);
+          }
+
+          if (!b.options.includes(b.correctAnswer)) {
+            throw new Error(
+              `${label}: Blank ${b.blankNumber} correctAnswer must be in options`
+            );
+          }
+        }
+
+        // ❌ Disallow these on cloze
+        delete q.correctAnswer;
+        delete q.options;
+      }
+
+      if (!q.points) q.points = 1;
+    };
 
     // --------------------------------------------------
-    // 🧪 Validate FLAT questions (existing behaviour)
+    // 🧪 Validate FLAT QUESTIONS
     // --------------------------------------------------
     if (questions?.length) {
       for (let i = 0; i < questions.length; i++) {
-        const q = questions[i];
-
-        if (!q.questionText || !q.type) {
-          await session.abortTransaction();
-          return res.status(400).json({ 
-            message: `Question ${i + 1} is missing required fields (questionText or type)` 
-          });
-        }
-
-        if (q.type === "multiple-choice") {
-          if (!q.options || !Array.isArray(q.options) || q.correctAnswer === undefined) {
-            await session.abortTransaction();
-            return res.status(400).json({ 
-              message: `Question ${i + 1}: Multiple-choice questions require options and correctAnswer` 
-            });
-          }
-
-          if (!q.options.includes(q.correctAnswer)) {
-            await session.abortTransaction();
-            return res.status(400).json({ 
-              message: `Question ${i + 1}: correctAnswer must be one of the provided options` 
-            });
-          }
-        } else if (q.type === "true-false" && typeof q.correctAnswer !== "boolean") {
-          await session.abortTransaction();
-          return res.status(400).json({ 
-            message: `Question ${i + 1}: True-false questions require a boolean correctAnswer` 
-          });
-        }
-
-        if (!q.points) q.points = 1;
+        await validateQuestion(questions[i], `Question ${i + 1}`);
       }
     }
 
     // --------------------------------------------------
-    // 🧪 Validate SECTIONS (new behaviour)
+    // 🧪 Validate SECTIONS
     // --------------------------------------------------
     if (sections?.length) {
       for (let i = 0; i < sections.length; i++) {
@@ -459,64 +466,39 @@ const createQuiz = async (req, res) => {
             message: `Section ${i + 1} must contain questions`,
           });
         }
-      }
-    }
 
-    // 🎯 Get teacher subjects with caching
-    const teacherSubjects = await getCachedTeacherSubjects(teacherUserId, school);
-    if (teacherSubjects.length === 0) {
-      await session.abortTransaction();
-      return res.status(400).json({ message: "No subjects assigned to this teacher profile." });
-    }
-
-    // 🎯 Subject resolution (UNCHANGED)
-    let chosenSubjectDoc = null;
-
-    if (subjectId && mongoose.Types.ObjectId.isValid(subjectId)) {
-      chosenSubjectDoc = teacherSubjects.find(s => String(s._id) === String(subjectId));
-      if (!chosenSubjectDoc) {
-        await session.abortTransaction();
-        return res.status(403).json({
-          message: "Selected subject is not assigned to this teacher",
-          allowedSubjects: teacherSubjects.map(s => ({ _id: s._id, name: s.name }))
-        });
-      }
-    }
-
-    if (!chosenSubjectDoc && typeof subjectName === 'string' && subjectName.trim()) {
-      const needle = subjectName.trim().toUpperCase();
-      chosenSubjectDoc = teacherSubjects.find(s => {
-        const n = (s.name || '').toUpperCase();
-        const sn = (s.shortName || '').toUpperCase();
-        const aliases = Array.isArray(s.aliases)
-          ? s.aliases.map(a => String(a).toUpperCase())
-          : [];
-        return n === needle || sn === needle || aliases.includes(needle);
-      });
-
-      if (!chosenSubjectDoc) {
-        await session.abortTransaction();
-        return res.status(403).json({
-          message: `Subject "${subjectName}" is not assigned to this teacher`,
-          allowedSubjects: teacherSubjects.map(s => ({ _id: s._id, name: s.name }))
-        });
-      }
-    }
-
-    if (!chosenSubjectDoc) {
-      if (teacherSubjects.length === 1) {
-        chosenSubjectDoc = teacherSubjects[0];
-      } else {
-        await session.abortTransaction();
-        return res.status(400).json({
-          message: "Multiple subjects found. Please specify subjectId or subjectName.",
-          allowedSubjects: teacherSubjects.map(s => ({ _id: s._id, name: s.name }))
-        });
+        for (let j = 0; j < section.questions.length; j++) {
+          await validateQuestion(
+            section.questions[j],
+            `Section ${i + 1}, Question ${j + 1}`
+          );
+        }
       }
     }
 
     // --------------------------------------------------
-    // ✅ Create quiz (SECTION-AWARE, backward compatible)
+    // 🎯 Resolve subject (UNCHANGED)
+    // --------------------------------------------------
+    const teacherSubjects = await getCachedTeacherSubjects(teacherUserId, school);
+    if (!teacherSubjects.length) {
+      await session.abortTransaction();
+      return res.status(400).json({ message: "No subjects assigned to this teacher" });
+    }
+
+    let chosenSubjectDoc =
+      teacherSubjects.find(s => String(s._id) === String(subjectId)) ||
+      teacherSubjects.find(s => s.name === subjectName) ||
+      (teacherSubjects.length === 1 ? teacherSubjects[0] : null);
+
+    if (!chosenSubjectDoc) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        message: "Unable to resolve subject",
+      });
+    }
+
+    // --------------------------------------------------
+    // ✅ CREATE QUIZ
     // --------------------------------------------------
     const quiz = new QuizSession({
       school,
@@ -540,9 +522,8 @@ const createQuiz = async (req, res) => {
     await quiz.save({ session });
     await session.commitTransaction();
 
-    // 🎯 Invalidate relevant caches in background
     processInBackground(() => {
-      cache.del(CACHE_KEYS.QUIZ_CLASS(classId, 'teacher', teacherUserId));
+      cache.del(CACHE_KEYS.QUIZ_CLASS(classId, "teacher", teacherUserId));
       cache.del(CACHE_KEYS.QUIZ_SCHOOL(school.toString()));
     });
 
@@ -554,11 +535,15 @@ const createQuiz = async (req, res) => {
   } catch (error) {
     await session.abortTransaction();
     console.error("🔥 Quiz creation failed:", error);
-    res.status(500).json({ message: "Error creating quiz", error: error.message });
+    res.status(500).json({
+      message: "Error creating quiz",
+      error: error.message,
+    });
   } finally {
     session.endSession();
   }
 };
+
 
 
 // ---------------------------
@@ -575,32 +560,106 @@ const publishQuiz = async (req, res) => {
 
     if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
       await session.abortTransaction();
-      return res.status(400).json({ message: 'Invalid quiz ID format' });
+      return res.status(400).json({ message: "Invalid quiz ID format" });
     }
 
-    const quiz = await QuizSession.findOne({ 
-      _id: toObjectId(quizId), 
-      school 
+    const quiz = await QuizSession.findOne({
+      _id: toObjectId(quizId),
+      school,
     }).session(session);
-    
+
     if (!quiz) {
       await session.abortTransaction();
-      return res.status(404).json({ message: 'Quiz not found in your school' });
+      return res.status(404).json({ message: "Quiz not found in your school" });
     }
 
     if (quiz.teacher.toString() !== req.user._id.toString()) {
       await session.abortTransaction();
-      return res.status(403).json({ message: 'You can only publish quizzes you created' });
+      return res
+        .status(403)
+        .json({ message: "You can only publish quizzes you created" });
+    }
+
+    // --------------------------------------------------
+    // 🔴 FINAL VALIDATION BEFORE PUBLISH
+    // --------------------------------------------------
+    if (publish) {
+      // 🔥 Flatten questions (sections OR flat)
+      let allQuestions = [];
+
+      if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
+        quiz.sections.forEach(section => {
+          section.questions.forEach(q => allQuestions.push(q));
+        });
+      } else {
+        allQuestions = quiz.questions || [];
+      }
+
+      if (!allQuestions.length) {
+        await session.abortTransaction();
+        return res.status(400).json({
+          message: "Quiz has no questions and cannot be published",
+        });
+      }
+
+      let hasAutoGradable = false;
+
+      for (let i = 0; i < allQuestions.length; i++) {
+        const q = allQuestions[i];
+        const type = (q.type || "").toLowerCase();
+
+        // 🟣 CLOZE VALIDATION
+        if (type === "cloze") {
+          if (!Array.isArray(q.blanks) || q.blanks.length === 0) {
+            await session.abortTransaction();
+            return res.status(400).json({
+              message: `Cloze question ${i + 1} has no blanks`,
+            });
+          }
+
+          q.blanks.forEach((b, idx) => {
+            if (
+              !Array.isArray(b.options) ||
+              b.options.length < 2 ||
+              !b.options.includes(b.correctAnswer)
+            ) {
+              throw new Error(
+                `Cloze question ${i + 1}, blank ${idx + 1} is invalid`
+              );
+            }
+          });
+
+          hasAutoGradable = true;
+        }
+
+        // 🟢 OBJECTIVE QUESTIONS
+        if (["multiple-choice", "true-false"].includes(type)) {
+          hasAutoGradable = true;
+        }
+      }
+
+      // (Optional but recommended)
+      if (!hasAutoGradable) {
+        await session.abortTransaction();
+        return res.status(400).json({
+          message:
+            "Quiz cannot be published because it contains no auto-gradable questions",
+        });
+      }
+
+      quiz.publishedAt = new Date();
+    } else {
+      quiz.publishedAt = null;
     }
 
     quiz.isPublished = publish;
+    await quiz.save({ session });
+    await session.commitTransaction();
 
+    // ===============================
+    // 📌 CREATE IN-APP NOTIFICATION
+    // ===============================
     if (publish) {
-      quiz.publishedAt = new Date();
-      
-      // ===============================
-      // 📌 CREATE IN-APP NOTIFICATION
-      // ===============================
       processInBackground(async () => {
         try {
           await Notification.create({
@@ -614,7 +673,7 @@ const publishQuiz = async (req, res) => {
             recipientRoles: ["student", "parent"],
           });
         } catch (notifError) {
-          console.error('Notification creation failed:', notifError);
+          console.error("Notification creation failed:", notifError);
         }
       });
 
@@ -623,23 +682,24 @@ const publishQuiz = async (req, res) => {
       // ===============================
       processInBackground(async () => {
         try {
-          // Get all students in the class
           const students = await Student.find({
             class: quiz.class,
-            school: req.user.school
-          }).select("user parent parentIds").lean();
+            school: req.user.school,
+          })
+            .select("user parent parentIds")
+            .lean();
 
           let recipients = [];
 
           students.forEach(s => {
-            if (s.user) recipients.push(String(s.user));          // student userId
-            if (s.parent) recipients.push(String(s.parent));      // parent (single)
+            if (s.user) recipients.push(String(s.user));
+            if (s.parent) recipients.push(String(s.parent));
             if (Array.isArray(s.parentIds)) {
-              recipients.push(...s.parentIds.map(id => String(id))); // multiple parents
+              recipients.push(...s.parentIds.map(id => String(id)));
             }
           });
 
-          recipients = [...new Set(recipients)]; // remove duplicates
+          recipients = [...new Set(recipients)];
 
           if (recipients.length > 0) {
             await sendPush(
@@ -653,37 +713,38 @@ const publishQuiz = async (req, res) => {
           console.error("⚠️ Quiz publish push failed:", err.message);
         }
       });
-
-    } else {
-      quiz.publishedAt = null;
     }
-
-    await quiz.save({ session });
-    await session.commitTransaction();
 
     // ===============================
     // 🧹 CACHE INVALIDATION
     // ===============================
     processInBackground(() => {
-      cache.del(CACHE_KEYS.QUIZ_CLASS(quiz.class.toString(), 'teacher', req.user._id));
-      cache.delPattern(CACHE_KEYS.QUIZ_CLASS(quiz.class.toString(), 'student', ''));
-      cache.del(CACHE_KEYS.QUIZ_SINGLE(quizId, 'teacher'));
-      cache.del(CACHE_KEYS.QUIZ_SINGLE(quizId, 'student'));
+      cache.del(
+        CACHE_KEYS.QUIZ_CLASS(quiz.class.toString(), "teacher", req.user._id)
+      );
+      cache.delPattern(
+        CACHE_KEYS.QUIZ_CLASS(quiz.class.toString(), "student", "")
+      );
+      cache.del(CACHE_KEYS.QUIZ_SINGLE(quizId, "teacher"));
+      cache.del(CACHE_KEYS.QUIZ_SINGLE(quizId, "student"));
     });
 
-    res.json({ 
-      message: `Quiz ${publish ? 'published' : 'unpublished'} successfully`,
-      quiz 
+    res.json({
+      message: `Quiz ${publish ? "published" : "unpublished"} successfully`,
+      quiz,
     });
-
   } catch (error) {
     await session.abortTransaction();
-    console.error('Quiz publish/unpublish failed:', error);
-    res.status(500).json({ message: 'Error updating quiz status', error: error.message });
+    console.error("Quiz publish/unpublish failed:", error);
+    res.status(500).json({
+      message: "Error updating quiz status",
+      error: error.message,
+    });
   } finally {
     session.endSession();
   }
 };
+
 
 
 // ---------------------------
@@ -759,26 +820,38 @@ const getQuiz = async (req, res) => {
           }
 
           const safeQuestions = sectionQuestions.map((q, index) => {
-            let question = {
+            const question = {
               _id: q._id || `temp-${sectionIndex}-${index}`,
               questionText: q.questionText,
               type: q.type,
               explanation: q.explanation || '',
               points: q.points || 1,
-              options: q.options ? [...q.options] : []
             };
 
-            if (
-              quiz.shuffleOptions &&
-              Array.isArray(question.options) &&
-              question.options.length > 0
-            ) {
-              question.options = seededShuffle(
-                question.options,
-                seed + `-options-${q._id || index}`
-              );
+            // 🟣 CLOZE (MCQ WITH BLANKS)
+            if (q.type === 'cloze' && Array.isArray(q.blanks)) {
+              question.blanks = q.blanks.map(b => ({
+                blankNumber: b.blankNumber,
+                options: quiz.shuffleOptions
+                  ? seededShuffle(
+                      [...b.options],
+                      seed + `-cloze-${q._id}-${b.blankNumber}`
+                    )
+                  : [...b.options],
+              }));
             }
 
+            // 🟢 NORMAL MCQ / TF
+            if (Array.isArray(q.options) && q.options.length > 0) {
+              question.options = quiz.shuffleOptions
+                ? seededShuffle(
+                    [...q.options],
+                    seed + `-options-${q._id || index}`
+                  )
+                : [...q.options];
+            }
+
+            // 🔒 Never expose answers
             if (process.env.NODE_ENV !== 'development') {
               delete question.correctAnswer;
             }
@@ -789,7 +862,7 @@ const getQuiz = async (req, res) => {
           return {
             title: section.title || null,
             instruction: section.instruction,
-            questions: safeQuestions
+            questions: safeQuestions,
           };
         });
 
@@ -806,9 +879,14 @@ const getQuiz = async (req, res) => {
           totalPoints: quiz.sections.reduce(
             (sum, s) =>
               sum +
-              s.questions.reduce((qSum, q) => qSum + (q.points || 1), 0),
+              s.questions.reduce((qSum, q) => {
+                if (q.type === 'cloze' && Array.isArray(q.blanks)) {
+                  return qSum + q.blanks.length * (q.points || 1);
+                }
+                return qSum + (q.points || 1);
+              }, 0),
             0
-          )
+          ),
         };
 
         return res.json(response);
@@ -824,24 +902,35 @@ const getQuiz = async (req, res) => {
       }
 
       const questionsWithoutAnswers = quizQuestions.map((q, index) => {
-        let question = {
+        const question = {
           _id: q._id || `temp-${index}`,
           questionText: q.questionText,
           type: q.type,
           explanation: q.explanation || '',
           points: q.points || 1,
-          options: q.options ? [...q.options] : []
         };
 
-        if (
-          quiz.shuffleOptions &&
-          Array.isArray(question.options) &&
-          question.options.length > 0
-        ) {
-          question.options = seededShuffle(
-            question.options,
-            seed + '-options-' + (q._id || index)
-          );
+        // 🟣 CLOZE
+        if (q.type === 'cloze' && Array.isArray(q.blanks)) {
+          question.blanks = q.blanks.map(b => ({
+            blankNumber: b.blankNumber,
+            options: quiz.shuffleOptions
+              ? seededShuffle(
+                  [...b.options],
+                  seed + `-cloze-${q._id}-${b.blankNumber}`
+                )
+              : [...b.options],
+          }));
+        }
+
+        // 🟢 NORMAL OPTIONS
+        if (Array.isArray(q.options) && q.options.length > 0) {
+          question.options = quiz.shuffleOptions
+            ? seededShuffle(
+                [...q.options],
+                seed + '-options-' + (q._id || index)
+              )
+            : [...q.options];
         }
 
         if (process.env.NODE_ENV !== 'development') {
@@ -861,7 +950,12 @@ const getQuiz = async (req, res) => {
         questions: questionsWithoutAnswers,
         shuffleQuestions: quiz.shuffleQuestions,
         shuffleOptions: quiz.shuffleOptions,
-        totalPoints: quiz.questions.reduce((s, q) => s + (q.points || 1), 0)
+        totalPoints: quizQuestions.reduce((s, q) => {
+          if (q.type === 'cloze' && Array.isArray(q.blanks)) {
+            return s + q.blanks.length * (q.points || 1);
+          }
+          return s + (q.points || 1);
+        }, 0),
       };
 
       return res.json(response);
@@ -872,7 +966,6 @@ const getQuiz = async (req, res) => {
     // =====================================================
     response = quiz;
     cache.set(cacheKey, response, 300);
-
     return res.json(response);
 
   } catch (error) {
@@ -884,6 +977,7 @@ const getQuiz = async (req, res) => {
     });
   }
 };
+
 
 
 /// ---------------------------
@@ -905,26 +999,29 @@ const getQuizzesForClass = async (req, res) => {
     const cached = cache.get(cacheKey);
     if (cached) return res.json(cached);
 
+    // ---------------------------
     // Base filter
+    // ---------------------------
     const filter = {
-  school,
-  class: toObjectId(classId),
-};
+      school,
+      class: toObjectId(classId),
+    };
 
-if (role === "student") {
-  filter.isPublished = true;
-}
+    if (role === "student") {
+      filter.isPublished = true;
+    }
 
-if (role === "teacher") {
-  filter.teacher = req.user._id; // 🔐 THIS LINE WAS MISSING
-}
+    if (role === "teacher") {
+      filter.teacher = req.user._id; // 🔐 teacher isolation
+    }
 
-
+    // ---------------------------
     // Fetch quizzes
+    // ---------------------------
     const quizzes = await executeWithTimeout(
       QuizSession.find(filter)
         .populate({ path: "subject", select: "name shortName" })
-        .select(role === "student" ? "-questions.correctAnswer" : "")
+        .select(role === "student" ? "-questions.correctAnswer -sections.questions.correctAnswer" : "")
         .sort({ createdAt: -1 })
         .lean(),
       5000
@@ -934,6 +1031,28 @@ if (role === "teacher") {
       cache.set(cacheKey, [], 60);
       return res.json([]);
     }
+
+    // --------------------------------------------------
+    // 🔴 FIX: CLOZE-AWARE TOTAL POINTS CALCULATOR
+    // --------------------------------------------------
+    const computeTotalPoints = (quiz) => {
+      const sumQuestions = (questions = []) =>
+        questions.reduce((sum, q) => {
+          if (q.type === "cloze" && Array.isArray(q.blanks)) {
+            return sum + q.blanks.length * (q.points || 1);
+          }
+          return sum + (q.points || 1);
+        }, 0);
+
+      if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
+        return quiz.sections.reduce(
+          (total, section) => total + sumQuestions(section.questions),
+          0
+        );
+      }
+
+      return sumQuestions(quiz.questions);
+    };
 
     const quizIds = quizzes.map(q => toObjectId(q._id));
 
@@ -996,7 +1115,6 @@ if (role === "teacher") {
         )
       ]);
 
-      // Indexing for fast lookup
       const notifMap = Object.fromEntries(
         notifications.map(n => [n.quizId?.toString(), n])
       );
@@ -1008,15 +1126,15 @@ if (role === "teacher") {
         const id = q._id.toString();
         const completed = completedMap.has(id);
         const inProgress = !completed && inProgressMap.has(id);
-        
-        // 🔴 ADD: Normalize class name
+
         const { className, classDisplayName } = resolveQuizClassNames(q.class);
 
         return {
           ...q,
           subject: q.subject?.name ?? "Unknown Subject",
-          className,                // 🔴 ADD: normalized className
-          classDisplayName,         // 🔴 ADD: UI-ready display name
+          className,
+          classDisplayName,
+          totalPoints: computeTotalPoints(q), // 🔴 FIX
           completed,
           inProgress,
           status: completed ? "Completed" : inProgress ? "In Progress" : "Available",
@@ -1024,7 +1142,6 @@ if (role === "teacher") {
         };
       });
 
-      // Mark notifications read (background)
       processInBackground(async () => {
         await Notification.updateMany(
           {
@@ -1042,54 +1159,43 @@ if (role === "teacher") {
     }
 
     // ============================
-    // 🟠 TEACHER VIEW (Aggregation)
+    // 🟠 TEACHER VIEW
     // ============================
-
     const [resultsAgg, attemptsAgg] = await Promise.all([
       executeWithTimeout(
-        QuizResult.aggregate(
-          [
-            { $match: { quizId: { $in: quizIds }, school } },
-            {
-              $group: {
-                _id: "$quizId",
-                submissionCount: { $sum: 1 },
-                averageScore: { $avg: "$score" }
-              }
+        QuizResult.aggregate([
+          { $match: { quizId: { $in: quizIds }, school } },
+          {
+            $group: {
+              _id: "$quizId",
+              submissionCount: { $sum: 1 },
+              averageScore: { $avg: "$score" }
             }
-          ],
-          { maxTimeMS: 5000 }
-        ),
+          }
+        ]),
         5000
       ),
 
       executeWithTimeout(
-        QuizAttempt.aggregate(
-          [
-            {
-              $match: {
-                quizId: { $in: quizIds },
-                school,
-                status: "in-progress",
-                expiresAt: { $gt: new Date() }
-              }
-            },
-            { $group: { _id: "$quizId", inProgressCount: { $sum: 1 } } }
-          ],
-          { maxTimeMS: 5000 }
-        ),
+        QuizAttempt.aggregate([
+          {
+            $match: {
+              quizId: { $in: quizIds },
+              school,
+              status: "in-progress",
+              expiresAt: { $gt: new Date() }
+            }
+          },
+          { $group: { _id: "$quizId", inProgressCount: { $sum: 1 } } }
+        ]),
         5000
       )
     ]);
 
-    // Convert aggregations to maps
     const resultsMap = new Map(
       resultsAgg.map(r => [
         r._id.toString(),
-        {
-          submissionCount: r.submissionCount,
-          averageScore: r.averageScore
-        }
+        { submissionCount: r.submissionCount, averageScore: r.averageScore }
       ])
     );
 
@@ -1097,7 +1203,6 @@ if (role === "teacher") {
       attemptsAgg.map(a => [a._id.toString(), a.inProgressCount])
     );
 
-    // Merge into quizzes
     const quizzesWithStats = quizzes.map(q => {
       const id = q._id.toString();
       const stats = resultsMap.get(id) || {
@@ -1105,14 +1210,14 @@ if (role === "teacher") {
         averageScore: null
       };
 
-      // 🔴 ADD: Normalize class name
       const { className, classDisplayName } = resolveQuizClassNames(q.class);
 
       return {
         ...q,
         subject: q.subject?.name ?? "Unknown Subject",
-        className,                // 🔴 ADD: normalized className
-        classDisplayName,         // 🔴 ADD: UI-ready display name
+        className,
+        classDisplayName,
+        totalPoints: computeTotalPoints(q), // 🔴 FIX
         submissionCount: stats.submissionCount,
         averageScore: stats.averageScore,
         inProgressCount: attemptsMap.get(id) || 0
@@ -1121,6 +1226,7 @@ if (role === "teacher") {
 
     cache.set(cacheKey, quizzesWithStats, 120);
     return res.json(quizzesWithStats);
+
   } catch (error) {
     console.error("❌ Error fetching quizzes with progress:", error);
     return res.status(500).json({
@@ -1129,6 +1235,7 @@ if (role === "teacher") {
     });
   }
 };
+
 
 
 // ---------------------------
@@ -1142,42 +1249,68 @@ const getQuizzesForSchool = async (req, res) => {
       return res.status(400).json({ message: 'Invalid school ID format' });
     }
 
-    // ✅ Populate subject to retrieve subject name
+    // Fetch quizzes
     const quizzes = await QuizSession.find({ school: toObjectId(schoolId) })
       .populate('teacher', 'name email')
       .populate('class', 'name')
       .populate({ path: 'subject', select: 'name shortName' })
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean(); // 🔴 ensure plain object for safe computation
 
     if (!quizzes || quizzes.length === 0) {
       return res.status(404).json({ message: 'No quizzes found for this school' });
     }
 
-    // ✅ Format quizzes to always include readable subject name
+    // --------------------------------------------------
+    // 🔴 FIX: CLOZE-AWARE TOTAL POINTS CALCULATOR
+    // --------------------------------------------------
+    const computeTotalPoints = (quiz) => {
+      const sumQuestions = (questions = []) =>
+        questions.reduce((sum, q) => {
+          if (q.type === 'cloze' && Array.isArray(q.blanks)) {
+            return sum + q.blanks.length * (q.points || 1);
+          }
+          return sum + (q.points || 1);
+        }, 0);
+
+      if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
+        return quiz.sections.reduce(
+          (total, section) => total + sumQuestions(section.questions),
+          0
+        );
+      }
+
+      return sumQuestions(quiz.questions);
+    };
+
+    // Format response
     const formattedQuizzes = quizzes.map(q => {
-      // 🔴 ADD: Normalize class name
       const { className, classDisplayName } = resolveQuizClassNames(q.class);
 
       return {
         _id: q._id,
         title: q.title,
-        className,                // 🔴 ADD: normalized className (replaces q.class?.name)
-        classDisplayName,         // 🔴 ADD: UI-ready display name
+        className,
+        classDisplayName,
         teacher: q.teacher?.name || 'Unknown Teacher',
         subject: resolveSubjectName(q),
-        totalPoints: q.totalPoints || 0,
+        totalPoints: computeTotalPoints(q), // 🔴 FIX
         createdAt: q.createdAt,
         dueDate: q.dueDate,
         isPublished: q.isPublished,
       };
     });
 
-    res.json({ quizzes: formattedQuizzes });
+    return res.json({ quizzes: formattedQuizzes });
   } catch (error) {
     console.error('❌ Error fetching school quizzes:', error);
-    res.status(500).json({ message: 'Error fetching school quizzes', error: error.message });
+    return res.status(500).json({
+      message: 'Error fetching school quizzes',
+      error: error.message,
+    });
   }
 };
+
 
 
 // ---------------------------
@@ -1238,7 +1371,8 @@ const getProtectedQuiz = async (req, res) => {
           school,
           startTime: new Date(),
           expiresAt,
-          status: "in-progress"
+          status: "in-progress",
+          answers: {} // 🔴 REQUIRED FOR CLOZE
         });
       } catch (sessionError) {
         console.error('Session creation failed:', sessionError);
@@ -1271,11 +1405,35 @@ const getProtectedQuiz = async (req, res) => {
     }
 
     // --------------------------------------------------
-    // 🔒 OBFUSCATE QUESTIONS
+    // 🔒 OBFUSCATE QUESTIONS (CLOZE-SAFE)
     // --------------------------------------------------
     const protectedQuestions = questions.map((q, index) => {
       const questionId = `q${index}_${sessionId}`;
 
+      // ----------------------------
+      // 🟣 CLOZE QUESTION
+      // ----------------------------
+      if (q.type === 'cloze' && Array.isArray(q.blanks)) {
+        return {
+          id: questionId,
+          questionId: q._id, // 🔴 needed for submit mapping
+          questionText: obfuscateText(q.questionText),
+          type: 'cloze',
+          points: q.points || 1,
+          blanks: q.blanks.map(blank => ({
+            blankNumber: blank.blankNumber,
+            options: (blank.options || []).map(opt => ({
+              text: obfuscateText(opt),
+              id: `opt_${Math.random().toString(36).substr(2, 9)}`,
+              value: opt
+            }))
+          }))
+        };
+      }
+
+      // ----------------------------
+      // 🟢 NORMAL QUESTIONS
+      // ----------------------------
       let options = [];
       if (Array.isArray(q.options) && q.options.length > 0) {
         options = [...q.options];
@@ -1293,15 +1451,15 @@ const getProtectedQuiz = async (req, res) => {
 
       return {
         id: questionId,
+        questionId: q._id,
         questionText: obfuscateText(q.questionText),
         type: q.type,
         options,
         points: q.points || 1
-        // 🔒 sectionInstruction intentionally NOT exposed
       };
     });
 
-    res.json({
+    return res.json({
       sessionId,
       quizTitle: quiz.title,
       timeLimit: quiz.timeLimit,
@@ -1312,7 +1470,7 @@ const getProtectedQuiz = async (req, res) => {
 
   } catch (error) {
     console.error('Error getting protected quiz:', error);
-    res.status(500).json({
+    return res.status(500).json({
       message: 'Error loading quiz',
       error: error.message
     });
@@ -1324,6 +1482,7 @@ function obfuscateText(text) {
   const words = text.split(' ');
   return words.map(word => word.split('').join('\u200B')).join(' ');
 }
+
 
 
 // ---------------------------
@@ -1392,23 +1551,63 @@ const getQuizResults = async (req, res) => {
     const formatted = results.map((r) => {
       const answers = Array.isArray(r.answers) ? r.answers : [];
 
-      // 🔴 GROUP ANSWERS BY SECTION (if any)
+      // --------------------------------------------------
+      // 🔴 GROUP ANSWERS BY SECTION
+      // --------------------------------------------------
       const sectionsMap = {};
+
       answers.forEach(a => {
-        if (a.sectionInstruction) {
-          if (!sectionsMap[a.sectionInstruction]) {
-            sectionsMap[a.sectionInstruction] = [];
-          }
-          sectionsMap[a.sectionInstruction].push(a);
+        const sectionKey = a.sectionInstruction || '__NO_SECTION__';
+        if (!sectionsMap[sectionKey]) {
+          sectionsMap[sectionKey] = [];
         }
+        sectionsMap[sectionKey].push(a);
       });
 
       const sections =
         Object.keys(sectionsMap).length > 0
-          ? Object.entries(sectionsMap).map(([instruction, questions]) => ({
-              instruction,
-              questions,
-            }))
+          ? Object.entries(sectionsMap).map(([instruction, rawAnswers]) => {
+              // -----------------------------------------
+              // 🟣 GROUP CLOZE BY QUESTION
+              // -----------------------------------------
+              const grouped = {};
+              rawAnswers.forEach(ans => {
+                const key = ans.questionId?.toString();
+                if (!grouped[key]) grouped[key] = [];
+                grouped[key].push(ans);
+              });
+
+              const questions = Object.values(grouped).map(group => {
+                const base = group[0];
+                const type = (base.questionType || '').toLowerCase();
+
+                // 🟣 CLOZE
+                if (type === 'multiple-choice' && group.length > 1) {
+                  return {
+                    questionId: base.questionId,
+                    questionText: base.questionText,
+                    questionType: 'cloze',
+                    blanks: group.map(b => ({
+                      selectedAnswer: b.selectedAnswer,
+                      correctAnswer: b.correctAnswer,
+                      isCorrect: b.isCorrect,
+                      earnedPoints: b.earnedPoints,
+                      points: b.points
+                    })),
+                    totalPoints: group.reduce((s, g) => s + (g.points || 1), 0),
+                    earnedPoints: group.reduce((s, g) => s + (g.earnedPoints || 0), 0)
+                  };
+                }
+
+                // 🟢 NORMAL
+                return base;
+              });
+
+              return {
+                instruction: instruction === '__NO_SECTION__' ? null : instruction,
+                questions
+              };
+            })
           : null;
 
       return {
@@ -1424,22 +1623,23 @@ const getQuizResults = async (req, res) => {
         // 🔹 BACKWARD COMPATIBLE
         answers,
 
-        // 🔴 NEW (for section-based quizzes)
-        sections,
+        // 🔴 NEW (section + cloze aware)
+        sections
       };
     });
 
     cache.set(cacheKey, formatted, 180); // 3 min cache
-    res.json(formatted);
+    return res.json(formatted);
 
   } catch (error) {
     console.error("❌ getQuizResults error:", error);
-    res.status(500).json({
+    return res.status(500).json({
       message: 'Error fetching results',
       error: error.message
     });
   }
 };
+
 
 
 // --------------------------- 
@@ -1626,7 +1826,7 @@ const updateQuiz = async (req, res) => {
     const {
       title,
       questions,
-      sections,                // 🔴 ADD
+      sections,
       dueDate,
       timeLimit,
       startTime,
@@ -1672,11 +1872,12 @@ const updateQuiz = async (req, res) => {
     }
 
     // --------------------------------------------------
-    // 🧪 Validate FLAT QUESTIONS
+    // 🧪 Validate FLAT QUESTIONS (CLOZE AWARE)
     // --------------------------------------------------
     if (Array.isArray(questions)) {
       for (let i = 0; i < questions.length; i++) {
         const q = questions[i];
+        const type = (q.type || "").toLowerCase();
 
         if (!q.questionText || !q.type) {
           await session.abortTransaction();
@@ -1685,7 +1886,8 @@ const updateQuiz = async (req, res) => {
           });
         }
 
-        if (q.type === 'multiple-choice') {
+        // 🟢 NORMAL MCQ
+        if (type === 'multiple-choice') {
           if (!Array.isArray(q.options) || q.correctAnswer === undefined) {
             await session.abortTransaction();
             return res.status(400).json({
@@ -1701,7 +1903,39 @@ const updateQuiz = async (req, res) => {
           }
         }
 
-        if (q.type === 'true-false' && typeof q.correctAnswer !== 'boolean') {
+        // 🟣 CLOZE (MCQ WITH BLANKS)
+        if (type === 'cloze') {
+          if (!Array.isArray(q.blanks) || q.blanks.length === 0) {
+            await session.abortTransaction();
+            return res.status(400).json({
+              message: `Question ${i + 1}: Cloze questions must contain blanks`
+            });
+          }
+
+          for (let b = 0; b < q.blanks.length; b++) {
+            const blank = q.blanks[b];
+
+            if (
+              !Array.isArray(blank.options) ||
+              blank.correctAnswer === undefined
+            ) {
+              await session.abortTransaction();
+              return res.status(400).json({
+                message: `Question ${i + 1}, Blank ${b + 1}: options and correctAnswer are required`
+              });
+            }
+
+            if (!blank.options.includes(blank.correctAnswer)) {
+              await session.abortTransaction();
+              return res.status(400).json({
+                message: `Question ${i + 1}, Blank ${b + 1}: correctAnswer must be one of the options`
+              });
+            }
+          }
+        }
+
+        // 🟢 TRUE / FALSE
+        if (type === 'true-false' && typeof q.correctAnswer !== 'boolean') {
           await session.abortTransaction();
           return res.status(400).json({
             message: `Question ${i + 1}: True-false questions require a boolean correctAnswer`
@@ -1713,7 +1947,7 @@ const updateQuiz = async (req, res) => {
     }
 
     // --------------------------------------------------
-    // 🧪 Validate SECTIONS (NEW)
+    // 🧪 Validate SECTIONS (CLOZE AWARE)
     // --------------------------------------------------
     if (Array.isArray(sections)) {
       for (let i = 0; i < sections.length; i++) {
@@ -1735,12 +1969,23 @@ const updateQuiz = async (req, res) => {
 
         for (let j = 0; j < section.questions.length; j++) {
           const q = section.questions[j];
+          const type = (q.type || "").toLowerCase();
 
           if (!q.questionText || !q.type) {
             await session.abortTransaction();
             return res.status(400).json({
               message: `Section ${i + 1}, Question ${j + 1} is missing required fields`
             });
+          }
+
+          // 🟣 CLOZE INSIDE SECTION
+          if (type === 'cloze') {
+            if (!Array.isArray(q.blanks) || q.blanks.length === 0) {
+              await session.abortTransaction();
+              return res.status(400).json({
+                message: `Section ${i + 1}, Question ${j + 1}: Cloze must contain blanks`
+              });
+            }
           }
         }
       }
@@ -1794,6 +2039,7 @@ const updateQuiz = async (req, res) => {
     session.endSession();
   }
 };
+
 
 
 // ---------------------------
@@ -1868,7 +2114,7 @@ const deleteQuiz = async (req, res) => {
 const submitQuiz = async (req, res) => {
   try {
     const { quizId } = req.params;
-    const { answers = [], startTime, timeSpent = 0, autoSubmit = false } = req.body;
+    const { answers = {}, startTime, timeSpent = 0, autoSubmit = false } = req.body;
     const school = toObjectId(req.user.school);
     const now = new Date();
 
@@ -1938,25 +2184,6 @@ const submitQuiz = async (req, res) => {
     }
 
     // --------------------------------------------------
-    // 🔥 NORMALIZE ANSWERS
-    // --------------------------------------------------
-    let normalizedAnswers = [];
-
-    if (Array.isArray(answers) && answers.length > 0) {
-      normalizedAnswers = answers.map(a => ({
-        questionId: a.questionId,
-        selectedAnswer: a.selectedAnswer ?? null,
-        timeSpent: a.timeSpent ?? 0,
-      }));
-    } else {
-      normalizedAnswers = allQuestions.map(q => ({
-        questionId: q._id.toString(),
-        selectedAnswer: null,
-        timeSpent: 0,
-      }));
-    }
-
-    // --------------------------------------------------
     // 🔍 LOAD ACTIVE ATTEMPT
     // --------------------------------------------------
     let activeAttempt = await QuizAttempt.findOne({
@@ -1968,12 +2195,27 @@ const submitQuiz = async (req, res) => {
 
     if (!activeAttempt) {
       const timeLimitMinutes = quiz.timeLimit ?? 60;
-      activeAttempt = {
+      activeAttempt = await QuizAttempt.create({
+        quizId,
+        studentId,
+        school,
         sessionId: new mongoose.Types.ObjectId().toString(),
         attemptNumber: 1,
         startTime: startTime ? new Date(startTime) : now,
         expiresAt: new Date(now.getTime() + timeLimitMinutes * 60 * 1000),
-      };
+        answers: {},                 // 🔴 FIX: ensure answers map exists
+      });
+    }
+
+    // --------------------------------------------------
+    // 🔴 FIX: SYNC SUBMITTED ANSWERS INTO ATTEMPT
+    // --------------------------------------------------
+    if (answers && typeof answers === "object") {
+      Object.entries(answers).forEach(([key, value]) => {
+        activeAttempt.answers.set
+          ? activeAttempt.answers.set(key, value)
+          : (activeAttempt.answers[key] = value);
+      });
     }
 
     // --------------------------------------------------
@@ -1983,17 +2225,60 @@ const submitQuiz = async (req, res) => {
     let totalAutoGradedPoints = 0;
     let requiresManualReview = false;
 
-    const results = allQuestions.map(q => {
-      const type = (q.type || "").toLowerCase().replace(/\s+/g, "-");
-      const studentAnswer = normalizedAnswers.find(
-        a => a.questionId == q._id.toString()
-      );
+    const results = [];
+
+    for (const q of allQuestions) {
+      const type = (q.type || "").toLowerCase();
+
+      // ============================
+      // 🟣 CLOZE (MCQ WITH BLANKS)
+      // ============================
+      if (type === "cloze" && Array.isArray(q.blanks)) {
+        for (const blank of q.blanks) {
+          const key = `${q._id}:${blank.blankNumber}`;
+
+          const studentValue =
+            activeAttempt.answers?.get?.(key) ??
+            activeAttempt.answers?.[key] ??
+            null;
+
+          const isCorrect = studentValue === blank.correctAnswer;
+
+          results.push({
+            questionId: q._id,
+            questionText: q.questionText,
+            questionType: "multiple-choice",
+            sectionInstruction: q.__sectionInstruction || null,
+            selectedAnswer: studentValue,
+            correctAnswer: blank.correctAnswer,
+            explanation: q.explanation || null,
+            isCorrect,
+            points: q.points || 1,
+            earnedPoints: isCorrect ? (q.points || 1) : 0,
+            manualReviewRequired: false,
+            timeSpent: 0,
+          });
+
+          totalAutoGradedPoints += q.points || 1;
+          if (isCorrect) score += q.points || 1;
+        }
+
+        continue;
+      }
+
+      // ============================
+      // 🟢 NORMAL QUESTIONS
+      // ============================
+      const studentAnswer =
+        Array.isArray(answers)
+          ? answers.find(a => a.questionId == q._id.toString())
+          : null;
 
       const item = {
         questionId: q._id,
         questionText: q.questionText,
         questionType: q.type,
-        sectionInstruction: q.__sectionInstruction || null, // 🔴 ADD
+        sectionInstruction: q.__sectionInstruction || null,
         selectedAnswer: studentAnswer?.selectedAnswer ?? null,
         explanation: q.explanation ?? null,
         manualReviewRequired: false,
@@ -2007,38 +2292,38 @@ const submitQuiz = async (req, res) => {
       if (["essay", "short-answer"].includes(type)) {
         requiresManualReview = true;
         item.manualReviewRequired = true;
-        return item;
+        results.push(item);
+        continue;
       }
 
       totalAutoGradedPoints += item.points;
 
-      const selected = studentAnswer?.selectedAnswer;
-      if (selected !== null && selected !== undefined) {
-        let correct = false;
-
-        if (type === "true-false") {
-          correct =
-            String(q.correctAnswer).toLowerCase() ===
-            String(selected).toLowerCase();
-        } else {
-          correct = selected === q.correctAnswer;
-        }
+      if (item.selectedAnswer !== null) {
+        const correct =
+          type === "true-false"
+            ? String(item.selectedAnswer).toLowerCase() ===
+              String(q.correctAnswer).toLowerCase()
+            : item.selectedAnswer === q.correctAnswer;
 
         item.isCorrect = correct;
         item.earnedPoints = correct ? item.points : 0;
         if (correct) score += item.points;
       } else {
         item.isCorrect = false;
-        item.earnedPoints = 0;
       }
 
-      return item;
-    });
+      results.push(item);
+    }
 
     let percentage = null;
     if (!requiresManualReview && totalAutoGradedPoints > 0) {
       percentage = Number(((score / totalAutoGradedPoints) * 100).toFixed(2));
     }
+
+    // --------------------------------------------------
+    // 🔴 FIX: TOTAL POINTS MUST MATCH AUTO-GRADED TOTAL
+    // --------------------------------------------------
+    const totalPoints = totalAutoGradedPoints;
 
     // --------------------------------------------------
     // ✅ SAVE RESULT
@@ -2052,7 +2337,7 @@ const submitQuiz = async (req, res) => {
         studentId,
         answers: results,
         score: requiresManualReview ? null : score,
-        totalPoints: allQuestions.reduce((s, q) => s + (q.points || 1), 0),
+        totalPoints,
         percentage: requiresManualReview ? null : percentage,
         startTime: activeAttempt.startTime,
         submittedAt: now,
@@ -2065,11 +2350,9 @@ const submitQuiz = async (req, res) => {
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
-    if (activeAttempt && activeAttempt._id) {
-      activeAttempt.status = "submitted";
-      activeAttempt.completedAt = now;
-      await activeAttempt.save();
-    }
+    activeAttempt.status = "submitted";
+    activeAttempt.completedAt = now;
+    await activeAttempt.save();
 
     return res.json({
       message: autoSubmit
@@ -2094,6 +2377,7 @@ const submitQuiz = async (req, res) => {
 
 
 
+
 // ---------------------------
 // 15. Get Results for Student/Parent (Optimized)
 // ---------------------------
@@ -2104,19 +2388,10 @@ const getResultsForStudent = async (req, res) => {
     const user = req.user;
     const cacheKey = `student:results:${studentId}:${childId}:${quizId}:${user.role}`;
 
-    // 🎯 Check cache
     const cached = cache.get(cacheKey);
     if (cached) {
       return res.json(cached);
     }
-
-    console.log("📘 getResultsForStudent called:", {
-      routeStudentId: studentId,
-      role: user?.role,
-      childId,
-      quizId,
-      subject,
-    });
 
     let results = [];
     let targetStudentIds = [];
@@ -2139,6 +2414,7 @@ const getResultsForStudent = async (req, res) => {
 
       targetStudentIds = [studentDoc._id];
       const validIds = [studentDoc._id, user._id];
+
       const filter = { studentId: { $in: validIds }, school: user.school };
       if (quizId) filter.quizId = quizId;
 
@@ -2163,7 +2439,7 @@ const getResultsForStudent = async (req, res) => {
 
         r.answers = Array.isArray(r.answers) ? r.answers : [];
 
-        // 🔴 SECTION GROUPING (NEW)
+        // 🔴 GROUP BY SECTION
         const sectionsMap = {};
         r.answers.forEach(a => {
           if (a.sectionInstruction) {
@@ -2182,14 +2458,17 @@ const getResultsForStudent = async (req, res) => {
               }))
             : null;
 
-        const pendingEssay = r.answers.some(
-          a =>
-            ["essay", "short-answer"].includes((a.questionType || "").toLowerCase()) &&
+        // 🧠 FINAL STATUS (CLOZE SAFE)
+        const pendingManual = r.answers.some(a => {
+          const type = (a.questionType || "").toLowerCase();
+          return (
+            (type === "essay" || type === "short-answer") &&
             (a.earnedPoints === null || a.earnedPoints === undefined)
-        );
+          );
+        });
 
-        r.status = pendingEssay ? "needs-review" : "graded";
-        r.autoGraded = !pendingEssay;
+        r.status = pendingManual ? "needs-review" : "graded";
+        r.autoGraded = !pendingManual;
       }
     }
 
@@ -2244,7 +2523,7 @@ const getResultsForStudent = async (req, res) => {
 
         r.answers = Array.isArray(r.answers) ? r.answers : [];
 
-        // 🔴 SECTION GROUPING (NEW)
+        // 🔴 GROUP BY SECTION
         const sectionsMap = {};
         r.answers.forEach(a => {
           if (a.sectionInstruction) {
@@ -2263,14 +2542,16 @@ const getResultsForStudent = async (req, res) => {
               }))
             : null;
 
-        const pendingEssay = r.answers.some(
-          a =>
-            ["essay", "short-answer"].includes((a.questionType || "").toLowerCase()) &&
+        const pendingManual = r.answers.some(a => {
+          const type = (a.questionType || "").toLowerCase();
+          return (
+            (type === "essay" || type === "short-answer") &&
             (a.earnedPoints === null || a.earnedPoints === undefined)
-        );
+          );
+        });
 
-        r.status = pendingEssay ? "needs-review" : "graded";
-        r.autoGraded = !pendingEssay;
+        r.status = pendingManual ? "needs-review" : "graded";
+        r.autoGraded = !pendingManual;
       }
     } else {
       return res.status(403).json({
@@ -2307,6 +2588,7 @@ const getResultsForStudent = async (req, res) => {
 };
 
 
+
 // ---------------------------
 // 16. Get Quiz Result by ID (Final Persistent Version) - OPTIMIZED
 // ---------------------------
@@ -2341,18 +2623,13 @@ const getQuizResultById = async (req, res) => {
     }
 
     // --------------------------------------------------
-    // ✅ Normalize answers (existing behaviour)
+    // ✅ Normalize answers (safe defaults)
     // --------------------------------------------------
     result.answers = (result.answers || []).map(answer => ({
       ...answer,
       earnedPoints:
-        typeof answer.earnedPoints === "number"
-          ? answer.earnedPoints
-          : null,
-      feedback:
-        typeof answer.feedback === "string"
-          ? answer.feedback
-          : "",
+        typeof answer.earnedPoints === "number" ? answer.earnedPoints : null,
+      feedback: typeof answer.feedback === "string" ? answer.feedback : "",
       manualReviewRequired:
         typeof answer.manualReviewRequired === "boolean"
           ? answer.manualReviewRequired
@@ -2361,32 +2638,75 @@ const getQuizResultById = async (req, res) => {
       points: typeof answer.points === "number" ? answer.points : 0,
       isCorrect:
         typeof answer.isCorrect === "boolean" ? answer.isCorrect : null,
-      sectionInstruction: answer.sectionInstruction || null // 🔴 ADD
+      sectionInstruction: answer.sectionInstruction || null
     }));
 
     // --------------------------------------------------
-    // 🔴 Group answers by section (NEW)
+    // 🔴 GROUP BY SECTION + CLOZE
     // --------------------------------------------------
     const sectionsMap = {};
+
     result.answers.forEach(a => {
-      if (a.sectionInstruction) {
-        if (!sectionsMap[a.sectionInstruction]) {
-          sectionsMap[a.sectionInstruction] = [];
-        }
-        sectionsMap[a.sectionInstruction].push(a);
+      const sectionKey = a.sectionInstruction || "__NO_SECTION__";
+      if (!sectionsMap[sectionKey]) {
+        sectionsMap[sectionKey] = [];
       }
+      sectionsMap[sectionKey].push(a);
     });
 
     result.sections =
       Object.keys(sectionsMap).length > 0
-        ? Object.entries(sectionsMap).map(([instruction, questions]) => ({
-            instruction,
-            questions
-          }))
+        ? Object.entries(sectionsMap).map(([instruction, rawAnswers]) => {
+            // group by questionId
+            const grouped = {};
+            rawAnswers.forEach(ans => {
+              const key = ans.questionId?.toString();
+              if (!grouped[key]) grouped[key] = [];
+              grouped[key].push(ans);
+            });
+
+            const questions = Object.values(grouped).map(group => {
+              const base = group[0];
+              const type = (base.questionType || "").toLowerCase();
+
+              // 🟣 CLOZE (multiple blanks)
+              if (type === "multiple-choice" && group.length > 1) {
+                return {
+                  questionId: base.questionId,
+                  questionText: base.questionText,
+                  questionType: "cloze",
+                  blanks: group.map(b => ({
+                    selectedAnswer: b.selectedAnswer,
+                    correctAnswer: b.correctAnswer,
+                    isCorrect: b.isCorrect,
+                    earnedPoints: b.earnedPoints,
+                    points: b.points
+                  })),
+                  totalPoints: group.reduce(
+                    (s, g) => s + (g.points || 1),
+                    0
+                  ),
+                  earnedPoints: group.reduce(
+                    (s, g) => s + (g.earnedPoints || 0),
+                    0
+                  )
+                };
+              }
+
+              // 🟢 NORMAL QUESTION
+              return base;
+            });
+
+            return {
+              instruction:
+                instruction === "__NO_SECTION__" ? null : instruction,
+              questions
+            };
+          })
         : null;
 
     // --------------------------------------------------
-    // ✅ Recalculate totals (unchanged logic)
+    // ✅ Recalculate totals (cloze-safe)
     // --------------------------------------------------
     const totalEarned = result.answers.reduce(
       (sum, a) => sum + (a.earnedPoints || 0),
@@ -2398,26 +2718,25 @@ const getQuizResultById = async (req, res) => {
         ? result.totalPoints
         : result.answers.reduce((sum, a) => sum + (a.points || 0), 0);
 
-    const percentage =
-      totalPoints > 0
-        ? parseFloat(((totalEarned / totalPoints) * 100).toFixed(2))
-        : 0;
-
     result.score = totalEarned;
     result.totalPoints = totalPoints;
-    result.percentage = percentage;
+    result.percentage =
+      totalPoints > 0
+        ? Number(((totalEarned / totalPoints) * 100).toFixed(2))
+        : 0;
 
     cache.set(cacheKey, result, 300); // 5 min cache
-    res.status(200).json(result);
+    return res.status(200).json(result);
 
   } catch (err) {
     console.error("❌ Error fetching result:", err);
-    res.status(500).json({
+    return res.status(500).json({
       message: "Error fetching result",
-      error: err.message,
+      error: err.message
     });
   }
 };
+
 
 
 // ---------------------------
@@ -2429,13 +2748,11 @@ const getAllClassQuizResultsForTeacher = async (req, res) => {
     const school = toObjectId(req.user.school);
     const cacheKey = CACHE_KEYS.CLASS_RESULTS_TEACHER(teacherUserId.toString());
 
-    // 🎯 Check cache
     const cached = cache.get(cacheKey);
     if (cached) {
       return res.json(cached);
     }
 
-    // 🎯 Parallel teacher and classes lookup
     const [teacherDoc, relatedClasses] = await Promise.all([
       executeWithTimeout(
         Teacher.findOne({ user: teacherUserId, school })
@@ -2454,7 +2771,6 @@ const getAllClassQuizResultsForTeacher = async (req, res) => {
       return res.status(404).json({ message: "Teacher record not found" });
     }
 
-    // 🎯 Collect class IDs
     const classIds = new Set();
     if (teacherDoc.assignedClass) classIds.add(teacherDoc.assignedClass.toString());
     if (Array.isArray(teacherDoc.assignedClasses)) {
@@ -2470,7 +2786,6 @@ const getAllClassQuizResultsForTeacher = async (req, res) => {
 
     const classIdsArray = Array.from(classIds);
 
-    // 🎯 Fetch quizzes
     const quizzes = await executeWithTimeout(
       QuizSession.find({
         class: { $in: classIdsArray },
@@ -2491,7 +2806,6 @@ const getAllClassQuizResultsForTeacher = async (req, res) => {
 
     const quizIds = quizzes.map(q => q._id.toString());
 
-    // 🎯 Fetch results + classes
     const [results, teacherClasses] = await Promise.all([
       executeWithTimeout(
         QuizResult.find({
@@ -2521,7 +2835,6 @@ const getAllClassQuizResultsForTeacher = async (req, res) => {
       return res.json(emptyResponse);
     }
 
-    // 🎯 Batch student info resolution
     const studentInfos = await Promise.all(
       results.map(r => resolveStudentInfo(r.studentId, school))
     );
@@ -2531,7 +2844,6 @@ const getAllClassQuizResultsForTeacher = async (req, res) => {
       studentInfoMap.set(r.studentId.toString(), studentInfos[i]);
     });
 
-    // 🎯 Group by class → quiz
     const groupedByClass = {};
 
     for (const result of results) {
@@ -2568,23 +2880,56 @@ const getAllClassQuizResultsForTeacher = async (req, res) => {
       const studentInfo = studentInfoMap.get(result.studentId.toString());
       const answers = Array.isArray(result.answers) ? result.answers : [];
 
-      // 🔴 SECTION GROUPING (NEW)
+      // --------------------------------------------------
+      // 🔴 SECTION + CLOZE GROUPING
+      // --------------------------------------------------
       const sectionsMap = {};
       answers.forEach(a => {
-        if (a.sectionInstruction) {
-          if (!sectionsMap[a.sectionInstruction]) {
-            sectionsMap[a.sectionInstruction] = [];
-          }
-          sectionsMap[a.sectionInstruction].push(a);
-        }
+        const key = a.sectionInstruction || "__NO_SECTION__";
+        if (!sectionsMap[key]) sectionsMap[key] = [];
+        sectionsMap[key].push(a);
       });
 
       const sections =
         Object.keys(sectionsMap).length > 0
-          ? Object.entries(sectionsMap).map(([instruction, questions]) => ({
-              instruction,
-              questions,
-            }))
+          ? Object.entries(sectionsMap).map(([instruction, rawAnswers]) => {
+              const grouped = {};
+              rawAnswers.forEach(ans => {
+                const qKey = ans.questionId?.toString();
+                if (!grouped[qKey]) grouped[qKey] = [];
+                grouped[qKey].push(ans);
+              });
+
+              const questions = Object.values(grouped).map(group => {
+                const base = group[0];
+                const type = (base.questionType || "").toLowerCase();
+
+                // 🟣 CLOZE
+                if (type === "multiple-choice" && group.length > 1) {
+                  return {
+                    questionId: base.questionId,
+                    questionText: base.questionText,
+                    questionType: "cloze",
+                    blanks: group.map(b => ({
+                      selectedAnswer: b.selectedAnswer,
+                      correctAnswer: b.correctAnswer,
+                      isCorrect: b.isCorrect,
+                      earnedPoints: b.earnedPoints,
+                      points: b.points
+                    })),
+                    totalPoints: group.reduce((s, g) => s + (g.points || 1), 0),
+                    earnedPoints: group.reduce((s, g) => s + (g.earnedPoints || 0), 0)
+                  };
+                }
+
+                return base;
+              });
+
+              return {
+                instruction: instruction === "__NO_SECTION__" ? null : instruction,
+                questions
+              };
+            })
           : null;
 
       groupedByClass[classId].quizzes[quizIdStr].results.push({
@@ -2604,7 +2949,7 @@ const getAllClassQuizResultsForTeacher = async (req, res) => {
         // 🔹 BACKWARD COMPATIBLE
         answers,
 
-        // 🔴 NEW (section-based quizzes)
+        // 🔴 SECTION + CLOZE AWARE
         sections,
       });
     }
@@ -2630,6 +2975,7 @@ const getAllClassQuizResultsForTeacher = async (req, res) => {
     });
   }
 };
+
 
 
 // ---------------------------
@@ -3008,11 +3354,19 @@ const resumeQuizAttempt = async (req, res) => {
       (new Date(activeAttempt.expiresAt) - new Date()) / 1000
     );
 
+    // --------------------------------------------------
+    // 🔴 FIX: CONVERT MAP → PLAIN OBJECT (CLOZE SAFE)
+    // --------------------------------------------------
+    const answersObject =
+      activeAttempt.answers instanceof Map
+        ? Object.fromEntries(activeAttempt.answers.entries())
+        : activeAttempt.answers || {};
+
     const response = {
       sessionId: activeAttempt.sessionId,
       timeRemaining,
       startTime: activeAttempt.startTime,
-      answers: activeAttempt.answers || {},
+      answers: answersObject,
     };
 
     cache.set(cacheKey, response, 30); // 30s cache
@@ -3025,6 +3379,7 @@ const resumeQuizAttempt = async (req, res) => {
     });
   }
 };
+
 
 
 
@@ -3058,8 +3413,19 @@ const saveQuizProgress = async (req, res) => {
       return res.status(404).json({ message: "No active quiz attempt found" });
     }
 
-    // Update answers and last activity
-    activeAttempt.answers = answers;
+    // --------------------------------------------------
+    // 🔴 FIX: MERGE ANSWERS SAFELY (DO NOT OVERWRITE MAP)
+    // --------------------------------------------------
+    if (answers && typeof answers === "object") {
+      Object.entries(answers).forEach(([key, value]) => {
+        if (activeAttempt.answers?.set) {
+          activeAttempt.answers.set(key, value);
+        } else {
+          activeAttempt.answers[key] = value;
+        }
+      });
+    }
+
     activeAttempt.lastActivity = new Date();
     await activeAttempt.save();
 
@@ -3077,8 +3443,9 @@ const saveQuizProgress = async (req, res) => {
 };
 
 
+
 // ---------------------------
-// PUT /api/quizzes/results/:resultId/grade-question - OPTIMIZED + PUSH ADDED
+// PUT /api/quizzes/results/:resultId/grade-question
 // ---------------------------
 const gradeQuestion = async (req, res) => {
   const session = await mongoose.startSession();
@@ -3092,6 +3459,7 @@ const gradeQuestion = async (req, res) => {
       await session.abortTransaction();
       return res.status(400).json({ message: "Invalid result ID" });
     }
+
     if (!questionId) {
       await session.abortTransaction();
       return res.status(400).json({ message: "Question ID is required" });
@@ -3100,7 +3468,9 @@ const gradeQuestion = async (req, res) => {
     const numericPoints = Number(earnedPoints);
     if (isNaN(numericPoints) || numericPoints < 0) {
       await session.abortTransaction();
-      return res.status(400).json({ message: "earnedPoints must be a valid non-negative number" });
+      return res
+        .status(400)
+        .json({ message: "earnedPoints must be a valid non-negative number" });
     }
 
     const quizResult = await QuizResult.findById(resultId)
@@ -3116,9 +3486,12 @@ const gradeQuestion = async (req, res) => {
       return res.status(404).json({ message: "Result not found" });
     }
 
+    // --------------------------------------------------
+    // 🔍 Find answer entry
+    // --------------------------------------------------
     const question =
       quizResult.answers.id(questionId) ||
-      quizResult.answers.find((q) => String(q.questionId) === String(questionId));
+      quizResult.answers.find(q => String(q.questionId) === String(questionId));
 
     if (!question) {
       await session.abortTransaction();
@@ -3126,28 +3499,40 @@ const gradeQuestion = async (req, res) => {
     }
 
     const qType = (question.questionType || "").toLowerCase();
-    const defaultMax = qType === "essay" || qType === "short-answer" ? 5 : 1;
 
-    if (typeof question.points !== "number" || question.points < 0) {
-      question.points = defaultMax;
+    // --------------------------------------------------
+    // 🛑 BLOCK CLOZE MANUAL GRADING
+    // --------------------------------------------------
+    if (qType === "cloze" || qType === "multiple-choice") {
+      await session.abortTransaction();
+      return res.status(400).json({
+        message:
+          "Cloze and multiple-choice questions are auto-graded and cannot be manually graded.",
+      });
     }
 
-    const maxPoints = Math.max(0, question.points);
-    if (numericPoints < 0 || numericPoints > maxPoints) {
+    // --------------------------------------------------
+    // 🧮 POINT VALIDATION
+    // --------------------------------------------------
+    const maxPoints =
+      qType === "essay" || qType === "short-answer" ? 5 : 1;
+
+    if (numericPoints > maxPoints) {
       await session.abortTransaction();
       return res.status(400).json({
         message: `For ${qType} questions, earned points must be between 0 and ${maxPoints}.`,
       });
     }
 
-    // Grade update
+    // --------------------------------------------------
+    // ✅ APPLY GRADE
+    // --------------------------------------------------
+    question.points = maxPoints;
     question.earnedPoints = numericPoints;
     question.feedback = typeof feedback === "string" ? feedback.trim() : "";
     question.manualReviewRequired = false;
-
-    if (numericPoints === 0) question.isCorrect = false;
-    else if (numericPoints === question.points) question.isCorrect = true;
-    else question.isCorrect = null;
+    question.isCorrect =
+      numericPoints === maxPoints ? true : numericPoints === 0 ? false : null;
 
     question.markModified("earnedPoints");
     question.markModified("feedback");
@@ -3155,23 +3540,26 @@ const gradeQuestion = async (req, res) => {
     question.markModified("isCorrect");
     question.markModified("points");
 
+    // --------------------------------------------------
+    // 🔢 RECALCULATE TOTALS (CLOZE-SAFE)
+    // --------------------------------------------------
     const totalEarned = quizResult.answers.reduce(
-      (sum, q) => sum + (typeof q.earnedPoints === "number" ? q.earnedPoints : 0),
+      (sum, q) =>
+        sum + (typeof q.earnedPoints === "number" ? q.earnedPoints : 0),
       0
     );
 
-    const totalPossible = quizResult.answers.reduce((sum, q) => {
-      const type = (q.questionType || "").toLowerCase();
-      if (typeof q.points === "number") {
-        return sum + Math.max(0, q.points);
-      }
-      return sum + (type === "essay" || type === "short-answer" ? 5 : 1);
-    }, 0);
+    const totalPossible = quizResult.answers.reduce(
+      (sum, q) => sum + (typeof q.points === "number" ? q.points : 0),
+      0
+    );
 
-    quizResult.totalPoints = totalPossible;
     quizResult.score = totalEarned;
+    quizResult.totalPoints = totalPossible;
     quizResult.percentage =
-      totalPossible > 0 ? parseFloat(((totalEarned / totalPossible) * 100).toFixed(2)) : 0;
+      totalPossible > 0
+        ? Number(((totalEarned / totalPossible) * 100).toFixed(2))
+        : 0;
 
     quizResult.status = "graded";
     quizResult.autoGraded = false;
@@ -3179,65 +3567,18 @@ const gradeQuestion = async (req, res) => {
     await quizResult.save({ session, validateBeforeSave: true });
     await session.commitTransaction();
 
-    // 🎯 Cache invalidation
+    // --------------------------------------------------
+    // 🧹 CACHE INVALIDATION
+    // --------------------------------------------------
     processInBackground(() => {
       cache.del(`quiz:result:${resultId}`);
       cache.del(CACHE_KEYS.QUIZ_RESULTS(quizResult.quizId.toString()));
       cache.del(CACHE_KEYS.STUDENT_PROGRESS(quizResult.studentId._id.toString()));
-      cache.del(CACHE_KEYS.CLASS_RESULTS_TEACHER(quizResult.quizId.teacher?.toString()));
-    });
-
-    // --------------------------------------------------------------------
-    // 🔔 CREATE IN-APP NOTIFICATION + PUSH NOTIFICATION
-    // --------------------------------------------------------------------
-    processInBackground(async () => {
-      try {
-        const quiz = quizResult.quizId;
-        const student = quizResult.studentId?.user || null;
-        const classObj = quizResult.studentId?.class || null;
-
-        const studentUserId = student?._id;
-        const studentName = student?.name || "Your child";
-        const quizTitle = quiz?.title || "Quiz";
-
-        // Parents
-        const parentUsers = await User.find({
-          school: req.user.school,
-          $or: [
-            { _id: quizResult.studentId.parent },
-            { _id: { $in: quizResult.studentId.parentIds || [] } }
-          ]
-        }).select("_id");
-
-        const parentIds = parentUsers.map(p => p._id);
-
-        // 1️⃣ In-app notification
-        await Notification.create({
-          title: `Quiz Updated: ${quizTitle}`,
-          message: `A question was graded for ${quizTitle}.`,
-          type: "quiz-result",
-          school: req.user.school,
-          quizId: quiz._id,
-          sender: req.user._id,
-          class: classObj?._id || null,
-          audience: "student",
-          recipientUsers: [studentUserId, ...parentIds],
-          recipientRoles: ["student", "parent"],
-        });
-
-        // 2️⃣ PUSH Notification — EXACT logic as Announcements + PublishQuiz
-        const receivers = [studentUserId, ...parentIds].map(String);
-
-        await sendPush(
-          receivers,
-          "Quiz Graded",
-          `${quizTitle}: A question has been graded`,
-          { quizId: quiz._id, type: "quiz-graded" }
-        );
-
-      } catch (notifErr) {
-        console.error("⚠️ Notification/PUSH failed:", notifErr.message);
-      }
+      cache.del(
+        CACHE_KEYS.CLASS_RESULTS_TEACHER(
+          quizResult.quizId.teacher?.toString()
+        )
+      );
     });
 
     return res.json({
@@ -3265,6 +3606,7 @@ const gradeQuestion = async (req, res) => {
     session.endSession();
   }
 };
+
 
 
 
