@@ -1033,26 +1033,35 @@ const getQuizzesForClass = async (req, res) => {
     }
 
     // --------------------------------------------------
-    // 🔴 FIX: CLOZE-AWARE TOTAL POINTS CALCULATOR
-    // --------------------------------------------------
-    const computeTotalPoints = (quiz) => {
-      const sumQuestions = (questions = []) =>
-        questions.reduce((sum, q) => {
-          if (q.type === "cloze" && Array.isArray(q.blanks)) {
-            return sum + q.blanks.length * (q.points || 1);
-          }
-          return sum + (q.points || 1);
-        }, 0);
-
-      if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
-        return quiz.sections.reduce(
-          (total, section) => total + sumQuestions(section.questions),
-          0
-        );
+// 🔴 FIX: CLOZE-AWARE TOTAL POINTS CALCULATOR
+// --------------------------------------------------
+const computeTotalPoints = (quiz) => {
+  const sumQuestions = (questions = []) =>
+    questions.reduce((sum, q) => {
+      // ✅ Cloze = MCQ with format === "cloze"
+      if (
+        q.type === "multiple-choice" &&
+        q.format === "cloze" &&
+        Array.isArray(q.blanks)
+      ) {
+        return sum + q.blanks.length * (q.points || 1);
       }
 
-      return sumQuestions(quiz.questions);
-    };
+      // ✅ Normal questions
+      return sum + (q.points || 1);
+    }, 0);
+
+  // ✅ Section-based quiz
+  if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
+    return quiz.sections.reduce(
+      (total, section) => total + sumQuestions(section.questions),
+      0
+    );
+  }
+
+  // ✅ Flat quiz
+  return sumQuestions(quiz.questions);
+};
 
     const quizIds = quizzes.map(q => toObjectId(q._id));
 
