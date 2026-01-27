@@ -327,6 +327,24 @@ const processInBackground = (operation) => {
   });
 };
 
+const resolveSectionType = (section) => {
+  if (
+    typeof section.passage === "string" &&
+    section.passage.trim().length &&
+    Array.isArray(section.items)
+  ) {
+    return "cloze";
+  }
+
+  if (Array.isArray(section.questions)) {
+    return "standard";
+  }
+
+  throw new Error(
+    "Section must contain either { questions[] } or { passage + items[] }"
+  );
+};
+
 
 
 
@@ -381,97 +399,122 @@ const createQuiz = async (req, res) => {
     }
 
     // --------------------------------------------------
-    // 🧪 COMMON QUESTION VALIDATOR (USED BY BOTH MODES)
+    // 🔑 SECTION TYPE RESOLVER (SINGLE SOURCE OF TRUTH)
     // --------------------------------------------------
-    const validateQuestion = async (q, label) => {
-      if (!q.questionText || !q.type) {
-        throw new Error(`${label} is missing questionText or type`);
+    const resolveSectionType = (section) => {
+      if (
+        typeof section.passage === "string" &&
+        section.passage.trim().length &&
+        Array.isArray(section.items)
+      ) {
+        return "cloze";
       }
 
-      const type = q.type.toLowerCase();
-
-      // 🟢 MULTIPLE CHOICE
-      if (type === "multiple-choice") {
-        if (!Array.isArray(q.options) || q.options.length < 2) {
-          throw new Error(`${label}: MCQ requires at least 2 options`);
-        }
-        if (!q.options.includes(q.correctAnswer)) {
-          throw new Error(`${label}: correctAnswer must be one of the options`);
-        }
+      if (Array.isArray(section.questions)) {
+        return "standard";
       }
 
-      // 🟢 TRUE / FALSE
-      if (type === "true-false" && typeof q.correctAnswer !== "boolean") {
-        throw new Error(`${label}: True/False requires boolean correctAnswer`);
-      }
-
-      // 🟣 CLOZE (MCQ WITH BLANKS)
-      if (type === "cloze") {
-        if (!Array.isArray(q.blanks) || q.blanks.length === 0) {
-          throw new Error(`${label}: Cloze question must have blanks`);
-        }
-
-        for (let i = 0; i < q.blanks.length; i++) {
-          const b = q.blanks[i];
-
-          if (typeof b.blankNumber !== "number") {
-            throw new Error(`${label}: Blank ${i + 1} missing blankNumber`);
-          }
-
-          if (!Array.isArray(b.options) || b.options.length < 2) {
-            throw new Error(`${label}: Blank ${b.blankNumber} needs ≥2 options`);
-          }
-
-          if (!b.options.includes(b.correctAnswer)) {
-            throw new Error(
-              `${label}: Blank ${b.blankNumber} correctAnswer must be in options`
-            );
-          }
-        }
-
-        // ❌ Disallow these on cloze
-        delete q.correctAnswer;
-        delete q.options;
-      }
-
-      if (!q.points) q.points = 1;
+      throw new Error(
+        "Section must contain either { questions[] } or { passage + items[] }"
+      );
     };
 
     // --------------------------------------------------
-    // 🧪 Validate FLAT QUESTIONS
+    // 🧪 VALIDATE STANDARD SECTION
+    // --------------------------------------------------
+    const validateStandardSection = (section, label) => {
+      if (!section.instruction || !section.instruction.trim()) {
+        throw new Error(`${label} must have an instruction`);
+      }
+
+      if (!Array.isArray(section.questions) || section.questions.length === 0) {
+        throw new Error(`${label} must contain questions`);
+      }
+
+      section.questions.forEach((q, idx) => {
+        if (!q.questionText || !q.questionText.trim()) {
+          throw new Error(`${label}, Question ${idx + 1} missing questionText`);
+        }
+
+        if (!q.points) q.points = 1;
+      });
+    };
+
+    // --------------------------------------------------
+    // 🧪 VALIDATE CLOZE SECTION
+    // --------------------------------------------------
+    const validateClozeSection = (section, label) => {
+      if (!section.instruction || !section.instruction.trim()) {
+        throw new Error(`${label} must have an instruction`);
+      }
+
+      if (!section.passage || !section.passage.trim()) {
+        throw new Error(`${label} must have a passage`);
+      }
+
+      if (!Array.isArray(section.items) || section.items.length === 0) {
+        throw new Error(`${label} must contain cloze items`);
+      }
+
+      const seenNumbers = new Set();
+
+      section.items.forEach((item, idx) => {
+        if (typeof item.number !== "number") {
+          throw new Error(`${label}, Item ${idx + 1} missing number`);
+        }
+
+        if (seenNumbers.has(item.number)) {
+          throw new Error(`${label} has duplicate item number ${item.number}`);
+        }
+        seenNumbers.add(item.number);
+
+        if (!Array.isArray(item.options) || item.options.length < 2) {
+          throw new Error(
+            `${label}, Item ${item.number} must have at least 2 options`
+          );
+        }
+
+        if (!item.options.includes(item.correctAnswer)) {
+          throw new Error(
+            `${label}, Item ${item.number} correctAnswer must be in options`
+          );
+        }
+
+        if (!item.points) item.points = 1;
+      });
+    };
+
+    // --------------------------------------------------
+    // 🧪 Validate FLAT QUESTIONS (LEGACY / NON-SECTION QUIZ)
     // --------------------------------------------------
     if (questions?.length) {
       for (let i = 0; i < questions.length; i++) {
-        await validateQuestion(questions[i], `Question ${i + 1}`);
+        const q = questions[i];
+
+        if (!q.questionText || !q.questionText.trim()) {
+          throw new Error(`Question ${i + 1} missing questionText`);
+        }
+
+        if (!q.points) q.points = 1;
       }
     }
 
     // --------------------------------------------------
-    // 🧪 Validate SECTIONS
+    // 🧪 Validate SECTIONS (STANDARD + CLOZE)
     // --------------------------------------------------
     if (sections?.length) {
       for (let i = 0; i < sections.length; i++) {
         const section = sections[i];
+        const label = `Section ${i + 1}`;
 
-        if (!section.instruction || !section.instruction.trim()) {
-          await session.abortTransaction();
-          return res.status(400).json({
-            message: `Section ${i + 1} must have an instruction`,
-          });
+        const sectionType = resolveSectionType(section);
+
+        if (sectionType === "standard") {
+          validateStandardSection(section, label);
         }
 
-        if (!Array.isArray(section.questions) || section.questions.length === 0) {
-          await session.abortTransaction();
-          return res.status(400).json({
-            message: `Section ${i + 1} must contain questions`,
-          });
-        }
-
-        for (let j = 0; j < section.questions.length; j++) {
-          await validateQuestion(
-            section.questions[j],
-            `Section ${i + 1}, Question ${j + 1}`
-          );
+        if (sectionType === "cloze") {
+          validateClozeSection(section, label);
         }
       }
     }
@@ -546,6 +589,7 @@ const createQuiz = async (req, res) => {
 
 
 
+
 // ---------------------------
 // 2. Publish/Unpublish QuizSession (Optimized + Push Added)
 // ---------------------------
@@ -581,64 +625,103 @@ const publishQuiz = async (req, res) => {
     }
 
     // --------------------------------------------------
+    // 🔑 SECTION TYPE RESOLVER (SINGLE SOURCE OF TRUTH)
+    // --------------------------------------------------
+    const resolveSectionType = (section) => {
+      if (
+        typeof section.passage === "string" &&
+        section.passage.trim().length &&
+        Array.isArray(section.items)
+      ) {
+        return "cloze";
+      }
+
+      if (Array.isArray(section.questions)) {
+        return "standard";
+      }
+
+      throw new Error(
+        "Section must contain either { questions[] } or { passage + items[] }"
+      );
+    };
+
+    // --------------------------------------------------
     // 🔴 FINAL VALIDATION BEFORE PUBLISH
     // --------------------------------------------------
     if (publish) {
-      // 🔥 Flatten questions (sections OR flat)
-      let allQuestions = [];
-
-      if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
-        quiz.sections.forEach(section => {
-          section.questions.forEach(q => allQuestions.push(q));
-        });
-      } else {
-        allQuestions = quiz.questions || [];
-      }
-
-      if (!allQuestions.length) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          message: "Quiz has no questions and cannot be published",
-        });
-      }
-
       let hasAutoGradable = false;
 
-      for (let i = 0; i < allQuestions.length; i++) {
-        const q = allQuestions[i];
-        const type = (q.type || "").toLowerCase();
+      // ----------------------------------------------
+      // 🔹 SECTIONED QUIZ
+      // ----------------------------------------------
+      if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
+        for (let i = 0; i < quiz.sections.length; i++) {
+          const section = quiz.sections[i];
+          const sectionType = resolveSectionType(section);
 
-        // 🟣 CLOZE VALIDATION
-        if (type === "cloze") {
-          if (!Array.isArray(q.blanks) || q.blanks.length === 0) {
-            await session.abortTransaction();
-            return res.status(400).json({
-              message: `Cloze question ${i + 1} has no blanks`,
-            });
+          // 🟢 STANDARD SECTION
+          if (sectionType === "standard") {
+            if (
+              !Array.isArray(section.questions) ||
+              section.questions.length === 0
+            ) {
+              await session.abortTransaction();
+              return res.status(400).json({
+                message: `Section ${i + 1} has no questions`,
+              });
+            }
+
+            hasAutoGradable = true; // standard questions are auto-gradable
           }
 
-          q.blanks.forEach((b, idx) => {
+          // 🟣 CLOZE SECTION
+          if (sectionType === "cloze") {
             if (
-              !Array.isArray(b.options) ||
-              b.options.length < 2 ||
-              !b.options.includes(b.correctAnswer)
+              !Array.isArray(section.items) ||
+              section.items.length === 0
             ) {
-              throw new Error(
-                `Cloze question ${i + 1}, blank ${idx + 1} is invalid`
-              );
+              await session.abortTransaction();
+              return res.status(400).json({
+                message: `Cloze section ${i + 1} has no items`,
+              });
             }
-          });
 
-          hasAutoGradable = true;
-        }
+            section.items.forEach((item, idx) => {
+              if (
+                !Array.isArray(item.options) ||
+                item.options.length < 2 ||
+                !item.options.includes(item.correctAnswer)
+              ) {
+                throw new Error(
+                  `Cloze section ${i + 1}, item ${idx + 1} is invalid`
+                );
+              }
+            });
 
-        // 🟢 OBJECTIVE QUESTIONS
-        if (["multiple-choice", "true-false"].includes(type)) {
-          hasAutoGradable = true;
+            hasAutoGradable = true;
+          }
         }
       }
 
-      // (Optional but recommended)
+      // ----------------------------------------------
+      // 🔹 FLAT (LEGACY) QUIZ
+      // ----------------------------------------------
+      else {
+        const flatQuestions = quiz.questions || [];
+
+        if (!flatQuestions.length) {
+          await session.abortTransaction();
+          return res.status(400).json({
+            message: "Quiz has no questions and cannot be published",
+          });
+        }
+
+        hasAutoGradable = true;
+      }
+
+      // ----------------------------------------------
+      // 🔴 BLOCK PUBLISH IF NO AUTO-GRADABLE CONTENT
+      // ----------------------------------------------
       if (!hasAutoGradable) {
         await session.abortTransaction();
         return res.status(400).json({
@@ -747,7 +830,8 @@ const publishQuiz = async (req, res) => {
 
 
 
-// ---------------------------
+
+/// ---------------------------
 // 3. Get QuizSession with Caching (Fixed & Safe)
 // ---------------------------
 const getQuiz = async (req, res) => {
@@ -756,115 +840,138 @@ const getQuiz = async (req, res) => {
     const school = toObjectId(req.user.school);
     const userId = req.user._id;
 
-    console.log(`📥 Loading quiz ${quizId} for user ${userId}, role: ${req.user.role}`);
+    console.log(
+      `📥 Loading quiz ${quizId} for user ${userId}, role: ${req.user.role}`
+    );
 
-    // Validate quiz ID
     if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
-      return res.status(400).json({ message: 'Invalid quiz ID format' });
+      return res.status(400).json({ message: "Invalid quiz ID format" });
     }
 
-    // Never cache for students (due to shuffling)
     const cacheKey = CACHE_KEYS.QUIZ_SINGLE(quizId, req.user.role);
     if (req.user.role !== "student") {
       const cached = cache.get(cacheKey);
-      if (cached) {
-        return res.json(cached);
-      }
+      if (cached) return res.json(cached);
     }
 
-    // Fetch quiz
     const quiz = await executeWithTimeout(
       QuizSession.findOne({
         _id: toObjectId(quizId),
-        school
-      }).lean().maxTimeMS(5000)
+        school,
+      })
+        .lean()
+        .maxTimeMS(5000)
     );
 
     if (!quiz) {
-      return res.status(404).json({ message: 'Quiz not found in your school' });
+      return res.status(404).json({ message: "Quiz not found in your school" });
     }
 
-    console.log(`✅ Quiz found: ${quiz.title}, Published: ${quiz.isPublished}`);
-
-    // Students only see it after startTime and if published
-    if (req.user.role === 'student') {
+    if (req.user.role === "student") {
       if (quiz.startTime && new Date() < new Date(quiz.startTime)) {
-        return res.status(403).json({ message: 'Quiz is not available yet' });
+        return res.status(403).json({ message: "Quiz is not available yet" });
       }
-
       if (!quiz.isPublished) {
-        return res.status(403).json({ message: 'Quiz is not published yet' });
+        return res.status(403).json({ message: "Quiz is not published yet" });
       }
     }
+
+    // --------------------------------------------------
+    // 🔑 SECTION TYPE RESOLVER (SINGLE SOURCE OF TRUTH)
+    // --------------------------------------------------
+    const resolveSectionType = (section) => {
+      if (
+        typeof section.passage === "string" &&
+        section.passage.trim().length &&
+        Array.isArray(section.items)
+      ) {
+        return "cloze";
+      }
+
+      if (Array.isArray(section.questions)) {
+        return "standard";
+      }
+
+      throw new Error(
+        "Section must contain either { questions[] } or { passage + items[] }"
+      );
+    };
 
     let response;
 
     // =====================================================
-    // 🟢 STUDENT VIEW (SECTION-AWARE + SHUFFLING)
+    // 🟢 STUDENT VIEW
     // =====================================================
-    if (req.user.role === 'student') {
+    if (req.user.role === "student") {
       const seed = `${userId}-${quizId}`;
 
       // ---------------------------------
       // 🔹 SECTIONED QUIZ
       // ---------------------------------
       if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
-        const processedSections = quiz.sections.map((section, sectionIndex) => {
-          let sectionQuestions = [...section.questions];
+        const processedSections = quiz.sections.map(
+          (section, sectionIndex) => {
+            const sectionType = resolveSectionType(section);
 
-          if (quiz.shuffleQuestions) {
-            sectionQuestions = seededShuffle(
-              sectionQuestions,
-              seed + `-section-${sectionIndex}`
-            );
-          }
+            // 🟢 STANDARD SECTION
+            if (sectionType === "standard") {
+              let sectionQuestions = [...section.questions];
 
-          const safeQuestions = sectionQuestions.map((q, index) => {
-            const question = {
-              _id: q._id || `temp-${sectionIndex}-${index}`,
-              questionText: q.questionText,
-              type: q.type,
-              explanation: q.explanation || '',
-              points: q.points || 1,
-            };
+              if (quiz.shuffleQuestions) {
+                sectionQuestions = seededShuffle(
+                  sectionQuestions,
+                  seed + `-section-${sectionIndex}`
+                );
+              }
 
-            // 🟣 CLOZE (MCQ WITH BLANKS)
-            if (q.type === 'cloze' && Array.isArray(q.blanks)) {
-              question.blanks = q.blanks.map(b => ({
-                blankNumber: b.blankNumber,
+              const safeQuestions = sectionQuestions.map((q, index) => {
+                const question = {
+                  _id: q._id || `temp-${sectionIndex}-${index}`,
+                  questionText: q.questionText,
+                  type: q.type,
+                  explanation: q.explanation || "",
+                  points: q.points || 1,
+                };
+
+                if (Array.isArray(q.options)) {
+                  question.options = quiz.shuffleOptions
+                    ? seededShuffle(
+                        [...q.options],
+                        seed + `-options-${q._id || index}`
+                      )
+                    : [...q.options];
+                }
+
+                return question;
+              });
+
+              return {
+                sectionType: "standard",
+                title: section.title || null,
+                instruction: section.instruction,
+                questions: safeQuestions,
+              };
+            }
+
+            // 🟣 CLOZE SECTION
+            return {
+              sectionType: "cloze",
+              title: section.title || null,
+              instruction: section.instruction,
+              passage: section.passage,
+              items: section.items.map((item) => ({
+                number: item.number,
                 options: quiz.shuffleOptions
                   ? seededShuffle(
-                      [...b.options],
-                      seed + `-cloze-${q._id}-${b.blankNumber}`
+                      [...item.options],
+                      seed + `-cloze-${item.number}`
                     )
-                  : [...b.options],
-              }));
-            }
-
-            // 🟢 NORMAL MCQ / TF
-            if (Array.isArray(q.options) && q.options.length > 0) {
-              question.options = quiz.shuffleOptions
-                ? seededShuffle(
-                    [...q.options],
-                    seed + `-options-${q._id || index}`
-                  )
-                : [...q.options];
-            }
-
-            // 🔒 Never expose answers
-            if (process.env.NODE_ENV !== 'development') {
-              delete question.correctAnswer;
-            }
-
-            return question;
-          });
-
-          return {
-            title: section.title || null,
-            instruction: section.instruction,
-            questions: safeQuestions,
-          };
-        });
+                  : [...item.options],
+                points: item.points || 1,
+              })),
+            };
+          }
+        );
 
         response = {
           _id: quiz._id,
@@ -876,69 +983,36 @@ const getQuiz = async (req, res) => {
           sections: processedSections,
           shuffleQuestions: quiz.shuffleQuestions,
           shuffleOptions: quiz.shuffleOptions,
-          totalPoints: quiz.sections.reduce(
-            (sum, s) =>
+          totalPoints: quiz.sections.reduce((sum, s) => {
+            const type = resolveSectionType(s);
+           if (type === "cloze") {
+  return sum + s.items.reduce(
+    (itemSum, item) => itemSum + (item.points || 1),
+    0
+  );
+}
+
+            return (
               sum +
-              s.questions.reduce((qSum, q) => {
-                if (q.type === 'cloze' && Array.isArray(q.blanks)) {
-                  return qSum + q.blanks.length * (q.points || 1);
-                }
-                return qSum + (q.points || 1);
-              }, 0),
-            0
-          ),
+              s.questions.reduce(
+                (qSum, q) => qSum + (q.points || 1),
+                0
+              )
+            );
+          }, 0),
         };
 
         return res.json(response);
       }
 
       // ---------------------------------
-      // 🔹 FLAT QUESTIONS (legacy)
+      // 🔹 FLAT QUESTIONS (LEGACY)
       // ---------------------------------
       let quizQuestions = [...(quiz.questions || [])];
 
       if (quiz.shuffleQuestions) {
-        quizQuestions = seededShuffle(quizQuestions, seed + '-questions');
+        quizQuestions = seededShuffle(quizQuestions, seed + "-questions");
       }
-
-      const questionsWithoutAnswers = quizQuestions.map((q, index) => {
-        const question = {
-          _id: q._id || `temp-${index}`,
-          questionText: q.questionText,
-          type: q.type,
-          explanation: q.explanation || '',
-          points: q.points || 1,
-        };
-
-        // 🟣 CLOZE
-        if (q.type === 'cloze' && Array.isArray(q.blanks)) {
-          question.blanks = q.blanks.map(b => ({
-            blankNumber: b.blankNumber,
-            options: quiz.shuffleOptions
-              ? seededShuffle(
-                  [...b.options],
-                  seed + `-cloze-${q._id}-${b.blankNumber}`
-                )
-              : [...b.options],
-          }));
-        }
-
-        // 🟢 NORMAL OPTIONS
-        if (Array.isArray(q.options) && q.options.length > 0) {
-          question.options = quiz.shuffleOptions
-            ? seededShuffle(
-                [...q.options],
-                seed + '-options-' + (q._id || index)
-              )
-            : [...q.options];
-        }
-
-        if (process.env.NODE_ENV !== 'development') {
-          delete question.correctAnswer;
-        }
-
-        return question;
-      });
 
       response = {
         _id: quiz._id,
@@ -947,22 +1021,39 @@ const getQuiz = async (req, res) => {
         timeLimit: quiz.timeLimit,
         startTime: quiz.startTime,
         dueDate: quiz.dueDate,
-        questions: questionsWithoutAnswers,
+        questions: quizQuestions.map((q, index) => {
+          const question = {
+            _id: q._id || `temp-${index}`,
+            questionText: q.questionText,
+            type: q.type,
+            explanation: q.explanation || "",
+            points: q.points || 1,
+          };
+
+          if (Array.isArray(q.options)) {
+            question.options = quiz.shuffleOptions
+              ? seededShuffle(
+                  [...q.options],
+                  seed + "-options-" + (q._id || index)
+                )
+              : [...q.options];
+          }
+
+          return question;
+        }),
         shuffleQuestions: quiz.shuffleQuestions,
         shuffleOptions: quiz.shuffleOptions,
-        totalPoints: quizQuestions.reduce((s, q) => {
-          if (q.type === 'cloze' && Array.isArray(q.blanks)) {
-            return s + q.blanks.length * (q.points || 1);
-          }
-          return s + (q.points || 1);
-        }, 0),
+        totalPoints: quizQuestions.reduce(
+          (s, q) => s + (q.points || 1),
+          0
+        ),
       };
 
       return res.json(response);
     }
 
     // =====================================================
-    // 🟠 TEACHER VIEW (RAW, SAFE TO CACHE)
+    // 🟠 TEACHER VIEW (RAW)
     // =====================================================
     response = quiz;
     cache.set(cacheKey, response, 300);
@@ -971,16 +1062,16 @@ const getQuiz = async (req, res) => {
   } catch (error) {
     console.error("❌ getQuiz error:", error);
     res.status(500).json({
-      message: 'Error fetching quiz',
+      message: "Error fetching quiz",
       error: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 };
 
 
 
-/// ---------------------------
+
+// --------------------------- 
 // 4. Get QuizSessions for a Class (Optimized & Fixed)
 // ---------------------------
 const getQuizzesForClass = async (req, res) => {
@@ -1021,7 +1112,11 @@ const getQuizzesForClass = async (req, res) => {
     const quizzes = await executeWithTimeout(
       QuizSession.find(filter)
         .populate({ path: "subject", select: "name shortName" })
-        .select(role === "student" ? "-questions.correctAnswer -sections.questions.correctAnswer" : "")
+        .select(
+          role === "student"
+            ? "-questions.correctAnswer -sections.questions.correctAnswer -sections.items.correctAnswer"
+            : ""
+        )
         .sort({ createdAt: -1 })
         .lean(),
       5000
@@ -1033,37 +1128,55 @@ const getQuizzesForClass = async (req, res) => {
     }
 
     // --------------------------------------------------
-// 🔴 FIX: CLOZE-AWARE TOTAL POINTS CALCULATOR
-// --------------------------------------------------
-const computeTotalPoints = (quiz) => {
-  const sumQuestions = (questions = []) =>
-    questions.reduce((sum, q) => {
-      // ✅ Cloze = MCQ with format === "cloze"
-      if (
-        q.type === "multiple-choice" &&
-        q.format === "cloze" &&
-        Array.isArray(q.blanks)
-      ) {
-        return sum + q.blanks.length * (q.points || 1);
+    // 🔴 SECTION-AWARE TOTAL POINTS CALCULATOR (FINAL)
+    // --------------------------------------------------
+    const computeTotalPoints = (quiz) => {
+      // 🔹 Legacy flat quiz
+      if (Array.isArray(quiz.questions) && quiz.questions.length > 0) {
+        return quiz.questions.reduce(
+          (sum, q) => sum + (q.points || 1),
+          0
+        );
       }
 
-      // ✅ Normal questions
-      return sum + (q.points || 1);
-    }, 0);
+      // 🔹 Section-based quiz (authoritative)
+      if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
+        return quiz.sections.reduce((total, section) => {
+          const sectionType = resolveSectionType(section);
 
-  // ✅ Section-based quiz
-  if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
-    return quiz.sections.reduce(
-      (total, section) => total + sumQuestions(section.questions),
-      0
-    );
-  }
+          // 🟣 CLOZE SECTION
+          if (sectionType === "cloze" && Array.isArray(section.items)) {
+            return (
+              total +
+              section.items.reduce(
+                (s, item) => s + (item.points || 1),
+                0
+              )
+            );
+          }
 
-  // ✅ Flat quiz
-  return sumQuestions(quiz.questions);
-};
+          // 🟢 STANDARD SECTION
+          if (
+            sectionType === "standard" &&
+            Array.isArray(section.questions)
+          ) {
+            return (
+              total +
+              section.questions.reduce(
+                (s, q) => s + (q.points || 1),
+                0
+              )
+            );
+          }
 
-    const quizIds = quizzes.map(q => toObjectId(q._id));
+          return total;
+        }, 0);
+      }
+
+      return 0;
+    };
+
+    const quizIds = quizzes.map((q) => toObjectId(q._id));
 
     // ============================
     // 🔵 STUDENT VIEW
@@ -1076,62 +1189,67 @@ const computeTotalPoints = (quiz) => {
 
       const studentObjectId = studentDoc?._id;
 
-      const [notifications, completedResults, activeAttempts] = await Promise.all([
-        executeWithTimeout(
-          Notification.find({
-            school,
-            type: "quiz",
-            quizId: { $in: quizIds },
-            $or: [
-              { studentId: studentObjectId },
-              { recipientUsers: userId },
-              { recipientRoles: "student" }
-            ]
-          })
-            .select("quizId message isRead createdAt")
-            .lean(),
-          5000
-        ),
+      const [notifications, completedResults, activeAttempts] =
+        await Promise.all([
+          executeWithTimeout(
+            Notification.find({
+              school,
+              type: "quiz",
+              quizId: { $in: quizIds },
+              $or: [
+                { studentId: studentObjectId },
+                { recipientUsers: userId },
+                { recipientRoles: "student" },
+              ],
+            })
+              .select("quizId message isRead createdAt")
+              .lean(),
+            5000
+          ),
 
-        executeWithTimeout(
-          QuizResult.find({
-            quizId: { $in: quizIds },
-            $or: [
-              { studentId: toObjectId(userId) },
-              { studentId: studentObjectId }
-            ],
-            school
-          })
-            .select("quizId")
-            .lean(),
-          5000
-        ),
+          executeWithTimeout(
+            QuizResult.find({
+              quizId: { $in: quizIds },
+              $or: [
+                { studentId: toObjectId(userId) },
+                { studentId: studentObjectId },
+              ],
+              school,
+            })
+              .select("quizId")
+              .lean(),
+            5000
+          ),
 
-        executeWithTimeout(
-          QuizAttempt.find({
-            quizId: { $in: quizIds },
-            $or: [
-              { studentId: toObjectId(userId) },
-              { studentId: studentObjectId }
-            ],
-            school,
-            status: "in-progress",
-            expiresAt: { $gt: new Date() }
-          })
-            .select("quizId")
-            .lean(),
-          5000
-        )
-      ]);
+          executeWithTimeout(
+            QuizAttempt.find({
+              quizId: { $in: quizIds },
+              $or: [
+                { studentId: toObjectId(userId) },
+                { studentId: studentObjectId },
+              ],
+              school,
+              status: "in-progress",
+              expiresAt: { $gt: new Date() },
+            })
+              .select("quizId")
+              .lean(),
+            5000
+          ),
+        ]);
 
       const notifMap = Object.fromEntries(
-        notifications.map(n => [n.quizId?.toString(), n])
+        notifications.map((n) => [n.quizId?.toString(), n])
       );
 
-      const completedMap = new Set(completedResults.map(r => r.quizId.toString()));
-      const inProgressMap = new Set(activeAttempts.map(a => a.quizId.toString()));
+      const completedMap = new Set(
+        completedResults.map((r) => r.quizId.toString())
+      );
+      const inProgressMap = new Set(
+        activeAttempts.map((a) => a.quizId.toString())
+      );
 
-      const quizzesWithProgress = quizzes.map(q => {
+      const quizzesWithProgress = quizzes.map((q) => {
         const id = q._id.toString();
         const completed = completedMap.has(id);
         const inProgress = !completed && inProgressMap.has(id);
@@ -1143,11 +1261,15 @@ const computeTotalPoints = (quiz) => {
           subject: q.subject?.name ?? "Unknown Subject",
           className,
           classDisplayName,
-          totalPoints: computeTotalPoints(q), // 🔴 FIX
+          totalPoints: computeTotalPoints(q),
           completed,
           inProgress,
-          status: completed ? "Completed" : inProgress ? "In Progress" : "Available",
-          notification: notifMap[id] || null
+          status: completed
+            ? "Completed"
+            : inProgress
+            ? "In Progress"
+            : "Available",
+          notification: notifMap[id] || null,
         };
       });
 
@@ -1157,7 +1279,10 @@ const computeTotalPoints = (quiz) => {
             quizId: { $in: quizIds },
             type: "quiz",
             isRead: false,
-            $or: [{ studentId: studentObjectId }, { recipientUsers: userId }]
+            $or: [
+              { studentId: studentObjectId },
+              { recipientUsers: userId },
+            ],
           },
           { $set: { isRead: true } }
         );
@@ -1178,9 +1303,9 @@ const computeTotalPoints = (quiz) => {
             $group: {
               _id: "$quizId",
               submissionCount: { $sum: 1 },
-              averageScore: { $avg: "$score" }
-            }
-          }
+              averageScore: { $avg: "$score" },
+            },
+          },
         ]),
         5000
       ),
@@ -1192,31 +1317,34 @@ const computeTotalPoints = (quiz) => {
               quizId: { $in: quizIds },
               school,
               status: "in-progress",
-              expiresAt: { $gt: new Date() }
-            }
+              expiresAt: { $gt: new Date() },
+            },
           },
-          { $group: { _id: "$quizId", inProgressCount: { $sum: 1 } } }
+          { $group: { _id: "$quizId", inProgressCount: { $sum: 1 } } },
         ]),
         5000
-      )
+      ),
     ]);
 
     const resultsMap = new Map(
-      resultsAgg.map(r => [
+      resultsAgg.map((r) => [
         r._id.toString(),
-        { submissionCount: r.submissionCount, averageScore: r.averageScore }
+        {
+          submissionCount: r.submissionCount,
+          averageScore: r.averageScore,
+        },
       ])
     );
 
     const attemptsMap = new Map(
-      attemptsAgg.map(a => [a._id.toString(), a.inProgressCount])
+      attemptsAgg.map((a) => [a._id.toString(), a.inProgressCount])
     );
 
-    const quizzesWithStats = quizzes.map(q => {
+    const quizzesWithStats = quizzes.map((q) => {
       const id = q._id.toString();
       const stats = resultsMap.get(id) || {
         submissionCount: 0,
-        averageScore: null
+        averageScore: null,
       };
 
       const { className, classDisplayName } = resolveQuizClassNames(q.class);
@@ -1226,28 +1354,28 @@ const computeTotalPoints = (quiz) => {
         subject: q.subject?.name ?? "Unknown Subject",
         className,
         classDisplayName,
-        totalPoints: computeTotalPoints(q), // 🔴 FIX
+        totalPoints: computeTotalPoints(q),
         submissionCount: stats.submissionCount,
         averageScore: stats.averageScore,
-        inProgressCount: attemptsMap.get(id) || 0
+        inProgressCount: attemptsMap.get(id) || 0,
       };
     });
 
     cache.set(cacheKey, quizzesWithStats, 120);
     return res.json(quizzesWithStats);
-
   } catch (error) {
     console.error("❌ Error fetching quizzes with progress:", error);
     return res.status(500).json({
       message: "Error fetching quizzes",
-      error: error.message
+      error: error.message,
     });
   }
 };
 
 
 
-// ---------------------------
+
+// --------------------------- 
 // 5. Get All QuizSessions for a School
 // ---------------------------
 const getQuizzesForSchool = async (req, res) => {
@@ -1255,45 +1383,72 @@ const getQuizzesForSchool = async (req, res) => {
     const { schoolId } = req.params;
 
     if (!schoolId || !mongoose.Types.ObjectId.isValid(schoolId)) {
-      return res.status(400).json({ message: 'Invalid school ID format' });
+      return res.status(400).json({ message: "Invalid school ID format" });
     }
 
     // Fetch quizzes
     const quizzes = await QuizSession.find({ school: toObjectId(schoolId) })
-      .populate('teacher', 'name email')
-      .populate('class', 'name')
-      .populate({ path: 'subject', select: 'name shortName' })
+      .populate("teacher", "name email")
+      .populate("class", "name")
+      .populate({ path: "subject", select: "name shortName" })
       .sort({ createdAt: -1 })
       .lean(); // 🔴 ensure plain object for safe computation
 
     if (!quizzes || quizzes.length === 0) {
-      return res.status(404).json({ message: 'No quizzes found for this school' });
+      return res.status(404).json({ message: "No quizzes found for this school" });
     }
 
     // --------------------------------------------------
-    // 🔴 FIX: CLOZE-AWARE TOTAL POINTS CALCULATOR
+    // 🔴 SECTION-AWARE TOTAL POINTS CALCULATOR
     // --------------------------------------------------
     const computeTotalPoints = (quiz) => {
-      const sumQuestions = (questions = []) =>
-        questions.reduce((sum, q) => {
-          if (q.type === 'cloze' && Array.isArray(q.blanks)) {
-            return sum + q.blanks.length * (q.points || 1);
-          }
-          return sum + (q.points || 1);
-        }, 0);
-
-      if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
-        return quiz.sections.reduce(
-          (total, section) => total + sumQuestions(section.questions),
+      // 🔹 Flat (legacy)
+      if (Array.isArray(quiz.questions) && quiz.questions.length > 0) {
+        return quiz.questions.reduce(
+          (sum, q) => sum + (q.points || 1),
           0
         );
       }
 
-      return sumQuestions(quiz.questions);
+      // 🔹 Section-based (authoritative)
+      if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
+        return quiz.sections.reduce((total, section) => {
+          const sectionType = resolveSectionType(section);
+
+          // 🟣 CLOZE SECTION
+          if (sectionType === "cloze" && Array.isArray(section.items)) {
+            return (
+              total +
+              section.items.reduce(
+                (s, item) => s + (item.points || 1),
+                0
+              )
+            );
+          }
+
+          // 🟢 STANDARD SECTION
+          if (
+            sectionType === "standard" &&
+            Array.isArray(section.questions)
+          ) {
+            return (
+              total +
+              section.questions.reduce(
+                (s, q) => s + (q.points || 1),
+                0
+              )
+            );
+          }
+
+          return total;
+        }, 0);
+      }
+
+      return 0;
     };
 
     // Format response
-    const formattedQuizzes = quizzes.map(q => {
+    const formattedQuizzes = quizzes.map((q) => {
       const { className, classDisplayName } = resolveQuizClassNames(q.class);
 
       return {
@@ -1301,9 +1456,9 @@ const getQuizzesForSchool = async (req, res) => {
         title: q.title,
         className,
         classDisplayName,
-        teacher: q.teacher?.name || 'Unknown Teacher',
+        teacher: q.teacher?.name || "Unknown Teacher",
         subject: resolveSubjectName(q),
-        totalPoints: computeTotalPoints(q), // 🔴 FIX
+        totalPoints: computeTotalPoints(q), // ✅ FIXED
         createdAt: q.createdAt,
         dueDate: q.dueDate,
         isPublished: q.isPublished,
@@ -1312,13 +1467,14 @@ const getQuizzesForSchool = async (req, res) => {
 
     return res.json({ quizzes: formattedQuizzes });
   } catch (error) {
-    console.error('❌ Error fetching school quizzes:', error);
+    console.error("❌ Error fetching school quizzes:", error);
     return res.status(500).json({
-      message: 'Error fetching school quizzes',
+      message: "Error fetching school quizzes",
       error: error.message,
     });
   }
 };
+
 
 
 
@@ -1332,11 +1488,11 @@ const getProtectedQuiz = async (req, res) => {
     const userId = req.user._id;
 
     if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
-      return res.status(400).json({ message: 'Invalid quiz ID format' });
+      return res.status(400).json({ message: "Invalid quiz ID format" });
     }
 
     // 🎯 Parallel validation checks
-    const [quiz, student] = await Promise.all([
+    const [quiz, user] = await Promise.all([
       executeWithTimeout(
         QuizSession.findOne({ _id: toObjectId(quizId), school })
           .lean()
@@ -1346,151 +1502,153 @@ const getProtectedQuiz = async (req, res) => {
         User.findOne({ _id: toObjectId(userId), school })
           .lean()
           .maxTimeMS(5000)
-      )
+      ),
     ]);
 
     if (!quiz) {
-      return res.status(404).json({ message: 'Quiz not found in your school' });
+      return res.status(404).json({ message: "Quiz not found in your school" });
     }
 
-    if (req.user.role === 'student') {
-      if (!student || student.class?.toString() !== quiz.class.toString()) {
-        return res.status(403).json({ message: 'You are not allowed to access this quiz' });
+    if (req.user.role === "student") {
+      if (!user || user.class?.toString() !== quiz.class.toString()) {
+        return res
+          .status(403)
+          .json({ message: "You are not allowed to access this quiz" });
       }
 
       if (quiz.startTime && new Date() < new Date(quiz.startTime)) {
-        return res.status(403).json({ message: 'Quiz is not available yet' });
+        return res.status(403).json({ message: "Quiz is not available yet" });
       }
 
       if (!quiz.isPublished) {
-        return res.status(403).json({ message: 'Quiz is not published yet' });
+        return res.status(403).json({ message: "Quiz is not published yet" });
       }
     }
 
-    const sessionId = new mongoose.Types.ObjectId();
+    const sessionId = new mongoose.Types.ObjectId().toString();
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
 
-    // 🎯 Background session creation
+    // 🎯 Background attempt creation
     processInBackground(async () => {
       try {
         await QuizAttempt.create({
           sessionId,
           quizId: toObjectId(quizId),
-          studentId: req.user.role === 'student' ? toObjectId(userId) : null,
+          studentId: req.user.role === "student" ? toObjectId(userId) : null,
           school,
           startTime: new Date(),
           expiresAt,
           status: "in-progress",
-          answers: {} // 🔴 REQUIRED FOR CLOZE
+          answers: {}, // 🔴 REQUIRED (CLOZE + STANDARD)
         });
-      } catch (sessionError) {
-        console.error('Session creation failed:', sessionError);
+      } catch (err) {
+        console.error("Session creation failed:", err);
       }
     });
 
-    // --------------------------------------------------
-    // 🔥 FLATTEN QUESTIONS (SECTIONS OR FLAT)
-    // --------------------------------------------------
-    let questions = [];
+    // ==================================================
+    // 🔒 BUILD PROTECTED PAYLOAD (SECTION-AWARE)
+    // ==================================================
+    const protectedSections = [];
 
     if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
-      quiz.sections.forEach(section => {
-        section.questions.forEach(q => {
-          questions.push({
-            ...q,
-            __sectionInstruction: section.instruction || null
+      quiz.sections.forEach((section, sectionIndex) => {
+        const sectionType = resolveSectionType(section);
+
+        // ==========================
+        // 🟣 CLOZE SECTION
+        // ==========================
+        if (sectionType === "cloze") {
+          protectedSections.push({
+            id: `section_${sectionIndex}_${sessionId}`,
+            sectionType: "cloze",
+            instruction: section.instruction,
+            passage: obfuscateText(section.passage),
+            items: section.items.map((item) => ({
+              number: item.number,
+              points: item.points || 1,
+              options: item.options.map((opt) => ({
+                id: `opt_${Math.random().toString(36).slice(2, 9)}`,
+                text: obfuscateText(opt),
+                value: opt, // 🔴 required for submit mapping
+              })),
+            })),
           });
-        });
-      });
-    } else {
-      questions = quiz.questions || [];
-    }
 
-    // --------------------------------------------------
-    // 🔀 SHUFFLE QUESTIONS
-    // --------------------------------------------------
-    if (quiz.shuffleQuestions) {
-      questions = [...questions].sort(() => Math.random() - 0.5);
-    }
-
-    // --------------------------------------------------
-    // 🔒 OBFUSCATE QUESTIONS (CLOZE-SAFE)
-    // --------------------------------------------------
-    const protectedQuestions = questions.map((q, index) => {
-      const questionId = `q${index}_${sessionId}`;
-
-      // ----------------------------
-      // 🟣 CLOZE QUESTION
-      // ----------------------------
-      if (q.type === 'cloze' && Array.isArray(q.blanks)) {
-        return {
-          id: questionId,
-          questionId: q._id, // 🔴 needed for submit mapping
-          questionText: obfuscateText(q.questionText),
-          type: 'cloze',
-          points: q.points || 1,
-          blanks: q.blanks.map(blank => ({
-            blankNumber: blank.blankNumber,
-            options: (blank.options || []).map(opt => ({
-              text: obfuscateText(opt),
-              id: `opt_${Math.random().toString(36).substr(2, 9)}`,
-              value: opt
-            }))
-          }))
-        };
-      }
-
-      // ----------------------------
-      // 🟢 NORMAL QUESTIONS
-      // ----------------------------
-      let options = [];
-      if (Array.isArray(q.options) && q.options.length > 0) {
-        options = [...q.options];
-
-        if (quiz.shuffleOptions) {
-          options = options.sort(() => Math.random() - 0.5);
+          return;
         }
 
-        options = options.map(opt => ({
-          text: obfuscateText(opt),
-          id: `opt_${Math.random().toString(36).substr(2, 9)}`,
-          value: opt
-        }));
-      }
+        // ==========================
+        // 🟢 STANDARD SECTION
+        // ==========================
+        let questions = [...section.questions];
 
-      return {
-        id: questionId,
-        questionId: q._id,
-        questionText: obfuscateText(q.questionText),
-        type: q.type,
-        options,
-        points: q.points || 1
-      };
-    });
+        if (quiz.shuffleQuestions) {
+          questions = questions.sort(() => Math.random() - 0.5);
+        }
+
+        protectedSections.push({
+          id: `section_${sectionIndex}_${sessionId}`,
+          sectionType: "standard",
+          instruction: section.instruction,
+          questions: questions.map((q, qIndex) => {
+            let options = [];
+
+            if (Array.isArray(q.options) && q.options.length > 0) {
+              options = [...q.options];
+
+              if (quiz.shuffleOptions) {
+                options = options.sort(() => Math.random() - 0.5);
+              }
+
+              options = options.map((opt) => ({
+                id: `opt_${Math.random().toString(36).slice(2, 9)}`,
+                text: obfuscateText(opt),
+                value: opt,
+              }));
+            }
+
+            return {
+              id: `q_${sectionIndex}_${qIndex}_${sessionId}`,
+              questionId: q._id, // 🔴 required for submitQuiz
+              questionText: obfuscateText(q.questionText),
+              type: q.type,
+              points: q.points || 1,
+              options,
+            };
+          }),
+        });
+      });
+    }
 
     return res.json({
       sessionId,
       quizTitle: quiz.title,
       timeLimit: quiz.timeLimit,
-      questions: protectedQuestions,
+      startTime: new Date(),
       expiresAt,
-      startTime: new Date()
+      sections: protectedSections,
     });
-
   } catch (error) {
-    console.error('Error getting protected quiz:', error);
+    console.error("Error getting protected quiz:", error);
     return res.status(500).json({
-      message: 'Error loading quiz',
-      error: error.message
+      message: "Error loading quiz",
+      error: error.message,
     });
   }
 };
 
+// --------------------------------------------------
+// 🔒 TEXT OBFUSCATION (ANTI-COPY)
+// --------------------------------------------------
 function obfuscateText(text) {
   if (!text) return text;
-  const words = text.split(' ');
-  return words.map(word => word.split('').join('\u200B')).join(' ');
+  return text
+    .split(" ")
+    .map((word) => word.split("").join("\u200B"))
+    .join(" ");
 }
+
 
 
 
@@ -1543,15 +1701,15 @@ const getQuizResults = async (req, res) => {
     }
 
     if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
-      return res.status(400).json({ message: 'Invalid quiz ID format' });
+      return res.status(400).json({ message: "Invalid quiz ID format" });
     }
 
     const results = await executeWithTimeout(
       QuizResult.find({
         quizId: toObjectId(quizId),
-        school
+        school,
       })
-        .populate('studentId', 'name email')
+        .populate("studentId", "name email")
         .sort({ submittedAt: -1 })
         .lean()
         .maxTimeMS(8000)
@@ -1561,12 +1719,12 @@ const getQuizResults = async (req, res) => {
       const answers = Array.isArray(r.answers) ? r.answers : [];
 
       // --------------------------------------------------
-      // 🔴 GROUP ANSWERS BY SECTION
+      // 🔴 GROUP ANSWERS BY SECTION (AUTHORITATIVE)
       // --------------------------------------------------
       const sectionsMap = {};
 
-      answers.forEach(a => {
-        const sectionKey = a.sectionInstruction || '__NO_SECTION__';
+      answers.forEach((a) => {
+        const sectionKey = a.sectionInstruction || "__NO_SECTION__";
         if (!sectionsMap[sectionKey]) {
           sectionsMap[sectionKey] = [];
         }
@@ -1575,53 +1733,80 @@ const getQuizResults = async (req, res) => {
 
       const sections =
         Object.keys(sectionsMap).length > 0
-          ? Object.entries(sectionsMap).map(([instruction, rawAnswers]) => {
+          ? Object.entries(sectionsMap).map(([instruction, sectionAnswers]) => {
               // -----------------------------------------
-              // 🟣 GROUP CLOZE BY QUESTION
+              // 🟣 DETECT CLOZE VS STANDARD (NEW LOGIC)
               // -----------------------------------------
-              const grouped = {};
-              rawAnswers.forEach(ans => {
-                const key = ans.questionId?.toString();
-                if (!grouped[key]) grouped[key] = [];
-                grouped[key].push(ans);
-              });
+              const clozeItems = sectionAnswers.filter(
+  (a) => a.questionType === "cloze"
+);
 
-              const questions = Object.values(grouped).map(group => {
-                const base = group[0];
-                const type = (base.questionType || '').toLowerCase();
 
-                // 🟣 CLOZE
-                if (type === 'multiple-choice' && group.length > 1) {
-                  return {
-                    questionId: base.questionId,
-                    questionText: base.questionText,
-                    questionType: 'cloze',
-                    blanks: group.map(b => ({
-                      selectedAnswer: b.selectedAnswer,
-                      correctAnswer: b.correctAnswer,
-                      isCorrect: b.isCorrect,
-                      earnedPoints: b.earnedPoints,
-                      points: b.points
-                    })),
-                    totalPoints: group.reduce((s, g) => s + (g.points || 1), 0),
-                    earnedPoints: group.reduce((s, g) => s + (g.earnedPoints || 0), 0)
-                  };
-                }
+              // ==========================
+              // 🟣 CLOZE SECTION
+              // ==========================
+              if (clozeItems.length > 0) {
+                const items = clozeItems.map((item) => ({
+                  number: Number(
+                    (item.questionText || "").replace("Cloze ", "")
+                  ),
+                  selectedAnswer: item.selectedAnswer,
+                  correctAnswer: item.correctAnswer,
+                  isCorrect: item.isCorrect,
+                  earnedPoints: item.earnedPoints,
+                  points: item.points,
+                }));
 
-                // 🟢 NORMAL
-                return base;
-              });
+                return {
+                  instruction:
+                    instruction === "__NO_SECTION__" ? null : instruction,
+                  sectionType: "cloze",
+                  items,
+                  totalPoints: items.reduce(
+                    (s, i) => s + (i.points || 1),
+                    0
+                  ),
+                  earnedPoints: items.reduce(
+                    (s, i) => s + (i.earnedPoints || 0),
+                    0
+                  ),
+                };
+              }
 
+              // ==========================
+              // 🟢 STANDARD SECTION
+              // ==========================
               return {
-                instruction: instruction === '__NO_SECTION__' ? null : instruction,
-                questions
+                instruction:
+                  instruction === "__NO_SECTION__" ? null : instruction,
+                sectionType: "standard",
+                questions: sectionAnswers.map((q) => ({
+                  questionId: q.questionId,
+                  questionText: q.questionText,
+                  questionType: q.questionType,
+                  selectedAnswer: q.selectedAnswer,
+                  correctAnswer: q.correctAnswer,
+                  explanation: q.explanation,
+                  isCorrect: q.isCorrect,
+                  points: q.points,
+                  earnedPoints: q.earnedPoints,
+                  manualReviewRequired: q.manualReviewRequired,
+                })),
+                totalPoints: sectionAnswers.reduce(
+                  (s, q) => s + (q.points || 1),
+                  0
+                ),
+                earnedPoints: sectionAnswers.reduce(
+                  (s, q) => s + (q.earnedPoints || 0),
+                  0
+                ),
               };
             })
           : null;
 
       return {
-        student: r.studentId?.name || 'Unknown',
-        studentEmail: r.studentId?.email || '',
+        student: r.studentId?.name || "Unknown",
+        studentEmail: r.studentId?.email || "",
         score: r.score,
         totalPoints: r.totalPoints,
         percentage: r.percentage,
@@ -1632,22 +1817,23 @@ const getQuizResults = async (req, res) => {
         // 🔹 BACKWARD COMPATIBLE
         answers,
 
-        // 🔴 NEW (section + cloze aware)
-        sections
+        // 🔴 SECTION-AWARE (AUTHORITATIVE)
+        sections,
       };
     });
 
-    cache.set(cacheKey, formatted, 180); // 3 min cache
+    cache.set(cacheKey, formatted, 180);
     return res.json(formatted);
 
   } catch (error) {
     console.error("❌ getQuizResults error:", error);
     return res.status(500).json({
-      message: 'Error fetching results',
-      error: error.message
+      message: "Error fetching results",
+      error: error.message,
     });
   }
 };
+
 
 
 
@@ -1818,7 +2004,7 @@ const getStudentProgress = async (req, res) => {
 };
 
 // ---------------------------
-// 12. Update QuizSession - OPTIMIZED (SECTION-AWARE)
+// 12. Update QuizSession - OPTIMIZED (SECTION-AWARE, CLOZE-SAFE)
 // ---------------------------
 const updateQuiz = async (req, res) => {
   const session = await mongoose.startSession();
@@ -1829,7 +2015,7 @@ const updateQuiz = async (req, res) => {
 
     if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
       await session.abortTransaction();
-      return res.status(400).json({ message: 'Invalid quiz ID format' });
+      return res.status(400).json({ message: "Invalid quiz ID format" });
     }
 
     const {
@@ -1840,24 +2026,26 @@ const updateQuiz = async (req, res) => {
       timeLimit,
       startTime,
       shuffleQuestions,
-      shuffleOptions
+      shuffleOptions,
     } = req.body;
 
     const school = toObjectId(req.user.school);
 
     const quiz = await QuizSession.findOne({
       _id: toObjectId(quizId),
-      school
+      school,
     }).session(session);
 
     if (!quiz) {
       await session.abortTransaction();
-      return res.status(404).json({ message: 'Quiz not found in your school' });
+      return res.status(404).json({ message: "Quiz not found in your school" });
     }
 
     if (quiz.teacher.toString() !== req.user._id.toString()) {
       await session.abortTransaction();
-      return res.status(403).json({ message: 'You can only update quizzes you created' });
+      return res
+        .status(403)
+        .json({ message: "You can only update quizzes you created" });
     }
 
     // --------------------------------------------------
@@ -1866,7 +2054,7 @@ const updateQuiz = async (req, res) => {
     if (questions?.length && sections?.length) {
       await session.abortTransaction();
       return res.status(400).json({
-        message: "Quiz cannot contain both questions and sections"
+        message: "Quiz cannot contain both questions and sections",
       });
     }
 
@@ -1876,12 +2064,12 @@ const updateQuiz = async (req, res) => {
     ) {
       await session.abortTransaction();
       return res.status(400).json({
-        message: "Questions or sections cannot be empty"
+        message: "Questions or sections cannot be empty",
       });
     }
 
     // --------------------------------------------------
-    // 🧪 Validate FLAT QUESTIONS (CLOZE AWARE)
+    // 🧪 Validate FLAT QUESTIONS (STANDARD ONLY)
     // --------------------------------------------------
     if (Array.isArray(questions)) {
       for (let i = 0; i < questions.length; i++) {
@@ -1891,72 +2079,43 @@ const updateQuiz = async (req, res) => {
         if (!q.questionText || !q.type) {
           await session.abortTransaction();
           return res.status(400).json({
-            message: `Question ${i + 1} is missing required fields (questionText or type)`
+            message: `Question ${i + 1} is missing required fields`,
           });
         }
 
-        // 🟢 NORMAL MCQ
-        if (type === 'multiple-choice') {
-          if (!Array.isArray(q.options) || q.correctAnswer === undefined) {
+        // 🟢 MULTIPLE CHOICE
+        if (type === "multiple-choice") {
+          if (!Array.isArray(q.options) || q.options.length < 2) {
             await session.abortTransaction();
             return res.status(400).json({
-              message: `Question ${i + 1}: Multiple-choice questions require options and correctAnswer`
+              message: `Question ${i + 1}: MCQ requires options`,
             });
           }
 
           if (!q.options.includes(q.correctAnswer)) {
             await session.abortTransaction();
             return res.status(400).json({
-              message: `Question ${i + 1}: correctAnswer must be one of the provided options`
+              message: `Question ${i + 1}: correctAnswer must be one of the options`,
             });
-          }
-        }
-
-        // 🟣 CLOZE (MCQ WITH BLANKS)
-        if (type === 'cloze') {
-          if (!Array.isArray(q.blanks) || q.blanks.length === 0) {
-            await session.abortTransaction();
-            return res.status(400).json({
-              message: `Question ${i + 1}: Cloze questions must contain blanks`
-            });
-          }
-
-          for (let b = 0; b < q.blanks.length; b++) {
-            const blank = q.blanks[b];
-
-            if (
-              !Array.isArray(blank.options) ||
-              blank.correctAnswer === undefined
-            ) {
-              await session.abortTransaction();
-              return res.status(400).json({
-                message: `Question ${i + 1}, Blank ${b + 1}: options and correctAnswer are required`
-              });
-            }
-
-            if (!blank.options.includes(blank.correctAnswer)) {
-              await session.abortTransaction();
-              return res.status(400).json({
-                message: `Question ${i + 1}, Blank ${b + 1}: correctAnswer must be one of the options`
-              });
-            }
           }
         }
 
         // 🟢 TRUE / FALSE
-        if (type === 'true-false' && typeof q.correctAnswer !== 'boolean') {
+        if (type === "true-false" && typeof q.correctAnswer !== "boolean") {
           await session.abortTransaction();
           return res.status(400).json({
-            message: `Question ${i + 1}: True-false questions require a boolean correctAnswer`
+            message: `Question ${i + 1}: True/False requires boolean correctAnswer`,
           });
         }
+
+        // 🟢 ESSAY / SHORT ANSWER → no auto validation
 
         if (!q.points) q.points = 1;
       }
     }
 
     // --------------------------------------------------
-    // 🧪 Validate SECTIONS (CLOZE AWARE)
+    // 🧪 Validate SECTIONS (STANDARD vs CLOZE)
     // --------------------------------------------------
     if (Array.isArray(sections)) {
       for (let i = 0; i < sections.length; i++) {
@@ -1965,36 +2124,100 @@ const updateQuiz = async (req, res) => {
         if (!section.instruction || !section.instruction.trim()) {
           await session.abortTransaction();
           return res.status(400).json({
-            message: `Section ${i + 1} must have an instruction`
+            message: `Section ${i + 1} must have an instruction`,
           });
         }
 
-        if (!Array.isArray(section.questions) || section.questions.length === 0) {
-          await session.abortTransaction();
-          return res.status(400).json({
-            message: `Section ${i + 1} must contain at least one question`
-          });
-        }
+        const sectionType = resolveSectionType(section);
 
-        for (let j = 0; j < section.questions.length; j++) {
-          const q = section.questions[j];
-          const type = (q.type || "").toLowerCase();
-
-          if (!q.questionText || !q.type) {
+        // ==========================
+        // 🟢 STANDARD SECTION
+        // ==========================
+        if (sectionType === "standard") {
+          if (
+            !Array.isArray(section.questions) ||
+            section.questions.length === 0
+          ) {
             await session.abortTransaction();
             return res.status(400).json({
-              message: `Section ${i + 1}, Question ${j + 1} is missing required fields`
+              message: `Section ${i + 1} must contain questions`,
             });
           }
 
-          // 🟣 CLOZE INSIDE SECTION
-          if (type === 'cloze') {
-            if (!Array.isArray(q.blanks) || q.blanks.length === 0) {
+          for (let j = 0; j < section.questions.length; j++) {
+            const q = section.questions[j];
+            const type = (q.type || "").toLowerCase();
+
+            if (!q.questionText || !q.type) {
               await session.abortTransaction();
               return res.status(400).json({
-                message: `Section ${i + 1}, Question ${j + 1}: Cloze must contain blanks`
+                message: `Section ${i + 1}, Question ${j + 1} is missing required fields`,
               });
             }
+
+            if (type === "multiple-choice") {
+              if (
+                !Array.isArray(q.options) ||
+                !q.options.includes(q.correctAnswer)
+              ) {
+                await session.abortTransaction();
+                return res.status(400).json({
+                  message: `Section ${i + 1}, Question ${j + 1}: Invalid MCQ`,
+                });
+              }
+            }
+
+            if (type === "true-false" && typeof q.correctAnswer !== "boolean") {
+              await session.abortTransaction();
+              return res.status(400).json({
+                message: `Section ${i + 1}, Question ${j + 1}: Invalid True/False`,
+              });
+            }
+
+            if (!q.points) q.points = 1;
+          }
+        }
+
+        // ==========================
+        // 🟣 CLOZE SECTION
+        // ==========================
+        if (sectionType === "cloze") {
+          if (!section.passage || !section.passage.trim()) {
+            await session.abortTransaction();
+            return res.status(400).json({
+              message: `Section ${i + 1}: Cloze section must have a passage`,
+            });
+          }
+
+          if (!Array.isArray(section.items) || section.items.length === 0) {
+            await session.abortTransaction();
+            return res.status(400).json({
+              message: `Section ${i + 1}: Cloze section must contain items`,
+            });
+          }
+
+          for (let k = 0; k < section.items.length; k++) {
+            const item = section.items[k];
+
+            if (typeof item.number !== "number") {
+              await session.abortTransaction();
+              return res.status(400).json({
+                message: `Section ${i + 1}, Item ${k + 1}: Missing number`,
+              });
+            }
+
+            if (
+              !Array.isArray(item.options) ||
+              item.options.length < 2 ||
+              !item.options.includes(item.correctAnswer)
+            ) {
+              await session.abortTransaction();
+              return res.status(400).json({
+                message: `Section ${i + 1}, Item ${item.number}: Invalid options or correctAnswer`,
+              });
+            }
+
+            if (!item.points) item.points = 1;
           }
         }
       }
@@ -2007,8 +2230,10 @@ const updateQuiz = async (req, res) => {
     if (dueDate !== undefined) quiz.dueDate = dueDate;
     if (timeLimit !== undefined) quiz.timeLimit = timeLimit;
     if (startTime !== undefined) quiz.startTime = startTime;
-    if (shuffleQuestions !== undefined) quiz.shuffleQuestions = shuffleQuestions;
-    if (shuffleOptions !== undefined) quiz.shuffleOptions = shuffleOptions;
+    if (shuffleQuestions !== undefined)
+      quiz.shuffleQuestions = shuffleQuestions;
+    if (shuffleOptions !== undefined)
+      quiz.shuffleOptions = shuffleOptions;
 
     // 🔴 STRUCTURE SWITCH
     if (sections !== undefined) {
@@ -2024,30 +2249,34 @@ const updateQuiz = async (req, res) => {
     await quiz.save({ session });
     await session.commitTransaction();
 
-    // 🎯 Cache invalidation
+    // 🧹 Cache invalidation
     processInBackground(() => {
-      cache.del(CACHE_KEYS.QUIZ_SINGLE(quizId, 'teacher'));
-      cache.del(CACHE_KEYS.QUIZ_SINGLE(quizId, 'student'));
-      cache.del(CACHE_KEYS.QUIZ_CLASS(quiz.class.toString(), 'teacher', req.user._id));
-      cache.delPattern(CACHE_KEYS.QUIZ_CLASS(quiz.class.toString(), 'student', ''));
+      cache.del(CACHE_KEYS.QUIZ_SINGLE(quizId, "teacher"));
+      cache.del(CACHE_KEYS.QUIZ_SINGLE(quizId, "student"));
+      cache.del(
+        CACHE_KEYS.QUIZ_CLASS(quiz.class.toString(), "teacher", req.user._id)
+      );
+      cache.delPattern(
+        CACHE_KEYS.QUIZ_CLASS(quiz.class.toString(), "student", "")
+      );
     });
 
     res.json({
-      message: 'Quiz updated successfully',
-      quiz
+      message: "Quiz updated successfully",
+      quiz,
     });
-
   } catch (error) {
     await session.abortTransaction();
-    console.error('Quiz update failed:', error);
+    console.error("Quiz update failed:", error);
     res.status(500).json({
-      message: 'Error updating quiz',
-      error: error.message
+      message: "Error updating quiz",
+      error: error.message,
     });
   } finally {
     session.endSession();
   }
 };
+
 
 
 
@@ -2130,9 +2359,7 @@ const submitQuiz = async (req, res) => {
     console.log("🚀 [submitQuiz] Incoming request", {
       quizId,
       autoSubmit,
-      answersCount: Array.isArray(answers)
-        ? answers.length
-        : Object.keys(answers || {}).length,
+      answersCount: Object.keys(answers || {}).length,
     });
 
     if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
@@ -2140,7 +2367,7 @@ const submitQuiz = async (req, res) => {
     }
 
     // --------------------------------------------------
-    // 🔐 Resolve canonical Student ID (SOURCE OF TRUTH)
+    // 🔐 Resolve canonical Student ID
     // --------------------------------------------------
     const studentId = await resolveStudentId(req);
 
@@ -2175,22 +2402,25 @@ const submitQuiz = async (req, res) => {
     }
 
     // --------------------------------------------------
-    // 🔥 FLATTEN QUESTIONS (sections OR flat)
+    // 🔑 SECTION TYPE RESOLVER (SINGLE SOURCE OF TRUTH)
     // --------------------------------------------------
-    let allQuestions = [];
+    const resolveSectionType = (section) => {
+      if (
+        typeof section.passage === "string" &&
+        section.passage.trim().length &&
+        Array.isArray(section.items)
+      ) {
+        return "cloze";
+      }
 
-    if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
-      quiz.sections.forEach(section => {
-        section.questions.forEach(q => {
-          allQuestions.push({
-            ...q,
-            __sectionInstruction: section.instruction || null,
-          });
-        });
-      });
-    } else {
-      allQuestions = quiz.questions || [];
-    }
+      if (Array.isArray(section.questions)) {
+        return "standard";
+      }
+
+      throw new Error(
+        "Section must contain either { questions[] } or { passage + items[] }"
+      );
+    };
 
     // --------------------------------------------------
     // 🔍 LOAD ACTIVE ATTEMPT
@@ -2212,12 +2442,12 @@ const submitQuiz = async (req, res) => {
         attemptNumber: 1,
         startTime: startTime ? new Date(startTime) : now,
         expiresAt: new Date(now.getTime() + timeLimitMinutes * 60 * 1000),
-        answers: {},                 // 🔴 FIX: ensure answers map exists
+        answers: {},
       });
     }
 
     // --------------------------------------------------
-    // 🔴 FIX: SYNC SUBMITTED ANSWERS INTO ATTEMPT
+    // 🔴 SYNC SUBMITTED ANSWERS INTO ATTEMPT
     // --------------------------------------------------
     if (answers && typeof answers === "object") {
       Object.entries(answers).forEach(([key, value]) => {
@@ -2233,106 +2463,148 @@ const submitQuiz = async (req, res) => {
     let score = 0;
     let totalAutoGradedPoints = 0;
     let requiresManualReview = false;
-
     const results = [];
 
-    for (const q of allQuestions) {
-      const type = (q.type || "").toLowerCase();
+    // ----------------------------------------------
+    // 🔹 SECTIONED QUIZ
+    // ----------------------------------------------
+    if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
+      for (const section of quiz.sections) {
+        const sectionType = resolveSectionType(section);
 
-      // ============================
-      // 🟣 CLOZE (MCQ WITH BLANKS)
-      // ============================
-      if (type === "cloze" && Array.isArray(q.blanks)) {
-        for (const blank of q.blanks) {
-          const key = `${q._id}:${blank.blankNumber}`;
+        // ==========================
+        // 🟢 STANDARD SECTION
+        // ==========================
+        if (sectionType === "standard") {
+          for (const q of section.questions) {
+            const studentAnswer = answers[q._id] ?? null;
 
-          const studentValue =
-            activeAttempt.answers?.get?.(key) ??
-            activeAttempt.answers?.[key] ??
-            null;
+            const item = {
+              questionId: q._id,
+              questionText: q.questionText,
+              questionType: q.type,
+              sectionInstruction: section.instruction || null,
+              selectedAnswer: studentAnswer,
+              correctAnswer: q.correctAnswer,
+              explanation: q.explanation || null,
+              points: q.points || 1,
+              earnedPoints: 0,
+              isCorrect: null,
+              manualReviewRequired: false,
+              timeSpent: 0,
+            };
 
-          const isCorrect = studentValue === blank.correctAnswer;
+            if (["essay", "short-answer"].includes(q.type)) {
+              requiresManualReview = true;
+              item.manualReviewRequired = true;
+              results.push(item);
+              continue;
+            }
 
-          results.push({
-            questionId: q._id,
-            questionText: q.questionText,
-            questionType: "multiple-choice",
-            sectionInstruction: q.__sectionInstruction || null,
-            selectedAnswer: studentValue,
-            correctAnswer: blank.correctAnswer,
-            explanation: q.explanation || null,
-            isCorrect,
-            points: q.points || 1,
-            earnedPoints: isCorrect ? (q.points || 1) : 0,
-            manualReviewRequired: false,
-            timeSpent: 0,
-          });
+            totalAutoGradedPoints += item.points;
 
-          totalAutoGradedPoints += q.points || 1;
-          if (isCorrect) score += q.points || 1;
+            if (studentAnswer !== null) {
+              const correct =
+                q.type === "true-false"
+                  ? String(studentAnswer).toLowerCase() ===
+                    String(q.correctAnswer).toLowerCase()
+                  : studentAnswer === q.correctAnswer;
+
+              item.isCorrect = correct;
+              item.earnedPoints = correct ? item.points : 0;
+              if (correct) score += item.points;
+            } else {
+              item.isCorrect = false;
+            }
+
+            results.push(item);
+          }
         }
 
-        continue;
+        // ==========================
+        // 🟣 CLOZE SECTION
+        // ==========================
+        if (sectionType === "cloze") {
+          for (const item of section.items) {
+            const studentValue = answers[item.number] ?? null;
+            const isCorrect = studentValue === item.correctAnswer;
+            const points = item.points || 1;
+
+            results.push({
+              questionId: null,
+              questionText: `Cloze ${item.number}`,
+              questionType: "cloze",
+              sectionInstruction: section.instruction || null,
+              selectedAnswer: studentValue,
+              correctAnswer: item.correctAnswer,
+              explanation: null,
+              points,
+              earnedPoints: isCorrect ? points : 0,
+              isCorrect,
+              manualReviewRequired: false,
+              timeSpent: 0,
+            });
+
+            totalAutoGradedPoints += points;
+            if (isCorrect) score += points;
+          }
+        }
       }
+    }
 
-      // ============================
-      // 🟢 NORMAL QUESTIONS
-      // ============================
-      const studentAnswer =
-        Array.isArray(answers)
-          ? answers.find(a => a.questionId == q._id.toString())
-          : null;
+    // ----------------------------------------------
+    // 🔹 FLAT (LEGACY) QUIZ
+    // ----------------------------------------------
+    else {
+      for (const q of quiz.questions || []) {
+        const studentAnswer = answers[q._id] ?? null;
 
-      const item = {
-        questionId: q._id,
-        questionText: q.questionText,
-        questionType: q.type,
-        sectionInstruction: q.__sectionInstruction || null,
-        selectedAnswer: studentAnswer?.selectedAnswer ?? null,
-        explanation: q.explanation ?? null,
-        manualReviewRequired: false,
-        isCorrect: null,
-        correctAnswer: q.correctAnswer,
-        points: q.points || 1,
-        earnedPoints: 0,
-        timeSpent: studentAnswer?.timeSpent || 0,
-      };
+        const item = {
+          questionId: q._id,
+          questionText: q.questionText,
+          questionType: q.type,
+          sectionInstruction: null,
+          selectedAnswer: studentAnswer,
+          correctAnswer: q.correctAnswer,
+          explanation: q.explanation || null,
+          points: q.points || 1,
+          earnedPoints: 0,
+          isCorrect: null,
+          manualReviewRequired: false,
+          timeSpent: 0,
+        };
 
-      if (["essay", "short-answer"].includes(type)) {
-        requiresManualReview = true;
-        item.manualReviewRequired = true;
+        if (["essay", "short-answer"].includes(q.type)) {
+          requiresManualReview = true;
+          item.manualReviewRequired = true;
+          results.push(item);
+          continue;
+        }
+
+        totalAutoGradedPoints += item.points;
+
+        if (studentAnswer !== null) {
+          const correct =
+            q.type === "true-false"
+              ? String(studentAnswer).toLowerCase() ===
+                String(q.correctAnswer).toLowerCase()
+              : studentAnswer === q.correctAnswer;
+
+          item.isCorrect = correct;
+          item.earnedPoints = correct ? item.points : 0;
+          if (correct) score += item.points;
+        } else {
+          item.isCorrect = false;
+        }
+
         results.push(item);
-        continue;
       }
-
-      totalAutoGradedPoints += item.points;
-
-      if (item.selectedAnswer !== null) {
-        const correct =
-          type === "true-false"
-            ? String(item.selectedAnswer).toLowerCase() ===
-              String(q.correctAnswer).toLowerCase()
-            : item.selectedAnswer === q.correctAnswer;
-
-        item.isCorrect = correct;
-        item.earnedPoints = correct ? item.points : 0;
-        if (correct) score += item.points;
-      } else {
-        item.isCorrect = false;
-      }
-
-      results.push(item);
     }
 
     let percentage = null;
     if (!requiresManualReview && totalAutoGradedPoints > 0) {
       percentage = Number(((score / totalAutoGradedPoints) * 100).toFixed(2));
     }
-
-    // --------------------------------------------------
-    // 🔴 FIX: TOTAL POINTS MUST MATCH AUTO-GRADED TOTAL
-    // --------------------------------------------------
-    const totalPoints = totalAutoGradedPoints;
 
     // --------------------------------------------------
     // ✅ SAVE RESULT
@@ -2346,7 +2618,7 @@ const submitQuiz = async (req, res) => {
         studentId,
         answers: results,
         score: requiresManualReview ? null : score,
-        totalPoints,
+        totalPoints: totalAutoGradedPoints,
         percentage: requiresManualReview ? null : percentage,
         startTime: activeAttempt.startTime,
         submittedAt: now,
@@ -2387,13 +2659,14 @@ const submitQuiz = async (req, res) => {
 
 
 
-// ---------------------------
+
+// --------------------------- 
 // 15. Get Results for Student/Parent (Optimized)
 // ---------------------------
 const getResultsForStudent = async (req, res) => {
   try {
     const { studentId } = req.params;
-    const { childId, quizId, subject } = req.query;
+    const { childId, quizId } = req.query;
     const user = req.user;
     const cacheKey = `student:results:${studentId}:${childId}:${quizId}:${user.role}`;
 
@@ -2443,38 +2716,83 @@ const getResultsForStudent = async (req, res) => {
         r.childName = info.name;
         r.className = info.className;
 
-        const { classDisplayName } = resolveQuizClassNames({ name: info.className });
+        const { classDisplayName } = resolveQuizClassNames({
+          name: info.className,
+        });
         r.classDisplayName = classDisplayName || info.className;
 
         r.answers = Array.isArray(r.answers) ? r.answers : [];
 
-        // 🔴 GROUP BY SECTION
+        // --------------------------------------------------
+        // 🔴 GROUP BY SECTION (AUTHORITATIVE)
+        // --------------------------------------------------
         const sectionsMap = {};
-        r.answers.forEach(a => {
-          if (a.sectionInstruction) {
-            if (!sectionsMap[a.sectionInstruction]) {
-              sectionsMap[a.sectionInstruction] = [];
-            }
-            sectionsMap[a.sectionInstruction].push(a);
-          }
+        r.answers.forEach((a) => {
+          const key = a.sectionInstruction || "__NO_SECTION__";
+          if (!sectionsMap[key]) sectionsMap[key] = [];
+          sectionsMap[key].push(a);
         });
 
         r.sections =
           Object.keys(sectionsMap).length > 0
-            ? Object.entries(sectionsMap).map(([instruction, questions]) => ({
-                instruction,
-                questions,
-              }))
+            ? Object.entries(sectionsMap).map(
+                ([instruction, sectionAnswers]) => {
+                  const clozeItems = sectionAnswers.filter(
+  (a) => a.questionType === "cloze"
+);
+
+
+                  // 🟣 CLOZE SECTION
+                  if (clozeItems.length > 0) {
+                    return {
+                      instruction:
+                        instruction === "__NO_SECTION__" ? null : instruction,
+                      sectionType: "cloze",
+                      items: clozeItems.map((item) => ({
+                        number: Number(
+                          (item.questionText || "").replace("Cloze ", "")
+                        ),
+                        selectedAnswer: item.selectedAnswer,
+                        correctAnswer: item.correctAnswer,
+                        isCorrect: item.isCorrect,
+                        earnedPoints: item.earnedPoints,
+                        points: item.points,
+                      })),
+                    };
+                  }
+
+                  // 🟢 STANDARD SECTION
+                  return {
+                    instruction:
+                      instruction === "__NO_SECTION__" ? null : instruction,
+                    sectionType: "standard",
+                    questions: sectionAnswers.map((q) => ({
+                      questionId: q.questionId,
+                      questionText: q.questionText,
+                      questionType: q.questionType,
+                      selectedAnswer: q.selectedAnswer,
+                      correctAnswer: q.correctAnswer,
+                      explanation: q.explanation,
+                      isCorrect: q.isCorrect,
+                      points: q.points,
+                      earnedPoints: q.earnedPoints,
+                      manualReviewRequired: q.manualReviewRequired,
+                    })),
+                  };
+                }
+              )
             : null;
 
+        // --------------------------------------------------
         // 🧠 FINAL STATUS (CLOZE SAFE)
-        const pendingManual = r.answers.some(a => {
-          const type = (a.questionType || "").toLowerCase();
-          return (
-            (type === "essay" || type === "short-answer") &&
+        // --------------------------------------------------
+        const pendingManual = r.answers.some(
+          (a) =>
+            ["essay", "short-answer"].includes(
+              (a.questionType || "").toLowerCase()
+            ) &&
             (a.earnedPoints === null || a.earnedPoints === undefined)
-          );
-        });
+        );
 
         r.status = pendingManual ? "needs-review" : "graded";
         r.autoGraded = !pendingManual;
@@ -2491,7 +2809,8 @@ const getResultsForStudent = async (req, res) => {
       };
 
       if (childId) childFilter._id = childId;
-      else if (studentId && studentId !== "undefined") childFilter._id = studentId;
+      else if (studentId && studentId !== "undefined")
+        childFilter._id = studentId;
 
       const children = await executeWithTimeout(
         Student.find(childFilter)
@@ -2505,8 +2824,10 @@ const getResultsForStudent = async (req, res) => {
         return res.status(404).json({ message: "No linked children found" });
       }
 
-      targetStudentIds = children.map(c => c._id);
-      const allIds = children.flatMap(c => [c._id, c.user?._id].filter(Boolean));
+      targetStudentIds = children.map((c) => c._id);
+      const allIds = children.flatMap((c) =>
+        [c._id, c.user?._id].filter(Boolean)
+      );
 
       const query = { studentId: { $in: allIds }, school: user.school };
       if (quizId) query.quizId = quizId;
@@ -2527,37 +2848,78 @@ const getResultsForStudent = async (req, res) => {
         r.childName = info.name;
         r.className = info.className;
 
-        const { classDisplayName } = resolveQuizClassNames({ name: info.className });
+        const { classDisplayName } = resolveQuizClassNames({
+          name: info.className,
+        });
         r.classDisplayName = classDisplayName || info.className;
 
         r.answers = Array.isArray(r.answers) ? r.answers : [];
 
-        // 🔴 GROUP BY SECTION
+        // --------------------------------------------------
+        // 🔴 GROUP BY SECTION (AUTHORITATIVE)
+        // --------------------------------------------------
         const sectionsMap = {};
-        r.answers.forEach(a => {
-          if (a.sectionInstruction) {
-            if (!sectionsMap[a.sectionInstruction]) {
-              sectionsMap[a.sectionInstruction] = [];
-            }
-            sectionsMap[a.sectionInstruction].push(a);
-          }
+        r.answers.forEach((a) => {
+          const key = a.sectionInstruction || "__NO_SECTION__";
+          if (!sectionsMap[key]) sectionsMap[key] = [];
+          sectionsMap[key].push(a);
         });
 
         r.sections =
           Object.keys(sectionsMap).length > 0
-            ? Object.entries(sectionsMap).map(([instruction, questions]) => ({
-                instruction,
-                questions,
-              }))
+            ? Object.entries(sectionsMap).map(
+                ([instruction, sectionAnswers]) => {
+                  const clozeItems = sectionAnswers.filter(
+  (a) => a.questionType === "cloze"
+);
+
+
+                  if (clozeItems.length > 0) {
+                    return {
+                      instruction:
+                        instruction === "__NO_SECTION__" ? null : instruction,
+                      sectionType: "cloze",
+                      items: clozeItems.map((item) => ({
+                        number: Number(
+                          (item.questionText || "").replace("Cloze ", "")
+                        ),
+                        selectedAnswer: item.selectedAnswer,
+                        correctAnswer: item.correctAnswer,
+                        isCorrect: item.isCorrect,
+                        earnedPoints: item.earnedPoints,
+                        points: item.points,
+                      })),
+                    };
+                  }
+
+                  return {
+                    instruction:
+                      instruction === "__NO_SECTION__" ? null : instruction,
+                    sectionType: "standard",
+                    questions: sectionAnswers.map((q) => ({
+                      questionId: q.questionId,
+                      questionText: q.questionText,
+                      questionType: q.questionType,
+                      selectedAnswer: q.selectedAnswer,
+                      correctAnswer: q.correctAnswer,
+                      explanation: q.explanation,
+                      isCorrect: q.isCorrect,
+                      points: q.points,
+                      earnedPoints: q.earnedPoints,
+                      manualReviewRequired: q.manualReviewRequired,
+                    })),
+                  };
+                }
+              )
             : null;
 
-        const pendingManual = r.answers.some(a => {
-          const type = (a.questionType || "").toLowerCase();
-          return (
-            (type === "essay" || type === "short-answer") &&
+        const pendingManual = r.answers.some(
+          (a) =>
+            ["essay", "short-answer"].includes(
+              (a.questionType || "").toLowerCase()
+            ) &&
             (a.earnedPoints === null || a.earnedPoints === undefined)
-          );
-        });
+        );
 
         r.status = pendingManual ? "needs-review" : "graded";
         r.autoGraded = !pendingManual;
@@ -2598,7 +2960,8 @@ const getResultsForStudent = async (req, res) => {
 
 
 
-// ---------------------------
+
+// --------------------------- 
 // 16. Get Quiz Result by ID (Final Persistent Version) - OPTIMIZED
 // ---------------------------
 const getQuizResultById = async (req, res) => {
@@ -2634,28 +2997,25 @@ const getQuizResultById = async (req, res) => {
     // --------------------------------------------------
     // ✅ Normalize answers (safe defaults)
     // --------------------------------------------------
-    result.answers = (result.answers || []).map(answer => ({
-      ...answer,
+    result.answers = (result.answers || []).map((a) => ({
+      ...a,
       earnedPoints:
-        typeof answer.earnedPoints === "number" ? answer.earnedPoints : null,
-      feedback: typeof answer.feedback === "string" ? answer.feedback : "",
-      manualReviewRequired:
-        typeof answer.manualReviewRequired === "boolean"
-          ? answer.manualReviewRequired
-          : false,
-      questionType: answer.questionType || "unknown",
-      points: typeof answer.points === "number" ? answer.points : 0,
+        typeof a.earnedPoints === "number" ? a.earnedPoints : 0,
+      feedback: typeof a.feedback === "string" ? a.feedback : "",
+      manualReviewRequired: !!a.manualReviewRequired,
+      questionType: a.questionType || "unknown",
+      points: typeof a.points === "number" ? a.points : 0,
       isCorrect:
-        typeof answer.isCorrect === "boolean" ? answer.isCorrect : null,
-      sectionInstruction: answer.sectionInstruction || null
+        typeof a.isCorrect === "boolean" ? a.isCorrect : null,
+      sectionInstruction: a.sectionInstruction || null,
     }));
 
     // --------------------------------------------------
-    // 🔴 GROUP BY SECTION + CLOZE
+    // 🔴 GROUP BY SECTION (AUTHORITATIVE)
     // --------------------------------------------------
     const sectionsMap = {};
 
-    result.answers.forEach(a => {
+    result.answers.forEach((a) => {
       const sectionKey = a.sectionInstruction || "__NO_SECTION__";
       if (!sectionsMap[sectionKey]) {
         sectionsMap[sectionKey] = [];
@@ -2665,57 +3025,79 @@ const getQuizResultById = async (req, res) => {
 
     result.sections =
       Object.keys(sectionsMap).length > 0
-        ? Object.entries(sectionsMap).map(([instruction, rawAnswers]) => {
-            // group by questionId
-            const grouped = {};
-            rawAnswers.forEach(ans => {
-              const key = ans.questionId?.toString();
-              if (!grouped[key]) grouped[key] = [];
-              grouped[key].push(ans);
-            });
+        ? Object.entries(sectionsMap).map(([instruction, sectionAnswers]) => {
+            // -----------------------------------------
+            // 🟣 DETECT CLOZE VS STANDARD
+            // -----------------------------------------
+            const clozeItems = sectionAnswers.filter(
+  (a) => a.questionType === "cloze"
+);
 
-            const questions = Object.values(grouped).map(group => {
-              const base = group[0];
-              const type = (base.questionType || "").toLowerCase();
 
-              // 🟣 CLOZE (multiple blanks)
-              if (type === "multiple-choice" && group.length > 1) {
-                return {
-                  questionId: base.questionId,
-                  questionText: base.questionText,
-                  questionType: "cloze",
-                  blanks: group.map(b => ({
-                    selectedAnswer: b.selectedAnswer,
-                    correctAnswer: b.correctAnswer,
-                    isCorrect: b.isCorrect,
-                    earnedPoints: b.earnedPoints,
-                    points: b.points
-                  })),
-                  totalPoints: group.reduce(
-                    (s, g) => s + (g.points || 1),
-                    0
-                  ),
-                  earnedPoints: group.reduce(
-                    (s, g) => s + (g.earnedPoints || 0),
-                    0
-                  )
-                };
-              }
+            // ==========================
+            // 🟣 CLOZE SECTION
+            // ==========================
+            if (clozeItems.length > 0) {
+              const items = clozeItems.map((item) => ({
+                number: Number(
+                  (item.questionText || "").replace("Cloze ", "")
+                ),
+                selectedAnswer: item.selectedAnswer,
+                correctAnswer: item.correctAnswer,
+                isCorrect: item.isCorrect,
+                earnedPoints: item.earnedPoints,
+                points: item.points,
+              }));
 
-              // 🟢 NORMAL QUESTION
-              return base;
-            });
+              return {
+                instruction:
+                  instruction === "__NO_SECTION__" ? null : instruction,
+                sectionType: "cloze",
+                items,
+                totalPoints: items.reduce(
+                  (s, i) => s + (i.points || 1),
+                  0
+                ),
+                earnedPoints: items.reduce(
+                  (s, i) => s + (i.earnedPoints || 0),
+                  0
+                ),
+              };
+            }
 
+            // ==========================
+            // 🟢 STANDARD SECTION
+            // ==========================
             return {
               instruction:
                 instruction === "__NO_SECTION__" ? null : instruction,
-              questions
+              sectionType: "standard",
+              questions: sectionAnswers.map((q) => ({
+                questionId: q.questionId,
+                questionText: q.questionText,
+                questionType: q.questionType,
+                selectedAnswer: q.selectedAnswer,
+                correctAnswer: q.correctAnswer,
+                explanation: q.explanation,
+                isCorrect: q.isCorrect,
+                points: q.points,
+                earnedPoints: q.earnedPoints,
+                manualReviewRequired: q.manualReviewRequired,
+              })),
+              totalPoints: sectionAnswers.reduce(
+                (s, q) => s + (q.points || 1),
+                0
+              ),
+              earnedPoints: sectionAnswers.reduce(
+                (s, q) => s + (q.earnedPoints || 0),
+                0
+              ),
             };
           })
         : null;
 
     // --------------------------------------------------
-    // ✅ Recalculate totals (cloze-safe)
+    // ✅ Recalculate totals (section + cloze safe)
     // --------------------------------------------------
     const totalEarned = result.answers.reduce(
       (sum, a) => sum + (a.earnedPoints || 0),
@@ -2723,9 +3105,12 @@ const getQuizResultById = async (req, res) => {
     );
 
     const totalPoints =
-      result.totalPoints && result.totalPoints > 0
+      typeof result.totalPoints === "number" && result.totalPoints > 0
         ? result.totalPoints
-        : result.answers.reduce((sum, a) => sum + (a.points || 0), 0);
+        : result.answers.reduce(
+            (sum, a) => sum + (a.points || 0),
+            0
+          );
 
     result.score = totalEarned;
     result.totalPoints = totalPoints;
@@ -2734,21 +3119,22 @@ const getQuizResultById = async (req, res) => {
         ? Number(((totalEarned / totalPoints) * 100).toFixed(2))
         : 0;
 
-    cache.set(cacheKey, result, 300); // 5 min cache
+    cache.set(cacheKey, result, 300);
     return res.status(200).json(result);
 
   } catch (err) {
     console.error("❌ Error fetching result:", err);
     return res.status(500).json({
       message: "Error fetching result",
-      error: err.message
+      error: err.message,
     });
   }
 };
 
 
 
-// ---------------------------
+
+// --------------------------- 
 // 16c. Get All Quiz Results for Teacher (Highly Optimized)
 // ---------------------------
 const getAllClassQuizResultsForTeacher = async (req, res) => { 
@@ -2772,8 +3158,11 @@ const getAllClassQuizResultsForTeacher = async (req, res) => {
         Class.find({
           school,
           $or: [{ teachers: teacherUserId }, { classTeacher: teacherUserId }],
-        }).select("_id name").lean().maxTimeMS(5000)
-      )
+        })
+          .select("_id name")
+          .lean()
+          .maxTimeMS(5000)
+      ),
     ]);
 
     if (!teacherDoc) {
@@ -2835,7 +3224,7 @@ const getAllClassQuizResultsForTeacher = async (req, res) => {
           .select("name _id")
           .lean()
           .maxTimeMS(5000)
-      )
+      ),
     ]);
 
     if (!results.length) {
@@ -2890,7 +3279,7 @@ const getAllClassQuizResultsForTeacher = async (req, res) => {
       const answers = Array.isArray(result.answers) ? result.answers : [];
 
       // --------------------------------------------------
-      // 🔴 SECTION + CLOZE GROUPING
+      // 🔴 GROUP BY SECTION (AUTHORITATIVE)
       // --------------------------------------------------
       const sectionsMap = {};
       answers.forEach(a => {
@@ -2901,42 +3290,70 @@ const getAllClassQuizResultsForTeacher = async (req, res) => {
 
       const sections =
         Object.keys(sectionsMap).length > 0
-          ? Object.entries(sectionsMap).map(([instruction, rawAnswers]) => {
-              const grouped = {};
-              rawAnswers.forEach(ans => {
-                const qKey = ans.questionId?.toString();
-                if (!grouped[qKey]) grouped[qKey] = [];
-                grouped[qKey].push(ans);
-              });
+          ? Object.entries(sectionsMap).map(([instruction, sectionAnswers]) => {
+              const clozeItems = sectionAnswers.filter(
+  (a) => a.questionType === "cloze"
+);
 
-              const questions = Object.values(grouped).map(group => {
-                const base = group[0];
-                const type = (base.questionType || "").toLowerCase();
 
-                // 🟣 CLOZE
-                if (type === "multiple-choice" && group.length > 1) {
-                  return {
-                    questionId: base.questionId,
-                    questionText: base.questionText,
-                    questionType: "cloze",
-                    blanks: group.map(b => ({
-                      selectedAnswer: b.selectedAnswer,
-                      correctAnswer: b.correctAnswer,
-                      isCorrect: b.isCorrect,
-                      earnedPoints: b.earnedPoints,
-                      points: b.points
-                    })),
-                    totalPoints: group.reduce((s, g) => s + (g.points || 1), 0),
-                    earnedPoints: group.reduce((s, g) => s + (g.earnedPoints || 0), 0)
-                  };
-                }
+              // ==========================
+              // 🟣 CLOZE SECTION
+              // ==========================
+              if (clozeItems.length > 0) {
+                const items = clozeItems.map(item => ({
+                  number: Number(
+                    (item.questionText || "").replace("Cloze ", "")
+                  ),
+                  selectedAnswer: item.selectedAnswer,
+                  correctAnswer: item.correctAnswer,
+                  isCorrect: item.isCorrect,
+                  earnedPoints: item.earnedPoints,
+                  points: item.points,
+                }));
 
-                return base;
-              });
+                return {
+                  instruction:
+                    instruction === "__NO_SECTION__" ? null : instruction,
+                  sectionType: "cloze",
+                  items,
+                  totalPoints: items.reduce(
+                    (s, i) => s + (i.points || 1),
+                    0
+                  ),
+                  earnedPoints: items.reduce(
+                    (s, i) => s + (i.earnedPoints || 0),
+                    0
+                  ),
+                };
+              }
 
+              // ==========================
+              // 🟢 STANDARD SECTION
+              // ==========================
               return {
-                instruction: instruction === "__NO_SECTION__" ? null : instruction,
-                questions
+                instruction:
+                  instruction === "__NO_SECTION__" ? null : instruction,
+                sectionType: "standard",
+                questions: sectionAnswers.map(q => ({
+                  questionId: q.questionId,
+                  questionText: q.questionText,
+                  questionType: q.questionType,
+                  selectedAnswer: q.selectedAnswer,
+                  correctAnswer: q.correctAnswer,
+                  explanation: q.explanation,
+                  isCorrect: q.isCorrect,
+                  points: q.points,
+                  earnedPoints: q.earnedPoints,
+                  manualReviewRequired: q.manualReviewRequired,
+                })),
+                totalPoints: sectionAnswers.reduce(
+                  (s, q) => s + (q.points || 1),
+                  0
+                ),
+                earnedPoints: sectionAnswers.reduce(
+                  (s, q) => s + (q.earnedPoints || 0),
+                  0
+                ),
               };
             })
           : null;
@@ -2970,7 +3387,7 @@ const getAllClassQuizResultsForTeacher = async (req, res) => {
         className: cls.className,
         classDisplayName: cls.classDisplayName,
         quizzes: Object.values(cls.quizzes),
-      }))
+      })),
     };
 
     cache.set(cacheKey, response, 300);
@@ -2984,6 +3401,7 @@ const getAllClassQuizResultsForTeacher = async (req, res) => {
     });
   }
 };
+
 
 
 
