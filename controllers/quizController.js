@@ -328,22 +328,26 @@ const processInBackground = (operation) => {
 };
 
 const resolveSectionType = (section) => {
+  // 🟣 CLOZE HAS PRIORITY
   if (
     typeof section.passage === "string" &&
-    section.passage.trim().length &&
-    Array.isArray(section.items)
+    section.passage.trim().length > 0 &&
+    Array.isArray(section.items) &&
+    section.items.length > 0
   ) {
     return "cloze";
   }
 
-  if (Array.isArray(section.questions)) {
+  // 🟢 STANDARD SECTION
+  if (Array.isArray(section.questions) && section.questions.length > 0) {
     return "standard";
   }
 
   throw new Error(
-    "Section must contain either { questions[] } or { passage + items[] }"
+    "Invalid section structure: section must contain cloze items or questions"
   );
 };
+
 
 
 
