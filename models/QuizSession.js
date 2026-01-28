@@ -113,6 +113,38 @@ const QuizSectionSchema = new mongoose.Schema({
   },
 });
 
+// ---------------------------------------------------------------------------
+// 🛡️ SECTION NORMALIZATION (BACKWARD COMPATIBILITY)
+// ---------------------------------------------------------------------------
+QuizSectionSchema.pre('validate', function (next) {
+  // Auto-default missing type → standard (legacy support)
+  if (!this.type) {
+    // If it looks like a standard section, default safely
+    if (Array.isArray(this.questions)) {
+      this.type = 'standard';
+    }
+  }
+
+  // Enforce correctness
+  if (this.type === 'standard') {
+    if (!Array.isArray(this.questions)) {
+      return next(
+        new Error('Standard section must contain questions array')
+      );
+    }
+  }
+
+  if (this.type === 'cloze') {
+    if (!this.passage || !Array.isArray(this.items)) {
+      return next(
+        new Error('Cloze section must contain passage and items')
+      );
+    }
+  }
+
+  next();
+});
+
 // ============================================================================
 // QUIZ SESSION SCHEMA
 // ============================================================================
