@@ -675,6 +675,18 @@ const publishQuiz = async (req, res) => {
 
         for (let i = 0; i < quiz.sections.length; i++) {
           const section = quiz.sections[i];
+
+          // 🔍 ADD THIS LOG (RAW SECTION STATE)
+          console.log("🧩 Raw section keys", {
+            sectionIndex: i + 1,
+            hasPassage: !!section.passage,
+            passageLength: section.passage?.length,
+            hasItems: Array.isArray(section.items),
+            itemsLength: section.items?.length,
+            hasQuestions: Array.isArray(section.questions),
+            questionsLength: section.questions?.length,
+          });
+
           const sectionType = resolveSectionType(section);
 
           console.log(`➡️ Validating Section ${i + 1}`, {
@@ -807,8 +819,6 @@ const publishQuiz = async (req, res) => {
     console.log("🧹 Publish session ended");
   }
 };
-
-
 
 
 
