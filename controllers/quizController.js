@@ -328,7 +328,7 @@ const processInBackground = (operation) => {
 };
 
 const resolveSectionType = (section) => {
-  // 🟣 CLOZE HAS PRIORITY
+  // 🟣 CLOZE HAS ABSOLUTE PRIORITY
   if (
     typeof section.passage === "string" &&
     section.passage.trim().length > 0 &&
@@ -338,15 +338,18 @@ const resolveSectionType = (section) => {
     return "cloze";
   }
 
-  // 🟢 STANDARD SECTION
-  if (Array.isArray(section.questions) && section.questions.length > 0) {
+  // 🟢 STANDARD ONLY IF QUESTIONS EXIST
+  if (
+    Array.isArray(section.questions) &&
+    section.questions.length > 0
+  ) {
     return "standard";
   }
 
-  throw new Error(
-    "Invalid section structure: section must contain cloze items or questions"
-  );
+  console.error("❌ Invalid section structure detected", section);
+  throw new Error("Invalid section structure");
 };
+
 
 
 
