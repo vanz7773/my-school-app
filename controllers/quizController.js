@@ -591,7 +591,7 @@ const createQuiz = async (req, res) => {
 
 
 // ---------------------------
-// 2. Publish/Unpublish QuizSession (Optimized + Push Added)
+// 2. Publish/Unpublish QuizSession (WITH DEBUG LOGS)
 // ---------------------------
 const publishQuiz = async (req, res) => {
   const session = await mongoose.startSession();
@@ -602,7 +602,15 @@ const publishQuiz = async (req, res) => {
     const { publish } = req.body;
     const school = toObjectId(req.user.school);
 
+    console.log("🚀 [PUBLISH QUIZ] Request received", {
+      quizId,
+      publish,
+      user: req.user._id.toString(),
+      school: school?.toString(),
+    });
+
     if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
+      console.warn("❌ Invalid quiz ID format:", quizId);
       await session.abortTransaction();
       return res.status(400).json({ message: "Invalid quiz ID format" });
     }
@@ -613,20 +621,29 @@ const publishQuiz = async (req, res) => {
     }).session(session);
 
     if (!quiz) {
+      console.warn("❌ Quiz not found:", quizId);
       await session.abortTransaction();
       return res.status(404).json({ message: "Quiz not found in your school" });
     }
 
+    console.log("✅ Quiz loaded", {
+      title: quiz.title,
+      isPublished: quiz.isPublished,
+      sectionsCount: quiz.sections?.length || 0,
+      questionsCount: quiz.questions?.length || 0,
+    });
+
     if (quiz.teacher.toString() !== req.user._id.toString()) {
+      console.warn("🚫 Unauthorized publish attempt", {
+        quizTeacher: quiz.teacher.toString(),
+        requester: req.user._id.toString(),
+      });
       await session.abortTransaction();
       return res
         .status(403)
         .json({ message: "You can only publish quizzes you created" });
     }
 
-    // --------------------------------------------------
-    // 🔑 SECTION TYPE RESOLVER (SINGLE SOURCE OF TRUTH)
-    // --------------------------------------------------
     const resolveSectionType = (section) => {
       if (
         typeof section.passage === "string" &&
@@ -640,9 +657,7 @@ const publishQuiz = async (req, res) => {
         return "standard";
       }
 
-      throw new Error(
-        "Section must contain either { questions[] } or { passage + items[] }"
-      );
+      throw new Error("Invalid section structure");
     };
 
     // --------------------------------------------------
@@ -651,64 +666,92 @@ const publishQuiz = async (req, res) => {
     if (publish) {
       let hasAutoGradable = false;
 
-      // ----------------------------------------------
-      // 🔹 SECTIONED QUIZ
-      // ----------------------------------------------
       if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
+        console.log("📦 Sectioned quiz detected");
+
         for (let i = 0; i < quiz.sections.length; i++) {
           const section = quiz.sections[i];
           const sectionType = resolveSectionType(section);
 
+          console.log(`➡️ Validating Section ${i + 1}`, {
+            sectionType,
+            instruction: section.instruction,
+          });
+
           // 🟢 STANDARD SECTION
           if (sectionType === "standard") {
+            console.log(
+              `🟢 Section ${i + 1} STANDARD questions count:`,
+              section.questions?.length
+            );
+
             if (
               !Array.isArray(section.questions) ||
               section.questions.length === 0
             ) {
+              console.error(`❌ Section ${i + 1} has no questions`);
               await session.abortTransaction();
               return res.status(400).json({
                 message: `Section ${i + 1} has no questions`,
               });
             }
 
-            hasAutoGradable = true; // standard questions are auto-gradable
+            hasAutoGradable = true;
           }
 
           // 🟣 CLOZE SECTION
           if (sectionType === "cloze") {
-  if (!Array.isArray(section.items) || section.items.length === 0) {
-    await session.abortTransaction();
-    return res.status(400).json({
-      message: `Cloze section ${i + 1} has no items`,
-    });
-  }
+            console.log(
+              `🟣 Section ${i + 1} CLOZE items count:`,
+              section.items?.length
+            );
 
-  for (let idx = 0; idx < section.items.length; idx++) {
-    const item = section.items[idx];
+            if (!Array.isArray(section.items) || section.items.length === 0) {
+              console.error(`❌ Cloze section ${i + 1} has no items`);
+              await session.abortTransaction();
+              return res.status(400).json({
+                message: `Cloze section ${i + 1} has no items`,
+              });
+            }
 
-    if (
-      !Array.isArray(item.options) ||
-      item.options.length < 2 ||
-      !item.options.includes(item.correctAnswer)
-    ) {
-      await session.abortTransaction();
-      return res.status(400).json({
-        message: `Cloze section ${i + 1}, item ${item.number} has invalid options or correctAnswer`,
-      });
-    }
-  }
+            for (let idx = 0; idx < section.items.length; idx++) {
+              const item = section.items[idx];
 
-  hasAutoGradable = true;
-}
+              console.log(`   🔍 Cloze item check`, {
+                section: i + 1,
+                index: idx,
+                number: item.number,
+                options: item.options,
+                correctAnswer: item.correctAnswer,
+              });
 
+              if (
+                !Array.isArray(item.options) ||
+                item.options.length < 2 ||
+                !item.options.includes(item.correctAnswer)
+              ) {
+                console.error(`❌ Invalid cloze item detected`, {
+                  section: i + 1,
+                  itemNumber: item.number,
+                  options: item.options,
+                  correctAnswer: item.correctAnswer,
+                });
+
+                await session.abortTransaction();
+                return res.status(400).json({
+                  message: `Cloze section ${i + 1}, item ${item.number} has invalid options or correctAnswer`,
+                });
+              }
+            }
+
+            hasAutoGradable = true;
+          }
         }
-      }
+      } else {
+        console.log("📄 Flat (legacy) quiz detected");
 
-      // ----------------------------------------------
-      // 🔹 FLAT (LEGACY) QUIZ
-      // ----------------------------------------------
-      else {
         const flatQuestions = quiz.questions || [];
+        console.log("🧮 Flat questions count:", flatQuestions.length);
 
         if (!flatQuestions.length) {
           await session.abortTransaction();
@@ -720,10 +763,8 @@ const publishQuiz = async (req, res) => {
         hasAutoGradable = true;
       }
 
-      // ----------------------------------------------
-      // 🔴 BLOCK PUBLISH IF NO AUTO-GRADABLE CONTENT
-      // ----------------------------------------------
       if (!hasAutoGradable) {
+        console.warn("🚫 No auto-gradable content found");
         await session.abortTransaction();
         return res.status(400).json({
           message:
@@ -732,102 +773,37 @@ const publishQuiz = async (req, res) => {
       }
 
       quiz.publishedAt = new Date();
+      console.log("🟢 Quiz marked for publishing");
     } else {
       quiz.publishedAt = null;
+      console.log("🟡 Quiz marked for unpublishing");
     }
 
     quiz.isPublished = publish;
     await quiz.save({ session });
+
+    console.log("💾 Quiz saved, committing transaction...");
     await session.commitTransaction();
-
-    // ===============================
-    // 📌 CREATE IN-APP NOTIFICATION
-    // ===============================
-    if (publish) {
-      processInBackground(async () => {
-        try {
-          await Notification.create({
-            title: "New Quiz Published",
-            sender: req.user._id,
-            school: req.user.school,
-            message: `New quiz posted: ${quiz.title}`,
-            type: "online-quiz",
-            audience: "student",
-            class: quiz.class,
-            recipientRoles: ["student", "parent"],
-          });
-        } catch (notifError) {
-          console.error("Notification creation failed:", notifError);
-        }
-      });
-
-      // ===============================
-      // 🔔 SEND PUSH NOTIFICATIONS
-      // ===============================
-      processInBackground(async () => {
-        try {
-          const students = await Student.find({
-            class: quiz.class,
-            school: req.user.school,
-          })
-            .select("user parent parentIds")
-            .lean();
-
-          let recipients = [];
-
-          students.forEach(s => {
-            if (s.user) recipients.push(String(s.user));
-            if (s.parent) recipients.push(String(s.parent));
-            if (Array.isArray(s.parentIds)) {
-              recipients.push(...s.parentIds.map(id => String(id)));
-            }
-          });
-
-          recipients = [...new Set(recipients)];
-
-          if (recipients.length > 0) {
-            await sendPush(
-              recipients,
-              "New Quiz Published",
-              `${quiz.title} is now available`,
-              { quizId: quiz._id, type: "quiz-published" }
-            );
-          }
-        } catch (err) {
-          console.error("⚠️ Quiz publish push failed:", err.message);
-        }
-      });
-    }
-
-    // ===============================
-    // 🧹 CACHE INVALIDATION
-    // ===============================
-    processInBackground(() => {
-      cache.del(
-        CACHE_KEYS.QUIZ_CLASS(quiz.class.toString(), "teacher", req.user._id)
-      );
-      cache.delPattern(
-        CACHE_KEYS.QUIZ_CLASS(quiz.class.toString(), "student", "")
-      );
-      cache.del(CACHE_KEYS.QUIZ_SINGLE(quizId, "teacher"));
-      cache.del(CACHE_KEYS.QUIZ_SINGLE(quizId, "student"));
-    });
+    console.log("✅ Publish transaction committed");
 
     res.json({
       message: `Quiz ${publish ? "published" : "unpublished"} successfully`,
       quiz,
     });
+
   } catch (error) {
     await session.abortTransaction();
-    console.error("Quiz publish/unpublish failed:", error);
+    console.error("🔥 Quiz publish/unpublish failed:", error);
     res.status(500).json({
       message: "Error updating quiz status",
       error: error.message,
     });
   } finally {
     session.endSession();
+    console.log("🧹 Publish session ended");
   }
 };
+
 
 
 
