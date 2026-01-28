@@ -1,12 +1,11 @@
 const mongoose = require('mongoose');
-const Teacher = require('./Teacher'); // ensure correct path
 
 // ============================================================================
-// CLOZE BLANK SCHEMA (USED UNDER MULTIPLE-CHOICE)
+// CLOZE ITEM SCHEMA (FOR SECTION-LEVEL CLOZE)
 // ============================================================================
-const ClozeBlankSchema = new mongoose.Schema(
+const ClozeItemSchema = new mongoose.Schema(
   {
-    blankNumber: {
+    number: {
       type: Number,
       required: true, // e.g. 21, 22, 23
     },
@@ -15,7 +14,7 @@ const ClozeBlankSchema = new mongoose.Schema(
       required: true,
       validate: {
         validator: (v) => Array.isArray(v) && v.length >= 2,
-        message: 'Each blank must have at least 2 options',
+        message: 'Each cloze item must have at least 2 options',
       },
     },
     correctAnswer: {
@@ -23,12 +22,16 @@ const ClozeBlankSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    points: {
+      type: Number,
+      default: 1,
+    },
   },
   { _id: false }
 );
 
 // ============================================================================
-// QUESTION SCHEMA (CLOZE = MULTIPLE-CHOICE + BLANKS)
+// QUESTION SCHEMA (STANDARD QUESTIONS ONLY)
 // ============================================================================
 const QuestionSchema = new mongoose.Schema({
   questionText: {
@@ -39,62 +42,22 @@ const QuestionSchema = new mongoose.Schema({
 
   type: {
     type: String,
-    enum: [
-      'multiple-choice',
-      'true-false',
-      'short-answer',
-      'essay',
-    ],
+    enum: ['multiple-choice', 'true-false', 'short-answer', 'essay'],
     default: 'multiple-choice',
     required: true,
   },
 
-  /**
-   * Standard MCQ options
-   * (ignored when blanks are present)
-   */
   options: [{ type: String }],
 
-  /**
-   * Used by:
-   * - MCQ (non-cloze)
-   * - True/False
-   * - Short Answer
-   *
-   * ❌ NOT used for Cloze (answers live in blanks)
-   */
   correctAnswer: {
     type: mongoose.Schema.Types.Mixed,
     required: function () {
-      return !['essay'].includes(this.type) && !this.blanks?.length;
-    },
-  },
-
-  /**
-   * Cloze blanks
-   * Only valid when type === 'multiple-choice'
-   */
-  blanks: {
-    type: [ClozeBlankSchema],
-    default: undefined,
-    validate: {
-      validator: function (v) {
-        // If blanks exist, must be MCQ
-        if (Array.isArray(v) && v.length > 0) {
-          return this.type === 'multiple-choice';
-        }
-        return true;
-      },
-      message: 'Cloze blanks are only allowed for multiple-choice questions',
+      return !['essay'].includes(this.type);
     },
   },
 
   explanation: { type: String },
 
-  /**
-   * For cloze:
-   * points PER BLANK
-   */
   points: { type: Number, default: 1 },
 
   difficulty: {
@@ -107,22 +70,46 @@ const QuestionSchema = new mongoose.Schema({
 });
 
 // ============================================================================
-// QUIZ SECTION SCHEMA
+// QUIZ SECTION SCHEMA (STANDARD + CLOZE)
 // ============================================================================
 const QuizSectionSchema = new mongoose.Schema({
-  name: {
+  type: {
+    type: String,
+    enum: ['standard', 'cloze'],
+    required: true,
+  },
+
+  title: {
     type: String,
     default: null,
     trim: true,
   },
+
   instruction: {
     type: String,
     required: true,
     trim: true,
   },
+
+  // -----------------------
+  // STANDARD SECTION
+  // -----------------------
   questions: {
     type: [QuestionSchema],
-    required: true,
+    default: undefined,
+  },
+
+  // -----------------------
+  // CLOZE SECTION
+  // -----------------------
+  passage: {
+    type: String,
+    default: undefined,
+  },
+
+  items: {
+    type: [ClozeItemSchema],
+    default: undefined,
   },
 });
 
@@ -130,9 +117,23 @@ const QuizSectionSchema = new mongoose.Schema({
 // QUIZ SESSION SCHEMA
 // ============================================================================
 const QuizSessionSchema = new mongoose.Schema({
-  school: { type: mongoose.Schema.Types.ObjectId, ref: 'School', required: true },
-  teacher: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  class: { type: mongoose.Schema.Types.ObjectId, ref: 'Class', required: true },
+  school: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'School',
+    required: true,
+  },
+
+  teacher: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+  },
+
+  class: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Class',
+    required: true,
+  },
 
   subject: {
     type: mongoose.Schema.Types.ObjectId,
@@ -140,17 +141,35 @@ const QuizSessionSchema = new mongoose.Schema({
     required: false,
   },
 
-  subjectName: { type: String, required: true, trim: true },
+  subjectName: {
+    type: String,
+    required: true,
+    trim: true,
+  },
 
-  title: { type: String, required: true },
-  description: { type: String },
+  title: {
+    type: String,
+    required: true,
+  },
+
+  description: String,
   notesText: String,
 
+  // -----------------------
   // BACKWARD COMPATIBILITY
-  questions: [QuestionSchema],
+  // -----------------------
+  questions: {
+    type: [QuestionSchema],
+    default: undefined,
+  },
 
-  // SECTION-BASED EXAMS
-  sections: [QuizSectionSchema],
+  // -----------------------
+  // SECTION-BASED QUIZ
+  // -----------------------
+  sections: {
+    type: [QuizSectionSchema],
+    default: undefined,
+  },
 
   timeLimit: { type: Number, default: null },
   startTime: { type: Date, default: null },
@@ -159,7 +178,6 @@ const QuizSessionSchema = new mongoose.Schema({
   isPublished: { type: Boolean, default: false },
   publishedAt: { type: Date, default: null },
 
-  fromQuestionBank: { type: Boolean, default: false },
   allowRetakes: { type: Boolean, default: false },
   maxAttempts: { type: Number, default: 1 },
 
@@ -184,8 +202,7 @@ const QuizSessionSchema = new mongoose.Schema({
 // ============================================================================
 QuizSessionSchema.index({ school: 1, class: 1 });
 QuizSessionSchema.index({ school: 1, isPublished: 1, startTime: 1, dueDate: 1 });
-QuizSessionSchema.index({ fromQuestionBank: 1, 'questions.tags': 1 });
-QuizSessionSchema.index({ 'sections.questions.tags': 1 });
+QuizSessionSchema.index({ 'sections.type': 1 });
 
 // ============================================================================
 // MIDDLEWARE
@@ -227,81 +244,31 @@ QuizSessionSchema.virtual('isAvailable').get(function () {
 });
 
 QuizSessionSchema.virtual('totalPoints').get(function () {
-  const sumQuestions = (questions = []) =>
-    questions.reduce((sum, q) => {
-      // Cloze = multiple blanks
-      if (q.type === 'multiple-choice' && Array.isArray(q.blanks) && q.blanks.length) {
-        return sum + q.blanks.length * (q.points || 1);
+  let total = 0;
+
+  if (Array.isArray(this.sections)) {
+    this.sections.forEach((section) => {
+      if (section.type === 'standard') {
+        section.questions?.forEach((q) => {
+          total += q.points || 0;
+        });
       }
-      return sum + (q.points || 0);
-    }, 0);
 
-  if (this.sections && this.sections.length) {
-    return this.sections.reduce(
-      (total, section) => total + sumQuestions(section.questions),
-      0
-    );
-  }
-
-  return sumQuestions(this.questions);
-});
-
-// ============================================================================
-// METHODS
-// ============================================================================
-QuizSessionSchema.methods.getShuffledQuestions = function () {
-  const shuffle = (arr) => arr.sort(() => Math.random() - 0.5);
-
-  const shuffleQuestion = (q) => {
-    if (!this.shuffleOptions) return q;
-
-    // Normal MCQ
-    if (q.type === 'multiple-choice' && !q.blanks?.length) {
-      return { ...q.toObject(), options: shuffle([...q.options]) };
-    }
-
-    // Cloze MCQ
-    if (q.type === 'multiple-choice' && Array.isArray(q.blanks)) {
-      const blanks = q.blanks.map((b) => ({
-        ...b,
-        options: shuffle([...b.options]),
-      }));
-      return { ...q.toObject(), blanks };
-    }
-
-    return q;
-  };
-
-  // SECTION-BASED
-  if (this.sections && this.sections.length) {
-    return this.sections.map((section) => {
-      let questions = [...section.questions];
-      if (this.shuffleQuestions) questions = shuffle(questions);
-
-      return {
-        ...section.toObject(),
-        questions: questions.map(shuffleQuestion),
-      };
+      if (section.type === 'cloze') {
+        section.items?.forEach((item) => {
+          total += item.points || 1;
+        });
+      }
     });
+    return total;
   }
 
-  // FLAT
-  let questions = [...this.questions];
-  if (this.shuffleQuestions) questions = shuffle(questions);
-  return questions.map(shuffleQuestion);
-};
-
-// ============================================================================
-// STATICS
-// ============================================================================
-QuizSessionSchema.statics.findAvailableForStudent = function (studentId, classId) {
-  return this.find({
-    class: classId,
-    isPublished: true,
-    startTime: { $lte: new Date() },
-    $or: [{ dueDate: null }, { dueDate: { $gte: new Date() } }],
+  this.questions?.forEach((q) => {
+    total += q.points || 0;
   });
-};
+
+  return total;
+});
 
 // ============================================================================
 // EXPORT
