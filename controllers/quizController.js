@@ -676,30 +676,31 @@ const publishQuiz = async (req, res) => {
 
           // 🟣 CLOZE SECTION
           if (sectionType === "cloze") {
-            if (
-              !Array.isArray(section.items) ||
-              section.items.length === 0
-            ) {
-              await session.abortTransaction();
-              return res.status(400).json({
-                message: `Cloze section ${i + 1} has no items`,
-              });
-            }
+  if (!Array.isArray(section.items) || section.items.length === 0) {
+    await session.abortTransaction();
+    return res.status(400).json({
+      message: `Cloze section ${i + 1} has no items`,
+    });
+  }
 
-            section.items.forEach((item, idx) => {
-              if (
-                !Array.isArray(item.options) ||
-                item.options.length < 2 ||
-                !item.options.includes(item.correctAnswer)
-              ) {
-                throw new Error(
-                  `Cloze section ${i + 1}, item ${idx + 1} is invalid`
-                );
-              }
-            });
+  for (let idx = 0; idx < section.items.length; idx++) {
+    const item = section.items[idx];
 
-            hasAutoGradable = true;
-          }
+    if (
+      !Array.isArray(item.options) ||
+      item.options.length < 2 ||
+      !item.options.includes(item.correctAnswer)
+    ) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        message: `Cloze section ${i + 1}, item ${item.number} has invalid options or correctAnswer`,
+      });
+    }
+  }
+
+  hasAutoGradable = true;
+}
+
         }
       }
 
