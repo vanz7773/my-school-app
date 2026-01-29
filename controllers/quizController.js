@@ -328,24 +328,35 @@ const processInBackground = (operation) => {
 };
 
 const resolveSectionType = (section) => {
+  if (!section) {
+    console.error("❌ Section is null or undefined");
+    return "unknown";
+  }
+
+  // 🟣 Check for cloze section
   if (
     typeof section.passage === "string" &&
     section.passage.trim().length > 0 &&
-    Array.isArray(section.items) &&
-    section.items.length > 0
+    Array.isArray(section.items)
   ) {
+    // Even if items array is empty, it's still a cloze section structure
     return "cloze";
   }
 
-  if (
-    Array.isArray(section.questions) &&
-    section.questions.length > 0
-  ) {
+  // 🟢 Check for standard section
+  if (Array.isArray(section.questions)) {
+    // Even if questions array is empty, it's still a standard section structure
     return "standard";
   }
 
-  console.error("❌ Invalid section structure detected", section);
-  throw new Error("Invalid section structure");
+  console.warn("⚠️ Unknown section structure, defaulting to standard", {
+    hasPassage: typeof section.passage,
+    hasItems: Array.isArray(section.items),
+    hasQuestions: Array.isArray(section.questions),
+    sectionKeys: Object.keys(section)
+  });
+  
+  return "unknown";
 };
 
 
@@ -1124,51 +1135,56 @@ const getQuizzesForClass = async (req, res) => {
     // --------------------------------------------------
     // 🔴 SECTION-AWARE TOTAL POINTS CALCULATOR (FINAL)
     // --------------------------------------------------
-    const computeTotalPoints = (quiz) => {
-      // 🔹 Legacy flat quiz
-      if (Array.isArray(quiz.questions) && quiz.questions.length > 0) {
-        return quiz.questions.reduce(
-          (sum, q) => sum + (q.points || 1),
-          0
-        );
+   const computeTotalPoints = (quiz) => {
+  // 🔹 Legacy flat quiz
+  if (Array.isArray(quiz.questions) && quiz.questions.length > 0) {
+    return quiz.questions.reduce(
+      (sum, q) => sum + (q.points || 1),
+      0
+    );
+  }
+
+  // 🔹 Section-based quiz (authoritative)
+  if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
+    return quiz.sections.reduce((total, section) => {
+      try {
+        const sectionType = resolveSectionType(section);
+
+        // 🟣 CLOZE SECTION
+        if (sectionType === "cloze" && Array.isArray(section.items)) {
+          return (
+            total +
+            section.items.reduce(
+              (s, item) => s + (item.points || 1),
+              0
+            )
+          );
+        }
+
+        // 🟢 STANDARD SECTION
+        if (
+          sectionType === "standard" &&
+          Array.isArray(section.questions)
+        ) {
+          return (
+            total +
+            section.questions.reduce(
+              (s, q) => s + (q.points || 1),
+              0
+            )
+          );
+        }
+
+        return total;
+      } catch (error) {
+        console.warn(`⚠️ Error processing section, skipping: ${error.message}`);
+        return total; // Skip this section
       }
+    }, 0);
+  }
 
-      // 🔹 Section-based quiz (authoritative)
-      if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
-        return quiz.sections.reduce((total, section) => {
-          const sectionType = resolveSectionType(section);
-
-          // 🟣 CLOZE SECTION
-          if (sectionType === "cloze" && Array.isArray(section.items)) {
-            return (
-              total +
-              section.items.reduce(
-                (s, item) => s + (item.points || 1),
-                0
-              )
-            );
-          }
-
-          // 🟢 STANDARD SECTION
-          if (
-            sectionType === "standard" &&
-            Array.isArray(section.questions)
-          ) {
-            return (
-              total +
-              section.questions.reduce(
-                (s, q) => s + (q.points || 1),
-                0
-              )
-            );
-          }
-
-          return total;
-        }, 0);
-      }
-
-      return 0;
-    };
+  return 0;
+};
 
     const quizIds = quizzes.map((q) => toObjectId(q._id));
 
