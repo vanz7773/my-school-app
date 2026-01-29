@@ -109,21 +109,6 @@ const QuizSectionSchema = new mongoose.Schema({
   },
 });
 
-// ---------------------------------------------------------------------------
-// 🧩 SAFE NORMALIZATION (NO THROWING, READ-SAFE)
-// ---------------------------------------------------------------------------
-QuizSectionSchema.pre('validate', function (next) {
-  // Legacy support: if type missing but questions exist → standard
-  if (!this.type && Array.isArray(this.questions)) {
-    this.type = 'standard';
-  }
-
-  // ❗ DO NOT throw errors here
-  // Strict validation belongs in controllers (create / publish)
-
-  next();
-});
-
 // ============================================================================
 // QUIZ SESSION SCHEMA
 // ============================================================================
