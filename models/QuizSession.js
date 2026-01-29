@@ -7,7 +7,7 @@ const ClozeItemSchema = new mongoose.Schema(
   {
     number: {
       type: Number,
-      required: true, // e.g. 21, 22, 23
+      required: true,
     },
     options: {
       type: [String],
@@ -91,17 +91,13 @@ const QuizSectionSchema = new mongoose.Schema({
     trim: true,
   },
 
-  // -----------------------
-  // STANDARD SECTION
-  // -----------------------
+  // STANDARD
   questions: {
     type: [QuestionSchema],
     default: undefined,
   },
 
-  // -----------------------
-  // CLOZE SECTION
-  // -----------------------
+  // CLOZE
   passage: {
     type: String,
     default: undefined,
@@ -114,33 +110,16 @@ const QuizSectionSchema = new mongoose.Schema({
 });
 
 // ---------------------------------------------------------------------------
-// 🛡️ SECTION NORMALIZATION (BACKWARD COMPATIBILITY)
+// 🧩 SAFE NORMALIZATION (NO THROWING, READ-SAFE)
 // ---------------------------------------------------------------------------
 QuizSectionSchema.pre('validate', function (next) {
-  // Auto-default missing type → standard (legacy support)
-  if (!this.type) {
-    // If it looks like a standard section, default safely
-    if (Array.isArray(this.questions)) {
-      this.type = 'standard';
-    }
+  // Legacy support: if type missing but questions exist → standard
+  if (!this.type && Array.isArray(this.questions)) {
+    this.type = 'standard';
   }
 
-  // Enforce correctness
-  if (this.type === 'standard') {
-    if (!Array.isArray(this.questions)) {
-      return next(
-        new Error('Standard section must contain questions array')
-      );
-    }
-  }
-
-  if (this.type === 'cloze') {
-    if (!this.passage || !Array.isArray(this.items)) {
-      return next(
-        new Error('Cloze section must contain passage and items')
-      );
-    }
-  }
+  // ❗ DO NOT throw errors here
+  // Strict validation belongs in controllers (create / publish)
 
   next();
 });
@@ -187,17 +166,13 @@ const QuizSessionSchema = new mongoose.Schema({
   description: String,
   notesText: String,
 
-  // -----------------------
   // BACKWARD COMPATIBILITY
-  // -----------------------
   questions: {
     type: [QuestionSchema],
     default: undefined,
   },
 
-  // -----------------------
   // SECTION-BASED QUIZ
-  // -----------------------
   sections: {
     type: [QuizSectionSchema],
     default: undefined,
