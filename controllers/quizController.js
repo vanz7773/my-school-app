@@ -328,7 +328,6 @@ const processInBackground = (operation) => {
 };
 
 const resolveSectionType = (section) => {
-  // 🟣 CLOZE HAS ABSOLUTE PRIORITY
   if (
     typeof section.passage === "string" &&
     section.passage.trim().length > 0 &&
@@ -338,7 +337,6 @@ const resolveSectionType = (section) => {
     return "cloze";
   }
 
-  // 🟢 STANDARD ONLY IF QUESTIONS EXIST
   if (
     Array.isArray(section.questions) &&
     section.questions.length > 0
@@ -349,6 +347,7 @@ const resolveSectionType = (section) => {
   console.error("❌ Invalid section structure detected", section);
   throw new Error("Invalid section structure");
 };
+
 
 
 
