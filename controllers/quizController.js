@@ -2356,13 +2356,19 @@ const deleteQuiz = async (req, res) => {
   }
 };
 
-// --------------------------- 
+// ---------------------------
 // 14. Submit Quiz (NON-TRANSACTION VERSION, FIXED FOR AUTO-SUBMIT)
 // ---------------------------
 const submitQuiz = async (req, res) => {
   try {
     const { quizId } = req.params;
-    const { answers = {}, startTime, timeSpent = 0, autoSubmit = false } = req.body;
+    const {
+      answers = {},
+      startTime,
+      timeSpent = 0,
+      autoSubmit = false,
+    } = req.body;
+
     const school = toObjectId(req.user.school);
     const now = new Date();
 
@@ -2385,10 +2391,12 @@ const submitQuiz = async (req, res) => {
     // 🎯 Load quiz
     // --------------------------------------------------
     const quiz = await QuizSession.findById(quizId).lean().maxTimeMS(5000);
-    if (!quiz) return res.status(404).json({ message: "Quiz not found" });
+    if (!quiz) {
+      return res.status(404).json({ message: "Quiz not found" });
+    }
 
     // --------------------------------------------------
-    // 🔍 CHECK IF RESULT ALREADY EXISTS
+    // 🔍 Prevent duplicate submission
     // --------------------------------------------------
     const existingResult = await QuizResult.findOne({
       quizId,
@@ -2407,17 +2415,16 @@ const submitQuiz = async (req, res) => {
       return res.status(409).json({
         message: "You have already submitted this quiz.",
         status: "duplicate-submission",
-        result: existingResult,
       });
     }
 
     // --------------------------------------------------
-    // 🔑 SECTION TYPE RESOLVER (SINGLE SOURCE OF TRUTH)
+    // 🔑 Section type resolver
     // --------------------------------------------------
     const resolveSectionType = (section) => {
       if (
         typeof section.passage === "string" &&
-        section.passage.trim().length &&
+        section.passage.trim() &&
         Array.isArray(section.items)
       ) {
         return "cloze";
@@ -2427,13 +2434,11 @@ const submitQuiz = async (req, res) => {
         return "standard";
       }
 
-      throw new Error(
-        "Section must contain either { questions[] } or { passage + items[] }"
-      );
+      throw new Error("Invalid section structure");
     };
 
     // --------------------------------------------------
-    // 🔍 LOAD ACTIVE ATTEMPT
+    // 🔍 Load or create active attempt
     // --------------------------------------------------
     let activeAttempt = await QuizAttempt.findOne({
       quizId,
@@ -2457,48 +2462,47 @@ const submitQuiz = async (req, res) => {
     }
 
     // --------------------------------------------------
-    // 🔴 SYNC SUBMITTED ANSWERS INTO ATTEMPT
+    // 🔄 Sync answers into attempt
     // --------------------------------------------------
     if (answers && typeof answers === "object") {
       Object.entries(answers).forEach(([key, value]) => {
-        activeAttempt.answers.set
+        activeAttempt.answers?.set
           ? activeAttempt.answers.set(key, value)
           : (activeAttempt.answers[key] = value);
       });
     }
 
-// --------------------------------------------------
-// 🔴 BUILD RESULT SECTIONS (AUTHORITATIVE)
-// --------------------------------------------------
-const resultSections = [];
+    // --------------------------------------------------
+    // 🔴 Build AUTHORITATIVE result sections
+    // --------------------------------------------------
+    const resultSections = [];
 
-if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
-  for (const section of quiz.sections) {
-    const sectionType = resolveSectionType(section);
+    if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
+      for (const section of quiz.sections) {
+        const sectionType = resolveSectionType(section);
 
-    resultSections.push({
-      sectionId: section._id || null,
-      sectionType,
-      sectionTitle: section.title || null,
-      instruction: section.instruction || null,
-      passage: sectionType === "cloze" ? section.passage || null : null,
-      questions: [],
-    });
-  }
-}
-
+        resultSections.push({
+          sectionId: section._id || null,
+          sectionType,
+          sectionTitle: section.title || null,
+          instruction: section.instruction || null,
+          passage: sectionType === "cloze" ? section.passage || null : null,
+          questions: [],
+        });
+      }
+    }
 
     // --------------------------------------------------
-    // 🎯 PROCESS ANSWERS (SECTION-AWARE)
+    // 🎯 Process answers
     // --------------------------------------------------
     let score = 0;
     let totalAutoGradedPoints = 0;
     let requiresManualReview = false;
     const results = [];
 
-    // ----------------------------------------------
+    // ==========================
     // 🔹 SECTIONED QUIZ
-    // ----------------------------------------------
+    // ==========================
     if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
       for (const section of quiz.sections) {
         const sectionType = resolveSectionType(section);
@@ -2507,105 +2511,115 @@ if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
         // 🟢 STANDARD SECTION
         // ==========================
         if (sectionType === "standard") {
-  // 🔴 FIND THE MATCHING RESULT SECTION (created earlier)
-  const targetSection = resultSections.find(
-    (s) => String(s.sectionId) === String(section._id)
-  );
+          const targetSection = resultSections.find(
+            (s) => String(s.sectionId) === String(section._id)
+          );
 
-  for (const q of section.questions) {
-    const studentAnswer = answers[q._id] ?? null;
+          for (const q of section.questions) {
+            const studentAnswer = answers[q._id] ?? null;
 
-    const item = {
-      questionId: q._id,
-      questionText: q.questionText,
-      questionType: q.type,
+            const item = {
+              questionId: q._id,
+              questionText: q.questionText,
+              questionType: q.type,
 
-      // 🔑 SECTION CONTEXT
-      sectionId: section._id || null,
-      sectionTitle: section.title || null,
-      sectionInstruction: section.instruction || null,
+              sectionId: section._id || null,
+              sectionTitle: section.title || null,
+              sectionInstruction: section.instruction || null,
 
-      selectedAnswer: studentAnswer,
-      correctAnswer: q.correctAnswer,
-      explanation: q.explanation || null,
+              selectedAnswer: studentAnswer,
+              correctAnswer: q.correctAnswer,
+              explanation: q.explanation || null,
 
-      points: q.points || 1,
-      earnedPoints: 0,
-      isCorrect: null,
-      manualReviewRequired: false,
-      timeSpent: 0,
-    };
+              points: q.points || 1,
+              earnedPoints: 0,
+              isCorrect: null,
+              manualReviewRequired: false,
+              timeSpent: 0,
+            };
 
-    // 🔹 Auto / manual grading logic stays exactly as you have it
-    results.push(item);
+            // 🔎 Manual grading
+            if (["essay", "short-answer"].includes(q.type)) {
+              requiresManualReview = true;
+              item.manualReviewRequired = true;
+              results.push(item);
+              if (targetSection) targetSection.questions.push(item);
+              continue;
+            }
 
-    // 🔥 THIS IS THE MISSING LINK
-    if (targetSection) {
-      targetSection.questions.push(item);
-    }
-  }
-}
+            totalAutoGradedPoints += item.points;
+
+            if (studentAnswer !== null) {
+              const correct =
+                q.type === "true-false"
+                  ? String(studentAnswer).toLowerCase() ===
+                    String(q.correctAnswer).toLowerCase()
+                  : studentAnswer === q.correctAnswer;
+
+              item.isCorrect = correct;
+              item.earnedPoints = correct ? item.points : 0;
+              if (correct) score += item.points;
+            } else {
+              item.isCorrect = false;
+            }
+
+            results.push(item);
+            if (targetSection) targetSection.questions.push(item);
+          }
+        }
 
 
-       // ==========================
-// 🟣 CLOZE SECTION
-// ==========================
-if (sectionType === "cloze") {
-  // 🔴 Find the matching result section (created earlier)
-  const targetSection = resultSections.find(
-    (s) => String(s.sectionId) === String(section._id)
-  );
 
-  for (const item of section.items) {
-    const studentValue = answers[item.number] ?? null;
-    const isCorrect = studentValue === item.correctAnswer;
-    const points = item.points || 1;
+        // ==========================
+        // 🟣 CLOZE SECTION
+        // ==========================
+        if (sectionType === "cloze") {
+          const targetSection = resultSections.find(
+            (s) => String(s.sectionId) === String(section._id)
+          );
 
-    const clozeAnswer = {
-      // 🔑 SECTION IDENTITY
-      sectionId: section._id || null,
-      sectionTitle: section.title || null,
-      sectionInstruction: section.instruction || null,
+          for (const item of section.items) {
+            const studentValue = answers[item.number] ?? null;
+            const isCorrect = studentValue === item.correctAnswer;
+            const points = item.points || 1;
 
-      // 🔑 CLOZE CONTEXT
-      clozePassage: section.passage || null,
-      clozeNumber: item.number,
+            const clozeAnswer = {
+              sectionId: section._id || null,
+              sectionTitle: section.title || null,
+              sectionInstruction: section.instruction || null,
 
-      // 🔑 QUESTION IDENTITY
-      questionId: item._id || null,
-      questionText: `Cloze ${item.number}`,
-      questionType: "cloze",
+              clozePassage: section.passage || null,
+              clozeNumber: item.number,
 
-      selectedAnswer: studentValue,
-      correctAnswer: item.correctAnswer,
-      explanation: null,
+              questionId: item._id || null,
+              questionText: `Cloze ${item.number}`,
+              questionType: "cloze",
 
-      points,
-      earnedPoints: isCorrect ? points : 0,
-      isCorrect,
+              selectedAnswer: studentValue,
+              correctAnswer: item.correctAnswer,
+              explanation: null,
 
-      manualReviewRequired: false,
-      timeSpent: 0,
-    };
+              points,
+              earnedPoints: isCorrect ? points : 0,
+              isCorrect,
 
-    // 🔹 Flat answers (backward compatibility)
-    results.push(clozeAnswer);
+              manualReviewRequired: false,
+              timeSpent: 0,
+            };
 
-    // 🔹 Section-aware structure (THIS IS THE FIX)
-    if (targetSection) {
-      targetSection.questions.push(clozeAnswer);
-    }
+            results.push(clozeAnswer);
+            if (targetSection) targetSection.questions.push(clozeAnswer);
 
-    totalAutoGradedPoints += points;
-    if (isCorrect) score += points;
+            totalAutoGradedPoints += points;
+            if (isCorrect) score += points;
           }
         }
       }
     }
 
-    // ----------------------------------------------
-    // 🔹 FLAT (LEGACY) QUIZ
-    // ----------------------------------------------
+    // ==========================
+    // 🔹 LEGACY (FLAT) QUIZ
+    // ==========================
     else {
       for (const q of quiz.questions || []) {
         const studentAnswer = answers[q._id] ?? null;
@@ -2652,18 +2666,74 @@ if (sectionType === "cloze") {
       }
     }
 
-    let percentage = null;
-    if (!requiresManualReview && totalAutoGradedPoints > 0) {
-      percentage = Number(((score / totalAutoGradedPoints) * 100).toFixed(2));
-    }
+    const percentage =
+      !requiresManualReview && totalAutoGradedPoints > 0
+        ? Number(((score / totalAutoGradedPoints) * 100).toFixed(2))
+        : null;
+
+    // --------------------------------------------------
+    // 🧠 FINAL DEBUG LOG (CORRECT LOCATION)
+    // --------------------------------------------------
     console.log(
-  "🧠 FINAL RESULT SECTIONS",
-  resultSections.map((s) => ({
-    type: s.sectionType,
-    questionsCount: s.questions.length,
-    hasPassage: !!s.passage,
-  }))
-);
+      "🧠 FINAL RESULT SECTIONS",
+      resultSections.map((s) => ({
+        type: s.sectionType,
+        questionsCount: s.questions.length,
+        hasPassage: !!s.passage,
+      }))
+    );
+
+    // --------------------------------------------------
+    // ✅ Save result
+    // --------------------------------------------------
+    const quizResultDoc = await QuizResult.findOneAndUpdate(
+      { school, quizId, studentId },
+      {
+        school,
+        quizId,
+        sessionId: activeAttempt.sessionId,
+        studentId,
+
+        answers: results,
+        sections: resultSections,
+
+        score: requiresManualReview ? null : score,
+        totalPoints: totalAutoGradedPoints,
+        percentage,
+        startTime: activeAttempt.startTime,
+        submittedAt: now,
+        timeSpent,
+        attemptNumber: activeAttempt.attemptNumber,
+        status: requiresManualReview ? "needs-review" : "submitted",
+        autoGraded: !requiresManualReview,
+        autoSubmit: !!autoSubmit,
+      },
+      { upsert: true, new: true }
+    );
+
+    activeAttempt.status = "submitted";
+    activeAttempt.completedAt = now;
+    await activeAttempt.save();
+
+    return res.json({
+      message: autoSubmit
+        ? "Quiz auto-submitted (time expired)"
+        : "Quiz submitted",
+      score: quizResultDoc.score,
+      totalPoints: quizResultDoc.totalPoints,
+      percentage: quizResultDoc.percentage,
+      status: quizResultDoc.status,
+      autoGraded: quizResultDoc.autoGraded,
+    });
+  } catch (err) {
+    console.error("❌ submitQuiz error:", err);
+    return res.status(500).json({
+      message: "Server error",
+      error: err.message,
+    });
+  }
+};
+
 
 
     // --------------------------------------------------
@@ -2712,14 +2782,7 @@ if (sectionType === "cloze") {
       autoGraded: quizResultDoc.autoGraded,
       answers: results,
     });
-  } catch (err) {
-    console.error("❌ submitQuiz error:", err);
-    return res.status(500).json({
-      message: "Server error",
-      error: err.message,
-    });
-  }
-};
+
 
 
 
