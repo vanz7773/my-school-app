@@ -1734,7 +1734,9 @@ const getQuizResults = async (req, res) => {
       const sectionsMap = {};
 
       answers.forEach((a) => {
-        const key = a.sectionId || a.sectionInstruction || "__NO_SECTION__";
+        const key =
+  a.sectionId ||
+  `${a.sectionTitle || "SECTION"}-${a.sectionInstruction || ""}`;
 
         if (!sectionsMap[key]) {
           sectionsMap[key] = {
@@ -2539,22 +2541,35 @@ const submitQuiz = async (req, res) => {
             const points = item.points || 1;
 
             results.push({
-              questionId: null,
-              questionText: `Cloze ${item.number}`,
-              questionType: "cloze",
-              sectionInstruction: section.instruction || null,
-              selectedAnswer: studentValue,
-              correctAnswer: item.correctAnswer,
-              explanation: null,
-              points,
-              earnedPoints: isCorrect ? points : 0,
-              isCorrect,
-              manualReviewRequired: false,
-              timeSpent: 0,
-            });
+  // 🔑 SECTION IDENTITY (prevents section collapse)
+  sectionId: section._id || null,
+  sectionTitle: section.title || null,
+  sectionInstruction: section.instruction || null,
 
-            totalAutoGradedPoints += points;
-            if (isCorrect) score += points;
+  // 🔑 CLOZE CONTEXT (required downstream)
+  clozePassage: section.passage || null,
+  clozeNumber: item.number,
+
+  // 🔑 QUESTION IDENTITY
+  questionId: item._id || null,
+  questionText: `Cloze ${item.number}`,
+  questionType: "cloze",
+
+  selectedAnswer: studentValue,
+  correctAnswer: item.correctAnswer,
+  explanation: null,
+
+  points,
+  earnedPoints: isCorrect ? points : 0,
+  isCorrect,
+
+  manualReviewRequired: false,
+  timeSpent: 0,
+});
+
+totalAutoGradedPoints += points;
+if (isCorrect) score += points;
+
           }
         }
       }
