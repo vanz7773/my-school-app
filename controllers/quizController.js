@@ -2617,8 +2617,15 @@ const submitQuiz = async (req, res) => {
 
     answers: results,
 
-    // 🔥 THIS IS THE MISSING PIECE
-    sections: resultSections,
+    // ✅ AUTHORITATIVE, SAFE STRUCTURE
+    sections: resultSections.map((s) => ({
+      sectionId: s.sectionId,
+      sectionType: s.sectionType,
+      sectionTitle: s.sectionTitle,
+      instruction: s.instruction,
+      passage: s.sectionType === "cloze" ? s.passage : undefined,
+      questions: s.questions,
+    })),
 
     score: requiresManualReview ? null : score,
     totalPoints: totalAutoGradedPoints,
@@ -2633,6 +2640,7 @@ const submitQuiz = async (req, res) => {
   },
   { upsert: true, new: true, setDefaultsOnInsert: true }
 );
+
 
 
     activeAttempt.status = "submitted";
