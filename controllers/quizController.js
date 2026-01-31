@@ -2418,22 +2418,7 @@ const submitQuiz = async (req, res) => {
       });
     }
 
-    // --------------------------------------------------
-    // 🔑 Section Type Resolver
-    // --------------------------------------------------
-    const resolveSectionType = (section) => {
-      if (
-        typeof section.passage === "string" &&
-        section.passage.trim() &&
-        Array.isArray(section.items)
-      ) {
-        return "cloze";
-      }
-      if (Array.isArray(section.questions)) {
-        return "standard";
-      }
-      throw new Error("Invalid section structure");
-    };
+  
 
     // --------------------------------------------------
     // 🔍 Load / create attempt
@@ -2471,21 +2456,38 @@ const submitQuiz = async (req, res) => {
     // --------------------------------------------------
     // 🔴 Build Result Sections (AUTHORITATIVE)
     // --------------------------------------------------
-    const resultSections = [];
+    // --------------------------------------------------
+// 🔴 Build Result Sections (AUTHORITATIVE)
+// --------------------------------------------------
+const resultSections = [];
 
-    if (Array.isArray(quiz.sections)) {
-      for (const section of quiz.sections) {
-        const type = resolveSectionType(section);
-        resultSections.push({
-          sectionId: section._id,
-          sectionType: type,
-          sectionTitle: section.title || null,
-          instruction: section.instruction || null,
-          passage: type === "cloze" ? section.passage || null : null,
-          questions: [],
-        });
-      }
-    }
+if (Array.isArray(quiz.sections)) {
+  for (const section of quiz.sections) {
+    const type = resolveSectionType(section);
+
+    // ✅ AUTHORITATIVE CLOZE PASSAGE RESOLUTION
+    const resolvedPassage =
+      type === "cloze"
+        ? section.passage ??
+          section.clozePassage ??
+          section.items?.[0]?.clozePassage ??
+          null
+        : null;
+
+    resultSections.push({
+      sectionId: section._id,
+      sectionType: type,
+      sectionTitle: section.title || null,
+      instruction: section.instruction || null,
+
+      // 🔥 THIS IS THE FIX
+      passage: resolvedPassage,
+
+      questions: [],
+    });
+  }
+}
+
 
     // --------------------------------------------------
     // 🎯 Process Answers
