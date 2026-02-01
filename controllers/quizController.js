@@ -2407,6 +2407,19 @@ const submitQuiz = async (req, res) => {
       isFlat: Array.isArray(quiz.questions) && quiz.questions.length > 0,
     });
 
+    // ==================================================
+    // 🔴 CRITICAL FIX: Define quiz type variables
+    // ==================================================
+    const isSectionedQuiz = Array.isArray(quiz.sections) && quiz.sections.length > 0;
+    const isFlatQuiz = Array.isArray(quiz.questions) && quiz.questions.length > 0;
+    
+    console.log("🔍 [QUIZ TYPE DETECTION]:", {
+      isSectionedQuiz,
+      isFlatQuiz,
+      sectionsCount: quiz.sections?.length || 0,
+      questionsCount: quiz.questions?.length || 0,
+    });
+
     // --------------------------------------------------
     // 🔍 Prevent duplicate submission
     // --------------------------------------------------
@@ -2508,89 +2521,86 @@ const submitQuiz = async (req, res) => {
     // ==================================================
     // 🔴 FIX: Handle FLAT QUIZ (no sections)
     // ==================================================
-    // ==================================================
-// 🔴 FIX: Handle FLAT QUIZ (no sections)
-// ==================================================
-if (!isSectionedQuiz && isFlatQuiz) {
-  console.log("📄 [FLAT QUIZ] Processing flat quiz structure - NO SECTIONS");
-  
-  const flatQuestions = quiz.questions || [];
-  
-  for (const q of flatQuestions) {
-    // Use helper function to find answer
-    const studentAnswer = findAnswer(q);
-    
-    console.log(`📝 [FLAT QUIZ] Processing question ${q._id}:`, {
-      questionText: q.questionText?.substring(0, 50),
-      studentAnswer,
-      answerType: typeof studentAnswer,
-      hasCorrectAnswer: q.correctAnswer !== undefined,
-    });
-
-    const item = {
-      questionId: q._id,
-      questionText: q.questionText,
-      questionType: q.type || "multiple-choice",
+    if (!isSectionedQuiz && isFlatQuiz) {
+      console.log("📄 [FLAT QUIZ] Processing flat quiz structure - NO SECTIONS");
       
-      // NO SECTION INFO for flat quizzes
-      // sectionId: null,
-      // sectionTitle: null,
-      // sectionInstruction: null,
-
-      selectedAnswer: studentAnswer,
-      correctAnswer: q.correctAnswer,
-      explanation: q.explanation || null,
+      const flatQuestions = quiz.questions || [];
       
-      // Include options for multiple-choice questions
-      options: q.options || [],
-
-      points: q.points || 1,
-      earnedPoints: 0,
-      isCorrect: false,
-      manualReviewRequired: false,
-      timeSpent: 0,
-    };
-
-    // Auto-grade if possible
-    const questionType = (q.type || "").toLowerCase();
-    if (["multiple-choice", "true-false", "cloze"].includes(questionType)) {
-      totalAutoGradedPoints += item.points;
-      if (studentAnswer !== null && q.correctAnswer !== undefined) {
-        let correct = false;
+      for (const q of flatQuestions) {
+        // Use helper function to find answer
+        const studentAnswer = findAnswer(q);
         
-        if (questionType === "true-false") {
-          correct = String(studentAnswer).toLowerCase() === 
-                   String(q.correctAnswer).toLowerCase();
-        } else {
-          correct = studentAnswer === q.correctAnswer;
-        }
-        
-        item.isCorrect = correct;
-        item.earnedPoints = correct ? item.points : 0;
-        if (correct) score += item.points;
-        
-        console.log(`✅ [GRADED] Question ${q._id}:`, {
-          correct,
-          earnedPoints: item.earnedPoints,
+        console.log(`📝 [FLAT QUIZ] Processing question ${q._id}:`, {
+          questionText: q.questionText?.substring(0, 50),
           studentAnswer,
-          correctAnswer: q.correctAnswer,
+          answerType: typeof studentAnswer,
+          hasCorrectAnswer: q.correctAnswer !== undefined,
         });
-      }
-    } else if (["essay", "short-answer"].includes(questionType)) {
-      requiresManualReview = true;
-      item.manualReviewRequired = true;
-      console.log(`📝 [MANUAL REVIEW] Question ${q._id} requires manual grading`);
-    }
 
-    results.push(item);
-  }
-  
-  console.log("✅ [FLAT QUIZ] Processed all questions:", {
-    resultsCount: results.length,
-    score,
-    totalAutoGradedPoints,
-  });
-}
+        const item = {
+          questionId: q._id,
+          questionText: q.questionText,
+          questionType: q.type || "multiple-choice",
+          
+          // NO SECTION INFO for flat quizzes
+          // sectionId: null,
+          // sectionTitle: null,
+          // sectionInstruction: null,
+
+          selectedAnswer: studentAnswer,
+          correctAnswer: q.correctAnswer,
+          explanation: q.explanation || null,
+          
+          // Include options for multiple-choice questions
+          options: q.options || [],
+
+          points: q.points || 1,
+          earnedPoints: 0,
+          isCorrect: false,
+          manualReviewRequired: false,
+          timeSpent: 0,
+        };
+
+        // Auto-grade if possible
+        const questionType = (q.type || "").toLowerCase();
+        if (["multiple-choice", "true-false", "cloze"].includes(questionType)) {
+          totalAutoGradedPoints += item.points;
+          if (studentAnswer !== null && q.correctAnswer !== undefined) {
+            let correct = false;
+            
+            if (questionType === "true-false") {
+              correct = String(studentAnswer).toLowerCase() === 
+                       String(q.correctAnswer).toLowerCase();
+            } else {
+              correct = studentAnswer === q.correctAnswer;
+            }
+            
+            item.isCorrect = correct;
+            item.earnedPoints = correct ? item.points : 0;
+            if (correct) score += item.points;
+            
+            console.log(`✅ [GRADED] Question ${q._id}:`, {
+              correct,
+              earnedPoints: item.earnedPoints,
+              studentAnswer,
+              correctAnswer: q.correctAnswer,
+            });
+          }
+        } else if (["essay", "short-answer"].includes(questionType)) {
+          requiresManualReview = true;
+          item.manualReviewRequired = true;
+          console.log(`📝 [MANUAL REVIEW] Question ${q._id} requires manual grading`);
+        }
+
+        results.push(item);
+      }
+      
+      console.log("✅ [FLAT QUIZ] Processed all questions:", {
+        resultsCount: results.length,
+        score,
+        totalAutoGradedPoints,
+      });
+    }
     // ==================================================
     // 🟢 Handle SECTIONED QUIZ (existing code)
     // ==================================================
@@ -2821,59 +2831,97 @@ if (!isSectionedQuiz && isFlatQuiz) {
     );
 
     // --------------------------------------------------
-// ✅ SAVE RESULT
-// --------------------------------------------------
+    // ✅ SAVE RESULT
+    // --------------------------------------------------
 
-// Only create sections for sectioned quizzes
-let sectionsToSave = [];
-if (isSectionedQuiz && resultSections.length > 0) {
-  sectionsToSave = resultSections.map((s) => {
-    // ... section formatting logic ...
-  });
-} else {
-  // For flat quizzes, either don't save sections or save a simple default
-  sectionsToSave = [{
-    sectionId: new mongoose.Types.ObjectId(),
-    sectionType: "standard",
-    sectionTitle: "Quiz Questions",
-    instruction: null,
-    passage: null,
-    questions: results, // Include all questions here
-    totalPoints: totalAutoGradedPoints,
-    earnedPoints: score,
-  }];
-}
+    // Only create sections for sectioned quizzes
+    let sectionsToSave = [];
+    if (isSectionedQuiz && resultSections.length > 0) {
+      sectionsToSave = resultSections.map((s) => {
+        // Ensure sections have proper structure
+        const questions = Array.isArray(s.questions) ? s.questions : [];
+        
+        return {
+          sectionId: s.sectionId || new mongoose.Types.ObjectId(),
+          sectionType: s.sectionType || "standard",
+          sectionTitle: s.sectionTitle || "Quiz Questions",
+          instruction: s.instruction || null,
+          passage: s.passage || null,
+          questions: questions.map(q => ({
+            questionId: q.questionId,
+            questionText: q.questionText,
+            questionType: q.questionType,
+            selectedAnswer: q.selectedAnswer,
+            correctAnswer: q.correctAnswer,
+            explanation: q.explanation,
+            options: q.options || [],
+            points: q.points || 1,
+            earnedPoints: q.earnedPoints || 0,
+            isCorrect: q.isCorrect || false,
+            manualReviewRequired: q.manualReviewRequired || false,
+            timeSpent: q.timeSpent || 0,
+          })),
+          totalPoints: questions.reduce((sum, q) => sum + (q.points || 1), 0),
+          earnedPoints: questions.reduce((sum, q) => sum + (q.earnedPoints || 0), 0),
+        };
+      });
+    } else {
+      // For flat quizzes, create a simple default section
+      sectionsToSave = [{
+        sectionId: new mongoose.Types.ObjectId(),
+        sectionType: "standard",
+        sectionTitle: "Quiz Questions",
+        instruction: null,
+        passage: null,
+        questions: results.map(r => ({
+          questionId: r.questionId,
+          questionText: r.questionText,
+          questionType: r.questionType,
+          selectedAnswer: r.selectedAnswer,
+          correctAnswer: r.correctAnswer,
+          explanation: r.explanation,
+          options: r.options || [],
+          points: r.points || 1,
+          earnedPoints: r.earnedPoints || 0,
+          isCorrect: r.isCorrect || false,
+          manualReviewRequired: r.manualReviewRequired || false,
+          timeSpent: r.timeSpent || 0,
+        })),
+        totalPoints: totalAutoGradedPoints,
+        earnedPoints: score,
+      }];
+    }
 
-const quizResultDoc = await QuizResult.findOneAndUpdate(
-  { school, quizId, studentId },
-  {
-    school,
-    quizId,
-    sessionId: activeAttempt.sessionId,
-    studentId,
+    const quizResultDoc = await QuizResult.findOneAndUpdate(
+      { school, quizId, studentId },
+      {
+        school,
+        quizId,
+        sessionId: activeAttempt.sessionId,
+        studentId,
 
-    answers: results,
+        answers: results,
 
-    // Save sections (empty array for flat quizzes, or simple default)
-    sections: sectionsToSave,
+        // Save sections (empty array for flat quizzes, or simple default)
+        sections: sectionsToSave,
 
-    score: requiresManualReview ? null : score,
-    totalPoints: totalAutoGradedPoints,
-    percentage: requiresManualReview ? null : percentage,
-    startTime: activeAttempt.startTime,
-    submittedAt: now,
-    timeSpent,
-    attemptNumber: activeAttempt.attemptNumber,
-    status: requiresManualReview ? "needs-review" : "submitted",
-    autoGraded: !requiresManualReview,
-    autoSubmit: !!autoSubmit,
-  },
-  { 
-    upsert: true, 
-    new: true, 
-    setDefaultsOnInsert: true,
-  }
-);
+        score: requiresManualReview ? null : score,
+        totalPoints: totalAutoGradedPoints,
+        percentage: requiresManualReview ? null : percentage,
+        startTime: activeAttempt.startTime,
+        submittedAt: now,
+        timeSpent,
+        attemptNumber: activeAttempt.attemptNumber,
+        status: requiresManualReview ? "needs-review" : "submitted",
+        autoGraded: !requiresManualReview,
+        autoSubmit: !!autoSubmit,
+      },
+      { 
+        upsert: true, 
+        new: true, 
+        setDefaultsOnInsert: true,
+      }
+    );
 
     console.log("💾 [SAVE] Quiz result saved:", {
       resultId: quizResultDoc._id,
@@ -2881,6 +2929,7 @@ const quizResultDoc = await QuizResult.findOneAndUpdate(
       sectionsSaved: quizResultDoc.sections?.length || 0,
       score: quizResultDoc.score,
       totalPoints: quizResultDoc.totalPoints,
+      isFlatQuiz: !isSectionedQuiz,
     });
 
     activeAttempt.status = "submitted";
@@ -2896,6 +2945,7 @@ const quizResultDoc = await QuizResult.findOneAndUpdate(
       percentage: quizResultDoc.percentage,
       status: quizResultDoc.status,
       autoGraded: quizResultDoc.autoGraded,
+      isFlatQuiz: !isSectionedQuiz, // Add this flag for frontend
       answers: results,
     });
   } catch (err) {
