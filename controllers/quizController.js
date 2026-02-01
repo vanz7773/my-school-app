@@ -3159,7 +3159,7 @@ const getQuizResultById = async (req, res) => {
     // --------------------------------------------------
     const result = await executeWithTimeout(
       QuizResult.findById(resultId)
-        .populate("quizId", "title")
+        .populate("quizId", "title sections questions") // 🔥 Added sections and questions
         .populate("studentId", "name email")
         .lean({ virtuals: true })
         .maxTimeMS(5000)
@@ -3169,123 +3169,214 @@ const getQuizResultById = async (req, res) => {
       return res.status(404).json({ message: "Result not found" });
     }
 
+    console.log("📊 [RESULT DEBUG] Loaded result structure:", {
+      resultId: result._id,
+      hasSections: !!result.sections,
+      sectionsCount: result.sections?.length || 0,
+      hasAnswers: !!result.answers,
+      answersCount: result.answers?.length || 0,
+      quizHasSections: result.quizId?.sections?.length || 0,
+      quizHasQuestions: result.quizId?.questions?.length || 0,
+    });
+
     // --------------------------------------------------
     // ✅ Normalize answers (safe defaults)
     // --------------------------------------------------
-    result.answers = (result.answers || []).map((a) => ({
+    result.answers = (result.answers || []).map((a, index) => ({
       ...a,
       earnedPoints:
         typeof a.earnedPoints === "number" ? a.earnedPoints : 0,
       feedback: typeof a.feedback === "string" ? a.feedback : "",
       manualReviewRequired: !!a.manualReviewRequired,
       questionType: a.questionType || "unknown",
-      points: typeof a.points === "number" ? a.points : 0,
+      points: typeof a.points === "number" ? a.points : 1,
       isCorrect:
         typeof a.isCorrect === "boolean" ? a.isCorrect : null,
       sectionInstruction: a.sectionInstruction || null,
+      sectionTitle: a.sectionTitle || null,
+      sectionId: a.sectionId || null,
+      // Ensure we have a question ID for all answers
+      questionId: a.questionId || `q-${index}`,
+      // Ensure we have question text
+      questionText: a.questionText || `Question ${index + 1}`,
+      // Include options if available
+      options: a.options || [],
     }));
 
+    // 🔥 CRITICAL FIX: If answers exist but sections don't, create a default section
+    if (result.answers.length > 0 && (!result.sections || result.sections.length === 0)) {
+      console.log("🔄 Creating default section for flat quiz result");
+      
+      result.sections = [{
+        sectionId: new mongoose.Types.ObjectId(),
+        sectionType: "standard",
+        sectionTitle: "Quiz Questions",
+        instruction: null,
+        passage: null,
+        questions: result.answers,
+        totalPoints: result.answers.reduce((sum, q) => sum + (q.points || 0), 0),
+        earnedPoints: result.answers.reduce((sum, q) => sum + (q.earnedPoints || 0), 0),
+      }];
+      
+      console.log("✅ Created default section:", {
+        questionsCount: result.sections[0].questions.length,
+        totalPoints: result.sections[0].totalPoints,
+        earnedPoints: result.sections[0].earnedPoints,
+      });
+    }
+
     // --------------------------------------------------
-    // 🔴 GROUP BY SECTION (AUTHORITATIVE)
+    // 🔴 GROUP BY SECTION (AUTHORITATIVE) - only if we don't already have sections
     // --------------------------------------------------
-    const sectionsMap = {};
+    if (!result.sections || result.sections.length === 0) {
+      console.log("📦 Grouping answers into sections...");
+      const sectionsMap = {};
 
-    result.answers.forEach((a) => {
-      const sectionKey = a.sectionInstruction || "__NO_SECTION__";
-      if (!sectionsMap[sectionKey]) {
-        sectionsMap[sectionKey] = [];
-      }
-      sectionsMap[sectionKey].push(a);
-    });
+      result.answers.forEach((a) => {
+        // Use section instruction as key, fallback to section title, then default
+        const sectionKey = 
+          a.sectionInstruction || 
+          a.sectionTitle || 
+          "__DEFAULT_SECTION__";
+        
+        if (!sectionsMap[sectionKey]) {
+          sectionsMap[sectionKey] = {
+            sectionId: a.sectionId || new mongoose.Types.ObjectId(),
+            sectionType: a.questionType === "cloze" ? "cloze" : "standard",
+            sectionTitle: a.sectionTitle || "Quiz Questions",
+            instruction: a.sectionInstruction || null,
+            passage: a.clozePassage || null,
+            questions: [],
+          };
+        }
+        sectionsMap[sectionKey].questions.push(a);
+      });
 
-    result.sections =
-      Object.keys(sectionsMap).length > 0
-        ? Object.entries(sectionsMap).map(([instruction, sectionAnswers]) => {
-            // -----------------------------------------
-            // 🟣 DETECT CLOZE VS STANDARD
-            // -----------------------------------------
-            const clozeItems = sectionAnswers.filter(
-  (a) => a.questionType === "cloze"
-);
+      result.sections = Object.values(sectionsMap).map((section) => {
+        // -----------------------------------------
+        // 🟣 DETECT CLOZE VS STANDARD
+        // -----------------------------------------
+        const clozeItems = section.questions.filter(
+          (a) => a.questionType === "cloze"
+        );
 
+        // ==========================
+        // 🟣 CLOZE SECTION
+        // ==========================
+        if (clozeItems.length > 0) {
+          const items = clozeItems.map((item) => ({
+            number: Number(
+              (item.questionText || "").replace("Cloze ", "") || 
+              item.clozeNumber || 
+              0
+            ),
+            selectedAnswer: item.selectedAnswer,
+            correctAnswer: item.correctAnswer,
+            isCorrect: item.isCorrect,
+            earnedPoints: item.earnedPoints,
+            points: item.points,
+            options: item.options || [],
+            questionId: item.questionId,
+            questionText: item.questionText,
+          }));
 
-            // ==========================
-            // 🟣 CLOZE SECTION
-            // ==========================
-            if (clozeItems.length > 0) {
-              const items = clozeItems.map((item) => ({
-                number: Number(
-                  (item.questionText || "").replace("Cloze ", "")
-                ),
-                selectedAnswer: item.selectedAnswer,
-                correctAnswer: item.correctAnswer,
-                isCorrect: item.isCorrect,
-                earnedPoints: item.earnedPoints,
-                points: item.points,
-              }));
+          return {
+            sectionId: section.sectionId,
+            sectionType: "cloze",
+            sectionTitle: section.sectionTitle,
+            instruction: section.instruction,
+            passage: section.passage || clozeItems[0]?.clozePassage || null,
+            items,
+            totalPoints: items.reduce(
+              (s, i) => s + (i.points || 1),
+              0
+            ),
+            earnedPoints: items.reduce(
+              (s, i) => s + (i.earnedPoints || 0),
+              0
+            ),
+          };
+        }
 
-              return {
-                instruction:
-                  instruction === "__NO_SECTION__" ? null : instruction,
-                sectionType: "cloze",
-                items,
-                totalPoints: items.reduce(
-                  (s, i) => s + (i.points || 1),
-                  0
-                ),
-                earnedPoints: items.reduce(
-                  (s, i) => s + (i.earnedPoints || 0),
-                  0
-                ),
-              };
-            }
-
-            // ==========================
-            // 🟢 STANDARD SECTION
-            // ==========================
-            return {
-              instruction:
-                instruction === "__NO_SECTION__" ? null : instruction,
-              sectionType: "standard",
-              questions: sectionAnswers.map((q) => ({
-                questionId: q.questionId,
-                questionText: q.questionText,
-                questionType: q.questionType,
-                selectedAnswer: q.selectedAnswer,
-                correctAnswer: q.correctAnswer,
-                explanation: q.explanation,
-                isCorrect: q.isCorrect,
-                points: q.points,
-                earnedPoints: q.earnedPoints,
-                manualReviewRequired: q.manualReviewRequired,
-              })),
-              totalPoints: sectionAnswers.reduce(
-                (s, q) => s + (q.points || 1),
-                0
-              ),
-              earnedPoints: sectionAnswers.reduce(
-                (s, q) => s + (q.earnedPoints || 0),
-                0
-              ),
-            };
-          })
-        : null;
+        // ==========================
+        // 🟢 STANDARD SECTION
+        // ==========================
+        return {
+          sectionId: section.sectionId,
+          sectionType: "standard",
+          sectionTitle: section.sectionTitle,
+          instruction: section.instruction,
+          passage: null,
+          questions: section.questions.map((q) => ({
+            questionId: q.questionId,
+            questionText: q.questionText,
+            questionType: q.questionType,
+            selectedAnswer: q.selectedAnswer,
+            correctAnswer: q.correctAnswer,
+            explanation: q.explanation,
+            isCorrect: q.isCorrect,
+            points: q.points,
+            earnedPoints: q.earnedPoints,
+            manualReviewRequired: q.manualReviewRequired,
+            options: q.options || [],
+            feedback: q.feedback,
+          })),
+          totalPoints: section.questions.reduce(
+            (s, q) => s + (q.points || 1),
+            0
+          ),
+          earnedPoints: section.questions.reduce(
+            (s, q) => s + (q.earnedPoints || 0),
+            0
+          ),
+        };
+      });
+    } else {
+      console.log("✅ Using existing sections structure");
+      
+      // Ensure existing sections have proper structure
+      result.sections = result.sections.map((section, index) => ({
+        ...section,
+        sectionId: section.sectionId || new mongoose.Types.ObjectId(),
+        sectionType: section.sectionType || "standard",
+        sectionTitle: section.sectionTitle || `Section ${index + 1}`,
+        instruction: section.instruction || null,
+        passage: section.passage || null,
+        questions: section.questions || section.items || [],
+        items: section.items || [],
+        totalPoints: section.totalPoints || 
+          (section.questions || []).reduce((sum, q) => sum + (q.points || 0), 0),
+        earnedPoints: section.earnedPoints || 
+          (section.questions || []).reduce((sum, q) => sum + (q.earnedPoints || 0), 0),
+      }));
+    }
 
     // --------------------------------------------------
     // ✅ Recalculate totals (section + cloze safe)
     // --------------------------------------------------
-    const totalEarned = result.answers.reduce(
+    const totalEarnedFromAnswers = result.answers.reduce(
       (sum, a) => sum + (a.earnedPoints || 0),
       0
     );
 
-    const totalPoints =
-      typeof result.totalPoints === "number" && result.totalPoints > 0
-        ? result.totalPoints
-        : result.answers.reduce(
-            (sum, a) => sum + (a.points || 0),
-            0
-          );
+    const totalPointsFromAnswers = result.answers.reduce(
+      (sum, a) => sum + (a.points || 0),
+      0
+    );
+
+    const totalEarnedFromSections = result.sections.reduce(
+      (sum, s) => sum + (s.earnedPoints || 0),
+      0
+    );
+
+    const totalPointsFromSections = result.sections.reduce(
+      (sum, s) => sum + (s.totalPoints || 0),
+      0
+    );
+
+    // Use the most accurate totals
+    const totalEarned = totalEarnedFromSections > 0 ? totalEarnedFromSections : totalEarnedFromAnswers;
+    const totalPoints = totalPointsFromSections > 0 ? totalPointsFromSections : totalPointsFromAnswers;
 
     result.score = totalEarned;
     result.totalPoints = totalPoints;
@@ -3293,6 +3384,20 @@ const getQuizResultById = async (req, res) => {
       totalPoints > 0
         ? Number(((totalEarned / totalPoints) * 100).toFixed(2))
         : 0;
+
+    console.log("📈 [RESULT CALCULATIONS] Final totals:", {
+      totalEarned,
+      totalPoints,
+      percentage: result.percentage,
+      sectionsCount: result.sections?.length || 0,
+      answersCount: result.answers?.length || 0,
+      sectionsStructure: result.sections?.map(s => ({
+        type: s.sectionType,
+        questionsCount: s.questions?.length || s.items?.length || 0,
+        totalPoints: s.totalPoints,
+        earnedPoints: s.earnedPoints,
+      })),
+    });
 
     cache.set(cacheKey, result, 300);
     return res.status(200).json(result);
