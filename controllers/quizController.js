@@ -2357,13 +2357,13 @@ const deleteQuiz = async (req, res) => {
 };
 
 // ---------------------------
-// 14. Submit Quiz (NON-TRANSACTION VERSION, FIXED)
+// 14. Submit Quiz (FIXED for answer format issues)
 // ---------------------------
 const submitQuiz = async (req, res) => {
   try {
     const { quizId } = req.params;
     const {
-      answers = {},
+      answers = {}, // Now expecting an object, not array
       startTime,
       timeSpent = 0,
       autoSubmit = false,
@@ -2377,6 +2377,7 @@ const submitQuiz = async (req, res) => {
       autoSubmit,
       answersCount: Object.keys(answers || {}).length,
       answersKeys: Object.keys(answers || {}),
+      firstFewAnswers: Object.entries(answers || {}).slice(0, 5),
     });
 
     if (!quizId || !mongoose.Types.ObjectId.isValid(quizId)) {
@@ -2471,6 +2472,39 @@ const submitQuiz = async (req, res) => {
     const results = [];
     const resultSections = [];
 
+    // Helper function to find answer by multiple possible keys
+    const findAnswer = (question, sectionIndex = null) => {
+      if (!answers || typeof answers !== 'object') return null;
+      
+      const questionId = question._id?.toString();
+      const questionNumber = question.number;
+      
+      // Try multiple possible keys in order of likelihood
+      const possibleKeys = [
+        questionId,                     // Direct ID match
+        `cloze-${questionNumber}`,      // Simple cloze format
+        `cloze-${sectionIndex}-${questionNumber}`, // Sectioned cloze format
+        String(questionNumber),         // Just the number
+        `q${questionId}`,               // With q prefix
+        `question-${questionId}`,       // With question- prefix
+      ];
+      
+      // Also try matching by question text (partial)
+      if (question.questionText) {
+        const shortText = question.questionText.substring(0, 30);
+        possibleKeys.push(shortText);
+      }
+      
+      for (const key of possibleKeys) {
+        if (key && answers[key] !== undefined && answers[key] !== null) {
+          console.log(`🔍 [FIND ANSWER] Found answer for ${questionId} using key: ${key}`);
+          return answers[key];
+        }
+      }
+      
+      return null;
+    };
+
     // ==================================================
     // 🔴 FIX: Handle FLAT QUIZ (no sections)
     // ==================================================
@@ -2494,16 +2528,13 @@ const submitQuiz = async (req, res) => {
       const flatQuestions = quiz.questions || [];
       
       for (const q of flatQuestions) {
-        // Try to find answer by question ID, number, or index
-        const studentAnswer = 
-          answers[q._id] ?? 
-          answers[q.number] ?? 
-          answers[`q${q._id}`] ?? 
-          null;
+        // Use helper function to find answer
+        const studentAnswer = findAnswer(q);
         
         console.log(`📝 [FLAT QUIZ] Processing question ${q._id}:`, {
           questionText: q.questionText?.substring(0, 50),
           studentAnswer,
+          answerType: typeof studentAnswer,
           hasCorrectAnswer: q.correctAnswer !== undefined,
         });
 
@@ -2601,7 +2632,7 @@ const submitQuiz = async (req, res) => {
         });
       }
 
-      for (const section of quiz.sections) {
+      for (const [sectionIndex, section] of quiz.sections.entries()) {
         const sectionType = resolveSectionType(section);
         const targetSection = resultSections.find(
           (s) => String(s.sectionId) === String(section._id)
@@ -2610,7 +2641,15 @@ const submitQuiz = async (req, res) => {
         // 🟢 STANDARD SECTION
         if (sectionType === "standard") {
           for (const q of section.questions) {
-            const studentAnswer = answers[q._id] ?? null;
+            // Use helper function with section index for better matching
+            const studentAnswer = findAnswer(q, sectionIndex);
+
+            console.log(`📝 [SECTIONED] Processing question ${q._id} in section ${sectionIndex}:`, {
+              questionText: q.questionText?.substring(0, 50),
+              studentAnswer,
+              answerType: typeof studentAnswer,
+              hasCorrectAnswer: q.correctAnswer !== undefined,
+            });
 
             const item = {
               questionId: q._id,
@@ -2658,10 +2697,34 @@ const submitQuiz = async (req, res) => {
 
         // 🟣 CLOZE SECTION
         if (sectionType === "cloze") {
+          console.log(`🟣 [CLOZE] Processing cloze section ${sectionIndex} with ${section.items?.length || 0} items`);
+          
           for (const c of section.items) {
-            const studentValue = answers[c.number] ?? null;
+            // Try multiple possible keys for cloze items
+            let studentValue = null;
+            
+            // Try by cloze number first (most common)
+            if (c.number !== undefined) {
+              studentValue = answers[c.number] ?? 
+                           answers[`cloze-${c.number}`] ?? 
+                           answers[`cloze-${sectionIndex}-${c.number}`] ??
+                           null;
+            }
+            
+            // If not found, try other patterns
+            if (studentValue === null) {
+              studentValue = findAnswer(c, sectionIndex);
+            }
+            
             const isCorrect = studentValue === c.correctAnswer;
             const points = c.points || 1;
+
+            console.log(`📝 [CLOZE] Processing cloze item ${c.number}:`, {
+              studentValue,
+              correctAnswer: c.correctAnswer,
+              isCorrect,
+              optionsCount: c.options?.length || 0,
+            });
 
             const clozeAnswer = {
               sectionId: section._id,
@@ -2714,16 +2777,16 @@ const submitQuiz = async (req, res) => {
         allQuestions = quiz.questions || [];
       } else if (isSectionedQuiz) {
         allQuestions = quiz.sections.flatMap(section => 
-          section.questions || section.items || []
+          (section.questions || []).concat(section.items || [])
         );
       }
       
       allQuestions.forEach((q, index) => {
-        const questionId = q._id || q.number || `q${index}`;
-        const studentAnswer = answers[questionId] ?? answers[index] ?? null;
+        // Try to find answer using the helper function
+        const studentAnswer = findAnswer(q);
         
         const resultItem = {
-          questionId: questionId,
+          questionId: q._id || `q${index}`,
           questionText: q.questionText || `Question ${index + 1}`,
           questionType: q.type || "multiple-choice",
           selectedAnswer: studentAnswer,
@@ -2764,6 +2827,8 @@ const submitQuiz = async (req, res) => {
           questions: s.questions?.length || 0,
           hasPassage: !!s.passage,
         })),
+        unansweredCount: results.filter(r => r.selectedAnswer === null).length,
+        answeredCount: results.filter(r => r.selectedAnswer !== null).length,
       }
     );
 
@@ -2808,6 +2873,8 @@ const submitQuiz = async (req, res) => {
       resultId: quizResultDoc._id,
       answersSaved: quizResultDoc.answers?.length || 0,
       sectionsSaved: quizResultDoc.sections?.length || 0,
+      score: quizResultDoc.score,
+      totalPoints: quizResultDoc.totalPoints,
     });
 
     activeAttempt.status = "submitted";
