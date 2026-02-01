@@ -2508,101 +2508,89 @@ const submitQuiz = async (req, res) => {
     // ==================================================
     // 🔴 FIX: Handle FLAT QUIZ (no sections)
     // ==================================================
-    const isSectionedQuiz = Array.isArray(quiz.sections) && quiz.sections.length > 0;
-    const isFlatQuiz = Array.isArray(quiz.questions) && quiz.questions.length > 0;
+    // ==================================================
+// 🔴 FIX: Handle FLAT QUIZ (no sections)
+// ==================================================
+if (!isSectionedQuiz && isFlatQuiz) {
+  console.log("📄 [FLAT QUIZ] Processing flat quiz structure - NO SECTIONS");
+  
+  const flatQuestions = quiz.questions || [];
+  
+  for (const q of flatQuestions) {
+    // Use helper function to find answer
+    const studentAnswer = findAnswer(q);
+    
+    console.log(`📝 [FLAT QUIZ] Processing question ${q._id}:`, {
+      questionText: q.questionText?.substring(0, 50),
+      studentAnswer,
+      answerType: typeof studentAnswer,
+      hasCorrectAnswer: q.correctAnswer !== undefined,
+    });
 
-    if (!isSectionedQuiz && isFlatQuiz) {
-      console.log("📄 [FLAT QUIZ] Processing flat quiz structure");
+    const item = {
+      questionId: q._id,
+      questionText: q.questionText,
+      questionType: q.type || "multiple-choice",
       
-      // Create a default section for flat quiz questions
-      const defaultSection = {
-        sectionId: new mongoose.Types.ObjectId(),
-        sectionType: "standard",
-        sectionTitle: "Quiz Questions",
-        instruction: null,
-        passage: null,
-        questions: [],
-      };
-      resultSections.push(defaultSection);
+      // NO SECTION INFO for flat quizzes
+      // sectionId: null,
+      // sectionTitle: null,
+      // sectionInstruction: null,
 
-      const flatQuestions = quiz.questions || [];
+      selectedAnswer: studentAnswer,
+      correctAnswer: q.correctAnswer,
+      explanation: q.explanation || null,
       
-      for (const q of flatQuestions) {
-        // Use helper function to find answer
-        const studentAnswer = findAnswer(q);
+      // Include options for multiple-choice questions
+      options: q.options || [],
+
+      points: q.points || 1,
+      earnedPoints: 0,
+      isCorrect: false,
+      manualReviewRequired: false,
+      timeSpent: 0,
+    };
+
+    // Auto-grade if possible
+    const questionType = (q.type || "").toLowerCase();
+    if (["multiple-choice", "true-false", "cloze"].includes(questionType)) {
+      totalAutoGradedPoints += item.points;
+      if (studentAnswer !== null && q.correctAnswer !== undefined) {
+        let correct = false;
         
-        console.log(`📝 [FLAT QUIZ] Processing question ${q._id}:`, {
-          questionText: q.questionText?.substring(0, 50),
-          studentAnswer,
-          answerType: typeof studentAnswer,
-          hasCorrectAnswer: q.correctAnswer !== undefined,
-        });
-
-        const item = {
-          questionId: q._id,
-          questionText: q.questionText,
-          questionType: q.type || "multiple-choice",
-          
-          // Flat quiz doesn't have sections, but we still need section info
-          sectionId: defaultSection.sectionId,
-          sectionTitle: defaultSection.sectionTitle,
-          sectionInstruction: defaultSection.instruction,
-
-          selectedAnswer: studentAnswer,
-          correctAnswer: q.correctAnswer,
-          explanation: q.explanation || null,
-          
-          // Include options for multiple-choice questions
-          options: q.options || [],
-
-          points: q.points || 1,
-          earnedPoints: 0,
-          isCorrect: false,
-          manualReviewRequired: false,
-          timeSpent: 0,
-        };
-
-        // Auto-grade if possible
-        const questionType = (q.type || "").toLowerCase();
-        if (["multiple-choice", "true-false", "cloze"].includes(questionType)) {
-          totalAutoGradedPoints += item.points;
-          if (studentAnswer !== null && q.correctAnswer !== undefined) {
-            let correct = false;
-            
-            if (questionType === "true-false") {
-              correct = String(studentAnswer).toLowerCase() === 
-                       String(q.correctAnswer).toLowerCase();
-            } else {
-              correct = studentAnswer === q.correctAnswer;
-            }
-            
-            item.isCorrect = correct;
-            item.earnedPoints = correct ? item.points : 0;
-            if (correct) score += item.points;
-            
-            console.log(`✅ [GRADED] Question ${q._id}:`, {
-              correct,
-              earnedPoints: item.earnedPoints,
-              studentAnswer,
-              correctAnswer: q.correctAnswer,
-            });
-          }
-        } else if (["essay", "short-answer"].includes(questionType)) {
-          requiresManualReview = true;
-          item.manualReviewRequired = true;
-          console.log(`📝 [MANUAL REVIEW] Question ${q._id} requires manual grading`);
+        if (questionType === "true-false") {
+          correct = String(studentAnswer).toLowerCase() === 
+                   String(q.correctAnswer).toLowerCase();
+        } else {
+          correct = studentAnswer === q.correctAnswer;
         }
-
-        results.push(item);
-        defaultSection.questions.push(item);
+        
+        item.isCorrect = correct;
+        item.earnedPoints = correct ? item.points : 0;
+        if (correct) score += item.points;
+        
+        console.log(`✅ [GRADED] Question ${q._id}:`, {
+          correct,
+          earnedPoints: item.earnedPoints,
+          studentAnswer,
+          correctAnswer: q.correctAnswer,
+        });
       }
-      
-      console.log("✅ [FLAT QUIZ] Processed all questions:", {
-        resultsCount: results.length,
-        score,
-        totalAutoGradedPoints,
-      });
+    } else if (["essay", "short-answer"].includes(questionType)) {
+      requiresManualReview = true;
+      item.manualReviewRequired = true;
+      console.log(`📝 [MANUAL REVIEW] Question ${q._id} requires manual grading`);
     }
+
+    results.push(item);
+  }
+  
+  console.log("✅ [FLAT QUIZ] Processed all questions:", {
+    resultsCount: results.length,
+    score,
+    totalAutoGradedPoints,
+  });
+}
     // ==================================================
     // 🟢 Handle SECTIONED QUIZ (existing code)
     // ==================================================
@@ -2833,41 +2821,59 @@ const submitQuiz = async (req, res) => {
     );
 
     // --------------------------------------------------
-    // ✅ SAVE RESULT
-    // --------------------------------------------------
-    const quizResultDoc = await QuizResult.findOneAndUpdate(
-      { school, quizId, studentId },
-      {
-        school,
-        quizId,
-        sessionId: activeAttempt.sessionId,
-        studentId,
+// ✅ SAVE RESULT
+// --------------------------------------------------
 
-        answers: results,
+// Only create sections for sectioned quizzes
+let sectionsToSave = [];
+if (isSectionedQuiz && resultSections.length > 0) {
+  sectionsToSave = resultSections.map((s) => {
+    // ... section formatting logic ...
+  });
+} else {
+  // For flat quizzes, either don't save sections or save a simple default
+  sectionsToSave = [{
+    sectionId: new mongoose.Types.ObjectId(),
+    sectionType: "standard",
+    sectionTitle: "Quiz Questions",
+    instruction: null,
+    passage: null,
+    questions: results, // Include all questions here
+    totalPoints: totalAutoGradedPoints,
+    earnedPoints: score,
+  }];
+}
 
-        // ✅ AUTHORITATIVE, SAFE STRUCTURE
-        sections: resultSections.map((s) => ({
-          sectionId: s.sectionId,
-          sectionType: s.sectionType,
-          sectionTitle: s.sectionTitle,
-          instruction: s.instruction,
-          passage: s.sectionType === "cloze" ? s.passage : undefined,
-          questions: s.questions,
-        })),
+const quizResultDoc = await QuizResult.findOneAndUpdate(
+  { school, quizId, studentId },
+  {
+    school,
+    quizId,
+    sessionId: activeAttempt.sessionId,
+    studentId,
 
-        score: requiresManualReview ? null : score,
-        totalPoints: totalAutoGradedPoints,
-        percentage: requiresManualReview ? null : percentage,
-        startTime: activeAttempt.startTime,
-        submittedAt: now,
-        timeSpent,
-        attemptNumber: activeAttempt.attemptNumber,
-        status: requiresManualReview ? "needs-review" : "submitted",
-        autoGraded: !requiresManualReview,
-        autoSubmit: !!autoSubmit,
-      },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
+    answers: results,
+
+    // Save sections (empty array for flat quizzes, or simple default)
+    sections: sectionsToSave,
+
+    score: requiresManualReview ? null : score,
+    totalPoints: totalAutoGradedPoints,
+    percentage: requiresManualReview ? null : percentage,
+    startTime: activeAttempt.startTime,
+    submittedAt: now,
+    timeSpent,
+    attemptNumber: activeAttempt.attemptNumber,
+    status: requiresManualReview ? "needs-review" : "submitted",
+    autoGraded: !requiresManualReview,
+    autoSubmit: !!autoSubmit,
+  },
+  { 
+    upsert: true, 
+    new: true, 
+    setDefaultsOnInsert: true,
+  }
+);
 
     console.log("💾 [SAVE] Quiz result saved:", {
       resultId: quizResultDoc._id,
@@ -2903,7 +2909,7 @@ const submitQuiz = async (req, res) => {
 
 
 // --------------------------- 
-// 15. Get Results for Student/Parent (Optimized)
+// 15. Get Results for Student/Parent (Optimized) - FIXED for flat quizzes
 // ---------------------------
 const getResultsForStudent = async (req, res) => {
   try {
@@ -2946,7 +2952,7 @@ const getResultsForStudent = async (req, res) => {
         QuizResult.find(filter)
           .populate({
             path: "quizId",
-            select: "title subject subjectName totalPoints",
+            select: "title subject subjectName totalPoints sections questions", // Added sections and questions
           })
           .sort({ submittedAt: -1 })
           .lean()
@@ -2965,65 +2971,80 @@ const getResultsForStudent = async (req, res) => {
 
         r.answers = Array.isArray(r.answers) ? r.answers : [];
 
-        // --------------------------------------------------
-        // 🔴 GROUP BY SECTION (AUTHORITATIVE)
-        // --------------------------------------------------
-        const sectionsMap = {};
-        r.answers.forEach((a) => {
-          const key = a.sectionInstruction || "__NO_SECTION__";
-          if (!sectionsMap[key]) sectionsMap[key] = [];
-          sectionsMap[key].push(a);
+        // 🔥 CRITICAL FIX: Check if this is a flat quiz result
+        const isFlatQuiz = !r.sections || r.sections.length === 0;
+        const quizHasSections = r.quizId?.sections?.length > 0;
+        const quizHasQuestions = r.quizId?.questions?.length > 0;
+
+        console.log("🔍 [RESULT DEBUG] Processing result:", {
+          resultId: r._id,
+          isFlatQuiz,
+          quizHasSections,
+          quizHasQuestions,
+          answersCount: r.answers.length,
+          sectionsCount: r.sections?.length || 0,
+          quizTitle: r.quizId?.title,
         });
 
-        r.sections =
-          Object.keys(sectionsMap).length > 0
-            ? Object.entries(sectionsMap).map(
-                ([instruction, sectionAnswers]) => {
-                  const clozeItems = sectionAnswers.filter(
-  (a) => a.questionType === "cloze"
-);
-
-
-                  // 🟣 CLOZE SECTION
-                  if (clozeItems.length > 0) {
-                    return {
-                      instruction:
-                        instruction === "__NO_SECTION__" ? null : instruction,
-                      sectionType: "cloze",
-                      items: clozeItems.map((item) => ({
-                        number: Number(
-                          (item.questionText || "").replace("Cloze ", "")
-                        ),
-                        selectedAnswer: item.selectedAnswer,
-                        correctAnswer: item.correctAnswer,
-                        isCorrect: item.isCorrect,
-                        earnedPoints: item.earnedPoints,
-                        points: item.points,
-                      })),
-                    };
-                  }
-
-                  // 🟢 STANDARD SECTION
-                  return {
-                    instruction:
-                      instruction === "__NO_SECTION__" ? null : instruction,
-                    sectionType: "standard",
-                    questions: sectionAnswers.map((q) => ({
-                      questionId: q.questionId,
-                      questionText: q.questionText,
-                      questionType: q.questionType,
-                      selectedAnswer: q.selectedAnswer,
-                      correctAnswer: q.correctAnswer,
-                      explanation: q.explanation,
-                      isCorrect: q.isCorrect,
-                      points: q.points,
-                      earnedPoints: q.earnedPoints,
-                      manualReviewRequired: q.manualReviewRequired,
-                    })),
-                  };
-                }
-              )
-            : null;
+        // --------------------------------------------------
+        // 🎯 HANDLE FLAT QUIZ RESULTS (NO SECTIONS)
+        // --------------------------------------------------
+        if (isFlatQuiz) {
+          console.log("📄 [FLAT QUIZ RESULT] Creating display structure for flat quiz");
+          
+          // For flat quizzes, create a simple section structure for display
+          r.sections = [{
+            sectionId: new mongoose.Types.ObjectId(),
+            sectionType: "standard",
+            sectionTitle: "Quiz Questions",
+            instruction: null,
+            passage: null,
+            questions: r.answers.map((a, index) => ({
+              questionId: a.questionId || `q${index}`,
+              questionText: a.questionText || `Question ${index + 1}`,
+              questionType: a.questionType || "multiple-choice",
+              selectedAnswer: a.selectedAnswer,
+              correctAnswer: a.correctAnswer,
+              explanation: a.explanation || null,
+              options: a.options || [],
+              points: a.points || 1,
+              earnedPoints: a.earnedPoints || 0,
+              isCorrect: a.isCorrect || false,
+              manualReviewRequired: a.manualReviewRequired || false,
+              timeSpent: a.timeSpent || 0,
+            })),
+            totalPoints: r.answers.reduce((sum, a) => sum + (a.points || 1), 0),
+            earnedPoints: r.answers.reduce((sum, a) => sum + (a.earnedPoints || 0), 0),
+          }];
+          
+          console.log("✅ [FLAT QUIZ RESULT] Created display section:", {
+            questionCount: r.sections[0].questions.length,
+            totalPoints: r.sections[0].totalPoints,
+            earnedPoints: r.sections[0].earnedPoints,
+          });
+        }
+        // --------------------------------------------------
+        // 🔴 GROUP BY SECTION (FOR SECTIONED QUIZ RESULTS)
+        // --------------------------------------------------
+        else {
+          console.log("📦 [SECTIONED QUIZ RESULT] Using existing sections");
+          
+          // Ensure sections have proper structure
+          r.sections = (r.sections || []).map((section, index) => ({
+            ...section,
+            sectionId: section.sectionId || new mongoose.Types.ObjectId(),
+            sectionType: section.sectionType || "standard",
+            sectionTitle: section.sectionTitle || `Section ${index + 1}`,
+            instruction: section.instruction || null,
+            passage: section.passage || null,
+            questions: section.questions || [],
+            items: section.items || [],
+            totalPoints: section.totalPoints || 
+              (section.questions || []).reduce((sum, q) => sum + (q.points || 0), 0),
+            earnedPoints: section.earnedPoints || 
+              (section.questions || []).reduce((sum, q) => sum + (q.earnedPoints || 0), 0),
+          }));
+        }
 
         // --------------------------------------------------
         // 🧠 FINAL STATUS (CLOZE SAFE)
@@ -3038,6 +3059,9 @@ const getResultsForStudent = async (req, res) => {
 
         r.status = pendingManual ? "needs-review" : "graded";
         r.autoGraded = !pendingManual;
+        
+        // Add quiz type flag for frontend
+        r.isFlatQuiz = isFlatQuiz;
       }
     }
 
@@ -3078,7 +3102,7 @@ const getResultsForStudent = async (req, res) => {
         QuizResult.find(query)
           .populate({
             path: "quizId",
-            select: "title subject subjectName totalPoints",
+            select: "title subject subjectName totalPoints sections questions", // Added sections and questions
           })
           .sort({ submittedAt: -1 })
           .lean()
@@ -3097,63 +3121,72 @@ const getResultsForStudent = async (req, res) => {
 
         r.answers = Array.isArray(r.answers) ? r.answers : [];
 
-        // --------------------------------------------------
-        // 🔴 GROUP BY SECTION (AUTHORITATIVE)
-        // --------------------------------------------------
-        const sectionsMap = {};
-        r.answers.forEach((a) => {
-          const key = a.sectionInstruction || "__NO_SECTION__";
-          if (!sectionsMap[key]) sectionsMap[key] = [];
-          sectionsMap[key].push(a);
+        // 🔥 CRITICAL FIX: Check if this is a flat quiz result
+        const isFlatQuiz = !r.sections || r.sections.length === 0;
+        const quizHasSections = r.quizId?.sections?.length > 0;
+        const quizHasQuestions = r.quizId?.questions?.length > 0;
+
+        console.log("🔍 [PARENT RESULT] Processing result:", {
+          resultId: r._id,
+          isFlatQuiz,
+          quizHasSections,
+          quizHasQuestions,
+          answersCount: r.answers.length,
+          sectionsCount: r.sections?.length || 0,
+          quizTitle: r.quizId?.title,
         });
 
-        r.sections =
-          Object.keys(sectionsMap).length > 0
-            ? Object.entries(sectionsMap).map(
-                ([instruction, sectionAnswers]) => {
-                  const clozeItems = sectionAnswers.filter(
-  (a) => a.questionType === "cloze"
-);
-
-
-                  if (clozeItems.length > 0) {
-                    return {
-                      instruction:
-                        instruction === "__NO_SECTION__" ? null : instruction,
-                      sectionType: "cloze",
-                      items: clozeItems.map((item) => ({
-                        number: Number(
-                          (item.questionText || "").replace("Cloze ", "")
-                        ),
-                        selectedAnswer: item.selectedAnswer,
-                        correctAnswer: item.correctAnswer,
-                        isCorrect: item.isCorrect,
-                        earnedPoints: item.earnedPoints,
-                        points: item.points,
-                      })),
-                    };
-                  }
-
-                  return {
-                    instruction:
-                      instruction === "__NO_SECTION__" ? null : instruction,
-                    sectionType: "standard",
-                    questions: sectionAnswers.map((q) => ({
-                      questionId: q.questionId,
-                      questionText: q.questionText,
-                      questionType: q.questionType,
-                      selectedAnswer: q.selectedAnswer,
-                      correctAnswer: q.correctAnswer,
-                      explanation: q.explanation,
-                      isCorrect: q.isCorrect,
-                      points: q.points,
-                      earnedPoints: q.earnedPoints,
-                      manualReviewRequired: q.manualReviewRequired,
-                    })),
-                  };
-                }
-              )
-            : null;
+        // --------------------------------------------------
+        // 🎯 HANDLE FLAT QUIZ RESULTS (NO SECTIONS)
+        // --------------------------------------------------
+        if (isFlatQuiz) {
+          console.log("📄 [PARENT FLAT QUIZ] Creating display structure");
+          
+          // For flat quizzes, create a simple section structure for display
+          r.sections = [{
+            sectionId: new mongoose.Types.ObjectId(),
+            sectionType: "standard",
+            sectionTitle: "Quiz Questions",
+            instruction: null,
+            passage: null,
+            questions: r.answers.map((a, index) => ({
+              questionId: a.questionId || `q${index}`,
+              questionText: a.questionText || `Question ${index + 1}`,
+              questionType: a.questionType || "multiple-choice",
+              selectedAnswer: a.selectedAnswer,
+              correctAnswer: a.correctAnswer,
+              explanation: a.explanation || null,
+              options: a.options || [],
+              points: a.points || 1,
+              earnedPoints: a.earnedPoints || 0,
+              isCorrect: a.isCorrect || false,
+              manualReviewRequired: a.manualReviewRequired || false,
+              timeSpent: a.timeSpent || 0,
+            })),
+            totalPoints: r.answers.reduce((sum, a) => sum + (a.points || 1), 0),
+            earnedPoints: r.answers.reduce((sum, a) => sum + (a.earnedPoints || 0), 0),
+          }];
+        }
+        // --------------------------------------------------
+        // 🔴 GROUP BY SECTION (FOR SECTIONED QUIZ RESULTS)
+        // --------------------------------------------------
+        else {
+          // Ensure sections have proper structure
+          r.sections = (r.sections || []).map((section, index) => ({
+            ...section,
+            sectionId: section.sectionId || new mongoose.Types.ObjectId(),
+            sectionType: section.sectionType || "standard",
+            sectionTitle: section.sectionTitle || `Section ${index + 1}`,
+            instruction: section.instruction || null,
+            passage: section.passage || null,
+            questions: section.questions || [],
+            items: section.items || [],
+            totalPoints: section.totalPoints || 
+              (section.questions || []).reduce((sum, q) => sum + (q.points || 0), 0),
+            earnedPoints: section.earnedPoints || 
+              (section.questions || []).reduce((sum, q) => sum + (q.earnedPoints || 0), 0),
+          }));
+        }
 
         const pendingManual = r.answers.some(
           (a) =>
@@ -3165,6 +3198,9 @@ const getResultsForStudent = async (req, res) => {
 
         r.status = pendingManual ? "needs-review" : "graded";
         r.autoGraded = !pendingManual;
+        
+        // Add quiz type flag for frontend
+        r.isFlatQuiz = isFlatQuiz;
       }
     } else {
       return res.status(403).json({
@@ -3244,6 +3280,7 @@ const getQuizResultById = async (req, res) => {
       answersCount: result.answers?.length || 0,
       quizHasSections: result.quizId?.sections?.length || 0,
       quizHasQuestions: result.quizId?.questions?.length || 0,
+      quizTitle: result.quizId?.title,
     });
 
     // --------------------------------------------------
@@ -3251,14 +3288,12 @@ const getQuizResultById = async (req, res) => {
     // --------------------------------------------------
     result.answers = (result.answers || []).map((a, index) => ({
       ...a,
-      earnedPoints:
-        typeof a.earnedPoints === "number" ? a.earnedPoints : 0,
+      earnedPoints: typeof a.earnedPoints === "number" ? a.earnedPoints : 0,
       feedback: typeof a.feedback === "string" ? a.feedback : "",
       manualReviewRequired: !!a.manualReviewRequired,
-      questionType: a.questionType || "unknown",
+      questionType: a.questionType || "multiple-choice",
       points: typeof a.points === "number" ? a.points : 1,
-      isCorrect:
-        typeof a.isCorrect === "boolean" ? a.isCorrect : null,
+      isCorrect: typeof a.isCorrect === "boolean" ? a.isCorrect : false,
       sectionInstruction: a.sectionInstruction || null,
       sectionTitle: a.sectionTitle || null,
       sectionId: a.sectionId || null,
@@ -3267,170 +3302,211 @@ const getQuizResultById = async (req, res) => {
       // Ensure we have question text
       questionText: a.questionText || `Question ${index + 1}`,
       // Include options if available
-      options: a.options || [],
+      options: Array.isArray(a.options) ? a.options : [],
+      // Include correct answer if available
+      correctAnswer: a.correctAnswer !== undefined ? a.correctAnswer : null,
+      explanation: a.explanation || null,
     }));
 
-    // 🔥 CRITICAL FIX: If answers exist but sections don't, create a default section
-    if (result.answers.length > 0 && (!result.sections || result.sections.length === 0)) {
-      console.log("🔄 Creating default section for flat quiz result");
+    // 🔥 CRITICAL FIX: Check if this is a flat quiz (based on quiz structure)
+    const isFlatQuiz = !result.quizId?.sections || result.quizId.sections.length === 0;
+    const quizHasQuestions = result.quizId?.questions && result.quizId.questions.length > 0;
+    
+    console.log("🔍 [QUIZ TYPE DETECTION]:", {
+      isFlatQuiz,
+      quizHasQuestions,
+      quizSectionsCount: result.quizId?.sections?.length || 0,
+      quizQuestionsCount: result.quizId?.questions?.length || 0,
+      resultSectionsCount: result.sections?.length || 0,
+    });
+
+    // 🔥 HANDLE FLAT QUIZ RESULTS - SIMPLIFIED APPROACH
+    if (isFlatQuiz && (!result.sections || result.sections.length === 0)) {
+      console.log("📄 [FLAT QUIZ RESULT] Creating display structure for flat quiz");
       
+      // For flat quizzes, create a clean display structure
       result.sections = [{
         sectionId: new mongoose.Types.ObjectId(),
         sectionType: "standard",
         sectionTitle: "Quiz Questions",
         instruction: null,
         passage: null,
-        questions: result.answers,
-        totalPoints: result.answers.reduce((sum, q) => sum + (q.points || 0), 0),
+        questions: result.answers.map((answer, index) => ({
+          questionId: answer.questionId,
+          questionText: answer.questionText,
+          questionType: answer.questionType,
+          selectedAnswer: answer.selectedAnswer,
+          correctAnswer: answer.correctAnswer,
+          explanation: answer.explanation,
+          options: answer.options,
+          points: answer.points,
+          earnedPoints: answer.earnedPoints,
+          isCorrect: answer.isCorrect,
+          manualReviewRequired: answer.manualReviewRequired,
+          feedback: answer.feedback,
+          timeSpent: answer.timeSpent || 0,
+        })),
+        totalPoints: result.answers.reduce((sum, q) => sum + (q.points || 1), 0),
         earnedPoints: result.answers.reduce((sum, q) => sum + (q.earnedPoints || 0), 0),
       }];
       
-      console.log("✅ Created default section:", {
+      console.log("✅ [FLAT QUIZ] Created display structure:", {
+        sectionsCount: result.sections.length,
         questionsCount: result.sections[0].questions.length,
         totalPoints: result.sections[0].totalPoints,
         earnedPoints: result.sections[0].earnedPoints,
       });
-    }
-
-    // --------------------------------------------------
-    // 🔴 GROUP BY SECTION (AUTHORITATIVE) - only if we don't already have sections
-    // --------------------------------------------------
-    if (!result.sections || result.sections.length === 0) {
-      console.log("📦 Grouping answers into sections...");
-      const sectionsMap = {};
-
-      result.answers.forEach((a) => {
-        // Use section instruction as key, fallback to section title, then default
-        const sectionKey = 
-          a.sectionInstruction || 
-          a.sectionTitle || 
-          "__DEFAULT_SECTION__";
+      
+      // Add flag for frontend
+      result.isFlatQuiz = true;
+    } 
+    // 🔥 HANDLE SECTIONED QUIZ RESULTS
+    else if (result.sections && result.sections.length > 0) {
+      console.log("📦 [SECTIONED QUIZ RESULT] Processing existing sections");
+      
+      // Ensure sections have proper structure
+      result.sections = result.sections.map((section, index) => {
+        // Determine section type
+        const hasClozeItems = section.items && section.items.length > 0;
+        const hasQuestions = section.questions && section.questions.length > 0;
+        const sectionType = hasClozeItems ? "cloze" : (section.sectionType || "standard");
         
-        if (!sectionsMap[sectionKey]) {
-          sectionsMap[sectionKey] = {
-            sectionId: a.sectionId || new mongoose.Types.ObjectId(),
-            sectionType: a.questionType === "cloze" ? "cloze" : "standard",
-            sectionTitle: a.sectionTitle || "Quiz Questions",
-            instruction: a.sectionInstruction || null,
-            passage: a.clozePassage || null,
-            questions: [],
-          };
-        }
-        sectionsMap[sectionKey].questions.push(a);
-      });
-
-      result.sections = Object.values(sectionsMap).map((section) => {
-        // -----------------------------------------
-        // 🟣 DETECT CLOZE VS STANDARD
-        // -----------------------------------------
-        const clozeItems = section.questions.filter(
-          (a) => a.questionType === "cloze"
-        );
-
-        // ==========================
-        // 🟣 CLOZE SECTION
-        // ==========================
-        if (clozeItems.length > 0) {
-          const items = clozeItems.map((item) => ({
-            number: Number(
-              (item.questionText || "").replace("Cloze ", "") || 
-              item.clozeNumber || 
-              0
-            ),
+        const processedSection = {
+          sectionId: section.sectionId || new mongoose.Types.ObjectId(),
+          sectionType: sectionType,
+          sectionTitle: section.sectionTitle || `Section ${index + 1}`,
+          instruction: section.instruction || null,
+          passage: section.passage || null,
+        };
+        
+        // Handle cloze sections
+        if (sectionType === "cloze" && hasClozeItems) {
+          processedSection.items = (section.items || []).map(item => ({
+            number: item.number || 0,
             selectedAnswer: item.selectedAnswer,
             correctAnswer: item.correctAnswer,
-            isCorrect: item.isCorrect,
-            earnedPoints: item.earnedPoints,
-            points: item.points,
+            isCorrect: item.isCorrect || false,
+            earnedPoints: item.earnedPoints || 0,
+            points: item.points || 1,
             options: item.options || [],
             questionId: item.questionId,
-            questionText: item.questionText,
+            questionText: item.questionText || `Cloze ${item.number}`,
           }));
-
-          return {
-            sectionId: section.sectionId,
-            sectionType: "cloze",
-            sectionTitle: section.sectionTitle,
-            instruction: section.instruction,
-            passage: section.passage || clozeItems[0]?.clozePassage || null,
-            items,
-            totalPoints: items.reduce(
-              (s, i) => s + (i.points || 1),
-              0
-            ),
-            earnedPoints: items.reduce(
-              (s, i) => s + (i.earnedPoints || 0),
-              0
-            ),
-          };
-        }
-
-        // ==========================
-        // 🟢 STANDARD SECTION
-        // ==========================
-        return {
-          sectionId: section.sectionId,
-          sectionType: "standard",
-          sectionTitle: section.sectionTitle,
-          instruction: section.instruction,
-          passage: null,
-          questions: section.questions.map((q) => ({
+          
+          processedSection.totalPoints = processedSection.items.reduce(
+            (sum, i) => sum + (i.points || 1), 0
+          );
+          processedSection.earnedPoints = processedSection.items.reduce(
+            (sum, i) => sum + (i.earnedPoints || 0), 0
+          );
+        } 
+        // Handle standard sections
+        else {
+          processedSection.questions = (section.questions || []).map(q => ({
             questionId: q.questionId,
             questionText: q.questionText,
             questionType: q.questionType,
             selectedAnswer: q.selectedAnswer,
             correctAnswer: q.correctAnswer,
             explanation: q.explanation,
-            isCorrect: q.isCorrect,
-            points: q.points,
-            earnedPoints: q.earnedPoints,
-            manualReviewRequired: q.manualReviewRequired,
+            isCorrect: q.isCorrect || false,
+            points: q.points || 1,
+            earnedPoints: q.earnedPoints || 0,
+            manualReviewRequired: q.manualReviewRequired || false,
             options: q.options || [],
-            feedback: q.feedback,
-          })),
-          totalPoints: section.questions.reduce(
-            (s, q) => s + (q.points || 1),
-            0
-          ),
-          earnedPoints: section.questions.reduce(
-            (s, q) => s + (q.earnedPoints || 0),
-            0
-          ),
-        };
+            feedback: q.feedback || "",
+            timeSpent: q.timeSpent || 0,
+          }));
+          
+          processedSection.totalPoints = processedSection.questions.reduce(
+            (sum, q) => sum + (q.points || 1), 0
+          );
+          processedSection.earnedPoints = processedSection.questions.reduce(
+            (sum, q) => sum + (q.earnedPoints || 0), 0
+          );
+        }
+        
+        return processedSection;
       });
-    } else {
-      console.log("✅ Using existing sections structure");
       
-      // Ensure existing sections have proper structure
-      result.sections = result.sections.map((section, index) => ({
-        ...section,
-        sectionId: section.sectionId || new mongoose.Types.ObjectId(),
-        sectionType: section.sectionType || "standard",
-        sectionTitle: section.sectionTitle || `Section ${index + 1}`,
-        instruction: section.instruction || null,
-        passage: section.passage || null,
-        questions: section.questions || section.items || [],
-        items: section.items || [],
-        totalPoints: section.totalPoints || 
-          (section.questions || []).reduce((sum, q) => sum + (q.points || 0), 0),
-        earnedPoints: section.earnedPoints || 
-          (section.questions || []).reduce((sum, q) => sum + (q.earnedPoints || 0), 0),
-      }));
+      result.isFlatQuiz = false;
+    } 
+    // 🔥 FALLBACK: If no sections exist but quiz is sectioned
+    else {
+      console.log("⚠️ [FALLBACK] Creating sections from answers");
+      
+      // Group answers by section
+      const sectionsMap = {};
+      result.answers.forEach((answer) => {
+        const sectionKey = answer.sectionInstruction || answer.sectionTitle || "__DEFAULT__";
+        
+        if (!sectionsMap[sectionKey]) {
+          sectionsMap[sectionKey] = {
+            sectionId: answer.sectionId || new mongoose.Types.ObjectId(),
+            sectionType: answer.questionType === "cloze" ? "cloze" : "standard",
+            sectionTitle: answer.sectionTitle || "Quiz Questions",
+            instruction: answer.sectionInstruction || null,
+            passage: answer.clozePassage || null,
+            questions: [],
+            items: [],
+          };
+        }
+        
+        if (answer.questionType === "cloze") {
+          sectionsMap[sectionKey].items.push({
+            number: answer.clozeNumber || 0,
+            selectedAnswer: answer.selectedAnswer,
+            correctAnswer: answer.correctAnswer,
+            isCorrect: answer.isCorrect,
+            earnedPoints: answer.earnedPoints,
+            points: answer.points,
+            options: answer.options,
+            questionId: answer.questionId,
+            questionText: answer.questionText,
+          });
+        } else {
+          sectionsMap[sectionKey].questions.push({
+            questionId: answer.questionId,
+            questionText: answer.questionText,
+            questionType: answer.questionType,
+            selectedAnswer: answer.selectedAnswer,
+            correctAnswer: answer.correctAnswer,
+            explanation: answer.explanation,
+            isCorrect: answer.isCorrect,
+            points: answer.points,
+            earnedPoints: answer.earnedPoints,
+            manualReviewRequired: answer.manualReviewRequired,
+            options: answer.options,
+            feedback: answer.feedback,
+            timeSpent: answer.timeSpent,
+          });
+        }
+      });
+      
+      // Convert map to array
+      result.sections = Object.values(sectionsMap).map(section => {
+        if (section.sectionType === "cloze") {
+          return {
+            ...section,
+            totalPoints: section.items.reduce((sum, i) => sum + (i.points || 1), 0),
+            earnedPoints: section.items.reduce((sum, i) => sum + (i.earnedPoints || 0), 0),
+          };
+        } else {
+          return {
+            ...section,
+            totalPoints: section.questions.reduce((sum, q) => sum + (q.points || 1), 0),
+            earnedPoints: section.questions.reduce((sum, q) => sum + (q.earnedPoints || 0), 0),
+          };
+        }
+      });
+      
+      result.isFlatQuiz = result.sections.length === 1 && 
+                         result.sections[0].sectionTitle === "Quiz Questions";
     }
 
     // --------------------------------------------------
     // ✅ Recalculate totals (section + cloze safe)
     // --------------------------------------------------
-    const totalEarnedFromAnswers = result.answers.reduce(
-      (sum, a) => sum + (a.earnedPoints || 0),
-      0
-    );
-
-    const totalPointsFromAnswers = result.answers.reduce(
-      (sum, a) => sum + (a.points || 0),
-      0
-    );
-
     const totalEarnedFromSections = result.sections.reduce(
       (sum, s) => sum + (s.earnedPoints || 0),
       0
@@ -3441,26 +3517,25 @@ const getQuizResultById = async (req, res) => {
       0
     );
 
-    // Use the most accurate totals
-    const totalEarned = totalEarnedFromSections > 0 ? totalEarnedFromSections : totalEarnedFromAnswers;
-    const totalPoints = totalPointsFromSections > 0 ? totalPointsFromSections : totalPointsFromAnswers;
+    // Ensure score and totalPoints are accurate
+    result.score = totalEarnedFromSections;
+    result.totalPoints = totalPointsFromSections;
+    result.percentage = totalPointsFromSections > 0 
+      ? Number(((totalEarnedFromSections / totalPointsFromSections) * 100).toFixed(2))
+      : 0;
 
-    result.score = totalEarned;
-    result.totalPoints = totalPoints;
-    result.percentage =
-      totalPoints > 0
-        ? Number(((totalEarned / totalPoints) * 100).toFixed(2))
-        : 0;
-
-    console.log("📈 [RESULT CALCULATIONS] Final totals:", {
-      totalEarned,
-      totalPoints,
+    console.log("📈 [FINAL RESULT STRUCTURE]:", {
+      resultId: result._id,
+      isFlatQuiz: result.isFlatQuiz,
+      score: result.score,
+      totalPoints: result.totalPoints,
       percentage: result.percentage,
       sectionsCount: result.sections?.length || 0,
-      answersCount: result.answers?.length || 0,
-      sectionsStructure: result.sections?.map(s => ({
+      sections: result.sections?.map(s => ({
         type: s.sectionType,
-        questionsCount: s.questions?.length || s.items?.length || 0,
+        title: s.sectionTitle,
+        questionsCount: s.questions?.length || 0,
+        itemsCount: s.items?.length || 0,
         totalPoints: s.totalPoints,
         earnedPoints: s.earnedPoints,
       })),
