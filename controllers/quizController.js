@@ -824,21 +824,43 @@ const publishQuiz = async (req, res) => {
             school,
             status: "active",
           })
-            .select("user")
+            .select("user _id")
             .lean();
 
-          const userIds = students.map((s) => s.user).filter(Boolean);
+          const validStudents = students.filter((s) => s.user);
+          const userIds = validStudents.map((s) => s.user);
 
           console.log(
             `🔔 Sending publish notification to ${userIds.length} students`
           );
 
+          // 1. Send Push
           await sendPush(
             userIds,
             "New Quiz Published 📝",
             `"${quiz.title}" is now available.`,
             { type: "quiz", quizId: quiz._id, screen: "QuizDetails" }
           );
+
+          // 2. Create In-App Notifications
+          if (validStudents.length > 0) {
+            const notifications = validStudents.map((student) => ({
+              school,
+              title: "New Quiz Published 📝",
+              message: `"${quiz.title}" is now available for you to take.`,
+              type: "online-quiz",
+              audience: "student",
+              recipientUsers: [student.user],
+              studentId: student._id,
+              quizId: quiz._id,
+              relatedResource: quiz._id,
+              resourceModel: "QuizSession",
+              isRead: false,
+            }));
+
+            await Notification.insertMany(notifications);
+            console.log(`📝 Created ${notifications.length} in-app notifications`);
+          }
         } catch (error) {
           console.error("❌ Failed to send publish notifications:", error);
         }
@@ -1233,7 +1255,7 @@ const getQuizzesForClass = async (req, res) => {
           executeWithTimeout(
             Notification.find({
               school,
-              type: "quiz",
+              type: "online-quiz",
               quizId: { $in: quizIds },
               $or: [
                 { studentId: studentObjectId },

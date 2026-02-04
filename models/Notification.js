@@ -121,7 +121,23 @@ const notificationSchema = new mongoose.Schema(
         'FeeRecord',
         'User',
         'AgendaEvent',
+        'QuizSession',  // ✅ ADDED
       ],
+    },
+
+    // ------------------------------------------------------
+    // QUIZ SPECIFIC FIELDS (Support existing controller queries)
+    // ------------------------------------------------------
+    quizId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'QuizSession',
+      index: true,
+    },
+
+    studentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Student',
+      index: true,
     },
 
     // ------------------------------------------------------
@@ -134,6 +150,12 @@ const notificationSchema = new mongoose.Schema(
         index: true,
       },
     ],
+
+    isRead: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
   },
   { timestamps: true }
 );
