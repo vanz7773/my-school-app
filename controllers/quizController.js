@@ -79,22 +79,22 @@ const createSeededRandom = (seed) => {
 
 const seededShuffle = (array, seedString) => {
   if (!array || !Array.isArray(array)) return array;
-  
+
   // Convert string seed to numeric seed
   let numericSeed = 0;
   for (let i = 0; i < seedString.length; i++) {
     numericSeed = ((numericSeed << 5) - numericSeed) + seedString.charCodeAt(i);
     numericSeed |= 0; // Convert to 32-bit integer
   }
-  
+
   const random = createSeededRandom(numericSeed);
   const shuffled = [...array];
-  
+
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(random() * (i + 1));
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
-  
+
   return shuffled;
 };
 
@@ -224,7 +224,7 @@ function resolveQuizClassNames(cls) {
 
 // 🎯 Optimized Database Operations
 const executeWithTimeout = async (operation, timeout = MAX_QUERY_TIMEOUT) => {
-  const timeoutPromise = new Promise((_, reject) => 
+  const timeoutPromise = new Promise((_, reject) =>
     setTimeout(() => reject(new Error('Database operation timeout')), timeout)
   );
   return Promise.race([operation, timeoutPromise]);
@@ -244,7 +244,7 @@ const batchProcess = async (items, batchSize, processor) => {
 const getCachedTeacherSubjects = async (teacherUserId, school) => {
   const cacheKey = CACHE_KEYS.TEACHER_SUBJECTS(teacherUserId.toString());
   const cached = cache.get(cacheKey);
-  
+
   if (cached) {
     return cached;
   }
@@ -355,7 +355,7 @@ const resolveSectionType = (section) => {
     hasQuestions: Array.isArray(section.questions),
     sectionKeys: Object.keys(section)
   });
-  
+
   return "unknown";
 };
 
@@ -816,6 +816,35 @@ const publishQuiz = async (req, res) => {
     await session.commitTransaction();
     console.log("✅ Publish transaction committed");
 
+    if (publish) {
+      processInBackground(async () => {
+        try {
+          const students = await Student.find({
+            class: quiz.class,
+            school,
+            status: "active",
+          })
+            .select("user")
+            .lean();
+
+          const userIds = students.map((s) => s.user).filter(Boolean);
+
+          console.log(
+            `🔔 Sending publish notification to ${userIds.length} students`
+          );
+
+          await sendPush(
+            userIds,
+            "New Quiz Published 📝",
+            `"${quiz.title}" is now available.`,
+            { type: "quiz", quizId: quiz._id, screen: "QuizDetails" }
+          );
+        } catch (error) {
+          console.error("❌ Failed to send publish notifications:", error);
+        }
+      });
+    }
+
     res.json({
       message: `Quiz ${publish ? "published" : "unpublished"} successfully`,
       quiz,
@@ -941,9 +970,9 @@ const getQuiz = async (req, res) => {
                 if (Array.isArray(q.options)) {
                   question.options = quiz.shuffleOptions
                     ? seededShuffle(
-                        [...q.options],
-                        seed + `-options-${q._id || index}`
-                      )
+                      [...q.options],
+                      seed + `-options-${q._id || index}`
+                    )
                     : [...q.options];
                 }
 
@@ -968,9 +997,9 @@ const getQuiz = async (req, res) => {
                 number: item.number,
                 options: quiz.shuffleOptions
                   ? seededShuffle(
-                      [...item.options],
-                      seed + `-cloze-${item.number}`
-                    )
+                    [...item.options],
+                    seed + `-cloze-${item.number}`
+                  )
                   : [...item.options],
                 points: item.points || 1,
               })),
@@ -990,12 +1019,12 @@ const getQuiz = async (req, res) => {
           shuffleOptions: quiz.shuffleOptions,
           totalPoints: quiz.sections.reduce((sum, s) => {
             const type = resolveSectionType(s);
-           if (type === "cloze") {
-  return sum + s.items.reduce(
-    (itemSum, item) => itemSum + (item.points || 1),
-    0
-  );
-}
+            if (type === "cloze") {
+              return sum + s.items.reduce(
+                (itemSum, item) => itemSum + (item.points || 1),
+                0
+              );
+            }
 
             return (
               sum +
@@ -1038,9 +1067,9 @@ const getQuiz = async (req, res) => {
           if (Array.isArray(q.options)) {
             question.options = quiz.shuffleOptions
               ? seededShuffle(
-                  [...q.options],
-                  seed + "-options-" + (q._id || index)
-                )
+                [...q.options],
+                seed + "-options-" + (q._id || index)
+              )
               : [...q.options];
           }
 
@@ -1135,56 +1164,56 @@ const getQuizzesForClass = async (req, res) => {
     // --------------------------------------------------
     // 🔴 SECTION-AWARE TOTAL POINTS CALCULATOR (FINAL)
     // --------------------------------------------------
-   const computeTotalPoints = (quiz) => {
-  // 🔹 Legacy flat quiz
-  if (Array.isArray(quiz.questions) && quiz.questions.length > 0) {
-    return quiz.questions.reduce(
-      (sum, q) => sum + (q.points || 1),
-      0
-    );
-  }
-
-  // 🔹 Section-based quiz (authoritative)
-  if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
-    return quiz.sections.reduce((total, section) => {
-      try {
-        const sectionType = resolveSectionType(section);
-
-        // 🟣 CLOZE SECTION
-        if (sectionType === "cloze" && Array.isArray(section.items)) {
-          return (
-            total +
-            section.items.reduce(
-              (s, item) => s + (item.points || 1),
-              0
-            )
-          );
-        }
-
-        // 🟢 STANDARD SECTION
-        if (
-          sectionType === "standard" &&
-          Array.isArray(section.questions)
-        ) {
-          return (
-            total +
-            section.questions.reduce(
-              (s, q) => s + (q.points || 1),
-              0
-            )
-          );
-        }
-
-        return total;
-      } catch (error) {
-        console.warn(`⚠️ Error processing section, skipping: ${error.message}`);
-        return total; // Skip this section
+    const computeTotalPoints = (quiz) => {
+      // 🔹 Legacy flat quiz
+      if (Array.isArray(quiz.questions) && quiz.questions.length > 0) {
+        return quiz.questions.reduce(
+          (sum, q) => sum + (q.points || 1),
+          0
+        );
       }
-    }, 0);
-  }
 
-  return 0;
-};
+      // 🔹 Section-based quiz (authoritative)
+      if (Array.isArray(quiz.sections) && quiz.sections.length > 0) {
+        return quiz.sections.reduce((total, section) => {
+          try {
+            const sectionType = resolveSectionType(section);
+
+            // 🟣 CLOZE SECTION
+            if (sectionType === "cloze" && Array.isArray(section.items)) {
+              return (
+                total +
+                section.items.reduce(
+                  (s, item) => s + (item.points || 1),
+                  0
+                )
+              );
+            }
+
+            // 🟢 STANDARD SECTION
+            if (
+              sectionType === "standard" &&
+              Array.isArray(section.questions)
+            ) {
+              return (
+                total +
+                section.questions.reduce(
+                  (s, q) => s + (q.points || 1),
+                  0
+                )
+              );
+            }
+
+            return total;
+          } catch (error) {
+            console.warn(`⚠️ Error processing section, skipping: ${error.message}`);
+            return total; // Skip this section
+          }
+        }, 0);
+      }
+
+      return 0;
+    };
 
     const quizIds = quizzes.map((q) => toObjectId(q._id));
 
@@ -1277,8 +1306,8 @@ const getQuizzesForClass = async (req, res) => {
           status: completed
             ? "Completed"
             : inProgress
-            ? "In Progress"
-            : "Available",
+              ? "In Progress"
+              : "Available",
           notification: notifMap[id] || null,
         };
       });
@@ -1668,26 +1697,26 @@ function obfuscateText(text) {
 const validateQuizSession = async (req, res, next) => {
   try {
     const { sessionId } = req.body;
-    
+
     if (!sessionId) {
       return res.status(400).json({ message: 'Session ID is required' });
     }
-    
+
     const session = await executeWithTimeout(
-      QuizSession.findOne({ 
-        sessionId, 
-        expiresAt: { $gt: new Date() } 
+      QuizSession.findOne({
+        sessionId,
+        expiresAt: { $gt: new Date() }
       }).maxTimeMS(5000)
     );
-    
+
     if (!session) {
       return res.status(403).json({ message: 'Invalid or expired quiz session' });
     }
-    
+
     if (req.user.role === 'student' && session.studentId.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'This session does not belong to you' });
     }
-    
+
     req.quizSession = session;
     next();
   } catch (error) {
@@ -1735,8 +1764,8 @@ const getQuizResults = async (req, res) => {
 
       answers.forEach((a) => {
         const key =
-  a.sectionId ||
-  `${a.sectionTitle || "SECTION"}-${a.sectionInstruction || ""}`;
+          a.sectionId ||
+          `${a.sectionTitle || "SECTION"}-${a.sectionInstruction || ""}`;
 
         if (!sectionsMap[key]) {
           sectionsMap[key] = {
@@ -1884,7 +1913,7 @@ const getAverageScoresPerSubject = async (req, res) => {
           $addFields: {
             subjectNormalized: {
               $cond: [
-                { 
+                {
                   $and: [
                     { $eq: [{ $type: '$quiz.subject' }, 'string'] },
                     { $eq: [{ $strLenCP: '$quiz.subject' }, 24] }
@@ -1979,18 +2008,18 @@ const getStudentProgress = async (req, res) => {
     }
 
     const results = await executeWithTimeout(
-      QuizResult.find({ 
-        studentId: toObjectId(studentId), 
-        school 
+      QuizResult.find({
+        studentId: toObjectId(studentId),
+        school
       })
-      .populate({
-        path: 'quizId',
-        select: 'title subject subjectName',
-        populate: { path: 'subject', select: 'name shortName' }
-      })
-      .sort({ submittedAt: 1 })
-      .lean()
-      .maxTimeMS(8000)
+        .populate({
+          path: 'quizId',
+          select: 'title subject subjectName',
+          populate: { path: 'subject', select: 'name shortName' }
+        })
+        .sort({ submittedAt: 1 })
+        .lean()
+        .maxTimeMS(8000)
     );
 
     const progress = results.map(r => {
@@ -2306,11 +2335,11 @@ const deleteQuiz = async (req, res) => {
       return res.status(400).json({ message: 'Invalid quiz ID format' });
     }
 
-    const quiz = await QuizSession.findOne({ 
-      _id: toObjectId(quizId), 
-      school 
+    const quiz = await QuizSession.findOne({
+      _id: toObjectId(quizId),
+      school
     }).session(session);
-    
+
     if (!quiz) {
       await session.abortTransaction();
       return res.status(404).json({ message: 'Quiz not found in your school' });
@@ -2412,7 +2441,7 @@ const submitQuiz = async (req, res) => {
     // ==================================================
     const isSectionedQuiz = Array.isArray(quiz.sections) && quiz.sections.length > 0;
     const isFlatQuiz = Array.isArray(quiz.questions) && quiz.questions.length > 0;
-    
+
     console.log("🔍 [QUIZ TYPE DETECTION]:", {
       isSectionedQuiz,
       isFlatQuiz,
@@ -2488,10 +2517,10 @@ const submitQuiz = async (req, res) => {
     // Helper function to find answer by multiple possible keys
     const findAnswer = (question, sectionIndex = null) => {
       if (!answers || typeof answers !== 'object') return null;
-      
+
       const questionId = question._id?.toString();
       const questionNumber = question.number;
-      
+
       // Try multiple possible keys in order of likelihood
       const possibleKeys = [
         questionId,                     // Direct ID match
@@ -2501,20 +2530,20 @@ const submitQuiz = async (req, res) => {
         `q${questionId}`,               // With q prefix
         `question-${questionId}`,       // With question- prefix
       ];
-      
+
       // Also try matching by question text (partial)
       if (question.questionText) {
         const shortText = question.questionText.substring(0, 30);
         possibleKeys.push(shortText);
       }
-      
+
       for (const key of possibleKeys) {
         if (key && answers[key] !== undefined && answers[key] !== null) {
           console.log(`🔍 [FIND ANSWER] Found answer for ${questionId} using key: ${key}`);
           return answers[key];
         }
       }
-      
+
       return null;
     };
 
@@ -2523,13 +2552,13 @@ const submitQuiz = async (req, res) => {
     // ==================================================
     if (!isSectionedQuiz && isFlatQuiz) {
       console.log("📄 [FLAT QUIZ] Processing flat quiz structure - NO SECTIONS");
-      
+
       const flatQuestions = quiz.questions || [];
-      
+
       for (const q of flatQuestions) {
         // Use helper function to find answer
         const studentAnswer = findAnswer(q);
-        
+
         console.log(`📝 [FLAT QUIZ] Processing question ${q._id}:`, {
           questionText: q.questionText?.substring(0, 50),
           studentAnswer,
@@ -2541,7 +2570,7 @@ const submitQuiz = async (req, res) => {
           questionId: q._id,
           questionText: q.questionText,
           questionType: q.type || "multiple-choice",
-          
+
           // NO SECTION INFO for flat quizzes
           // sectionId: null,
           // sectionTitle: null,
@@ -2550,7 +2579,7 @@ const submitQuiz = async (req, res) => {
           selectedAnswer: studentAnswer,
           correctAnswer: q.correctAnswer,
           explanation: q.explanation || null,
-          
+
           // Include options for multiple-choice questions
           options: q.options || [],
 
@@ -2567,18 +2596,18 @@ const submitQuiz = async (req, res) => {
           totalAutoGradedPoints += item.points;
           if (studentAnswer !== null && q.correctAnswer !== undefined) {
             let correct = false;
-            
+
             if (questionType === "true-false") {
-              correct = String(studentAnswer).toLowerCase() === 
-                       String(q.correctAnswer).toLowerCase();
+              correct = String(studentAnswer).toLowerCase() ===
+                String(q.correctAnswer).toLowerCase();
             } else {
               correct = studentAnswer === q.correctAnswer;
             }
-            
+
             item.isCorrect = correct;
             item.earnedPoints = correct ? item.points : 0;
             if (correct) score += item.points;
-            
+
             console.log(`✅ [GRADED] Question ${q._id}:`, {
               correct,
               earnedPoints: item.earnedPoints,
@@ -2594,7 +2623,7 @@ const submitQuiz = async (req, res) => {
 
         results.push(item);
       }
-      
+
       console.log("✅ [FLAT QUIZ] Processed all questions:", {
         resultsCount: results.length,
         score,
@@ -2606,18 +2635,18 @@ const submitQuiz = async (req, res) => {
     // ==================================================
     else if (isSectionedQuiz) {
       console.log("📦 [SECTIONED QUIZ] Processing sectioned quiz");
-      
+
       // Build result sections
       for (const section of quiz.sections) {
         const type = resolveSectionType(section);
-        
+
         // ✅ AUTHORITATIVE CLOZE PASSAGE RESOLUTION
         const resolvedPassage =
           type === "cloze"
             ? section.passage ??
-              section.clozePassage ??
-              section.items?.[0]?.clozePassage ??
-              null
+            section.clozePassage ??
+            section.items?.[0]?.clozePassage ??
+            null
             : null;
 
         resultSections.push({
@@ -2679,7 +2708,7 @@ const submitQuiz = async (req, res) => {
                 const correct =
                   q.type === "true-false"
                     ? String(studentAnswer).toLowerCase() ===
-                      String(q.correctAnswer).toLowerCase()
+                    String(q.correctAnswer).toLowerCase()
                     : studentAnswer === q.correctAnswer;
 
                 item.isCorrect = correct;
@@ -2696,24 +2725,24 @@ const submitQuiz = async (req, res) => {
         // 🟣 CLOZE SECTION
         if (sectionType === "cloze") {
           console.log(`🟣 [CLOZE] Processing cloze section ${sectionIndex} with ${section.items?.length || 0} items`);
-          
+
           for (const c of section.items) {
             // Try multiple possible keys for cloze items
             let studentValue = null;
-            
+
             // Try by cloze number first (most common)
             if (c.number !== undefined) {
-              studentValue = answers[c.number] ?? 
-                           answers[`cloze-${c.number}`] ?? 
-                           answers[`cloze-${sectionIndex}-${c.number}`] ??
-                           null;
+              studentValue = answers[c.number] ??
+                answers[`cloze-${c.number}`] ??
+                answers[`cloze-${sectionIndex}-${c.number}`] ??
+                null;
             }
-            
+
             // If not found, try other patterns
             if (studentValue === null) {
               studentValue = findAnswer(c, sectionIndex);
             }
-            
+
             const isCorrect = studentValue === c.correctAnswer;
             const points = c.points || 1;
 
@@ -2768,21 +2797,21 @@ const submitQuiz = async (req, res) => {
     // ==================================================
     if (results.length === 0 && Object.keys(answers || {}).length > 0) {
       console.log("⚠️ [FIX] Results array empty but answers exist, creating results...");
-      
+
       // Get quiz questions from either flat or sectioned structure
       let allQuestions = [];
       if (isFlatQuiz) {
         allQuestions = quiz.questions || [];
       } else if (isSectionedQuiz) {
-        allQuestions = quiz.sections.flatMap(section => 
+        allQuestions = quiz.sections.flatMap(section =>
           (section.questions || []).concat(section.items || [])
         );
       }
-      
+
       allQuestions.forEach((q, index) => {
         // Try to find answer using the helper function
         const studentAnswer = findAnswer(q);
-        
+
         const resultItem = {
           questionId: q._id || `q${index}`,
           questionText: q.questionText || `Question ${index + 1}`,
@@ -2797,10 +2826,10 @@ const submitQuiz = async (req, res) => {
           manualReviewRequired: false,
           timeSpent: 0,
         };
-        
+
         results.push(resultItem);
       });
-      
+
       console.log("✅ [FIX] Created results from answers:", {
         newResultsCount: results.length,
       });
@@ -2840,7 +2869,7 @@ const submitQuiz = async (req, res) => {
       sectionsToSave = resultSections.map((s) => {
         // Ensure sections have proper structure
         const questions = Array.isArray(s.questions) ? s.questions : [];
-        
+
         return {
           sectionId: s.sectionId || new mongoose.Types.ObjectId(),
           sectionType: s.sectionType || "standard",
@@ -2916,9 +2945,9 @@ const submitQuiz = async (req, res) => {
         autoGraded: !requiresManualReview,
         autoSubmit: !!autoSubmit,
       },
-      { 
-        upsert: true, 
-        new: true, 
+      {
+        upsert: true,
+        new: true,
         setDefaultsOnInsert: true,
       }
     );
@@ -3041,7 +3070,7 @@ const getResultsForStudent = async (req, res) => {
         // --------------------------------------------------
         if (isFlatQuiz) {
           console.log("📄 [FLAT QUIZ RESULT] Creating display structure for flat quiz");
-          
+
           // For flat quizzes, create a simple section structure for display
           r.sections = [{
             sectionId: new mongoose.Types.ObjectId(),
@@ -3066,7 +3095,7 @@ const getResultsForStudent = async (req, res) => {
             totalPoints: r.answers.reduce((sum, a) => sum + (a.points || 1), 0),
             earnedPoints: r.answers.reduce((sum, a) => sum + (a.earnedPoints || 0), 0),
           }];
-          
+
           console.log("✅ [FLAT QUIZ RESULT] Created display section:", {
             questionCount: r.sections[0].questions.length,
             totalPoints: r.sections[0].totalPoints,
@@ -3078,7 +3107,7 @@ const getResultsForStudent = async (req, res) => {
         // --------------------------------------------------
         else {
           console.log("📦 [SECTIONED QUIZ RESULT] Using existing sections");
-          
+
           // Ensure sections have proper structure
           r.sections = (r.sections || []).map((section, index) => ({
             ...section,
@@ -3089,9 +3118,9 @@ const getResultsForStudent = async (req, res) => {
             passage: section.passage || null,
             questions: section.questions || [],
             items: section.items || [],
-            totalPoints: section.totalPoints || 
+            totalPoints: section.totalPoints ||
               (section.questions || []).reduce((sum, q) => sum + (q.points || 0), 0),
-            earnedPoints: section.earnedPoints || 
+            earnedPoints: section.earnedPoints ||
               (section.questions || []).reduce((sum, q) => sum + (q.earnedPoints || 0), 0),
           }));
         }
@@ -3109,7 +3138,7 @@ const getResultsForStudent = async (req, res) => {
 
         r.status = pendingManual ? "needs-review" : "graded";
         r.autoGraded = !pendingManual;
-        
+
         // Add quiz type flag for frontend
         r.isFlatQuiz = isFlatQuiz;
       }
@@ -3191,7 +3220,7 @@ const getResultsForStudent = async (req, res) => {
         // --------------------------------------------------
         if (isFlatQuiz) {
           console.log("📄 [PARENT FLAT QUIZ] Creating display structure");
-          
+
           // For flat quizzes, create a simple section structure for display
           r.sections = [{
             sectionId: new mongoose.Types.ObjectId(),
@@ -3231,9 +3260,9 @@ const getResultsForStudent = async (req, res) => {
             passage: section.passage || null,
             questions: section.questions || [],
             items: section.items || [],
-            totalPoints: section.totalPoints || 
+            totalPoints: section.totalPoints ||
               (section.questions || []).reduce((sum, q) => sum + (q.points || 0), 0),
-            earnedPoints: section.earnedPoints || 
+            earnedPoints: section.earnedPoints ||
               (section.questions || []).reduce((sum, q) => sum + (q.earnedPoints || 0), 0),
           }));
         }
@@ -3248,7 +3277,7 @@ const getResultsForStudent = async (req, res) => {
 
         r.status = pendingManual ? "needs-review" : "graded";
         r.autoGraded = !pendingManual;
-        
+
         // Add quiz type flag for frontend
         r.isFlatQuiz = isFlatQuiz;
       }
@@ -3361,7 +3390,7 @@ const getQuizResultById = async (req, res) => {
     // 🔥 CRITICAL FIX: Check if this is a flat quiz (based on quiz structure)
     const isFlatQuiz = !result.quizId?.sections || result.quizId.sections.length === 0;
     const quizHasQuestions = result.quizId?.questions && result.quizId.questions.length > 0;
-    
+
     console.log("🔍 [QUIZ TYPE DETECTION]:", {
       isFlatQuiz,
       quizHasQuestions,
@@ -3373,7 +3402,7 @@ const getQuizResultById = async (req, res) => {
     // 🔥 HANDLE FLAT QUIZ RESULTS - SIMPLIFIED APPROACH
     if (isFlatQuiz && (!result.sections || result.sections.length === 0)) {
       console.log("📄 [FLAT QUIZ RESULT] Creating display structure for flat quiz");
-      
+
       // For flat quizzes, create a clean display structure
       result.sections = [{
         sectionId: new mongoose.Types.ObjectId(),
@@ -3399,28 +3428,28 @@ const getQuizResultById = async (req, res) => {
         totalPoints: result.answers.reduce((sum, q) => sum + (q.points || 1), 0),
         earnedPoints: result.answers.reduce((sum, q) => sum + (q.earnedPoints || 0), 0),
       }];
-      
+
       console.log("✅ [FLAT QUIZ] Created display structure:", {
         sectionsCount: result.sections.length,
         questionsCount: result.sections[0].questions.length,
         totalPoints: result.sections[0].totalPoints,
         earnedPoints: result.sections[0].earnedPoints,
       });
-      
+
       // Add flag for frontend
       result.isFlatQuiz = true;
-    } 
+    }
     // 🔥 HANDLE SECTIONED QUIZ RESULTS
     else if (result.sections && result.sections.length > 0) {
       console.log("📦 [SECTIONED QUIZ RESULT] Processing existing sections");
-      
+
       // Ensure sections have proper structure
       result.sections = result.sections.map((section, index) => {
         // Determine section type
         const hasClozeItems = section.items && section.items.length > 0;
         const hasQuestions = section.questions && section.questions.length > 0;
         const sectionType = hasClozeItems ? "cloze" : (section.sectionType || "standard");
-        
+
         const processedSection = {
           sectionId: section.sectionId || new mongoose.Types.ObjectId(),
           sectionType: sectionType,
@@ -3428,7 +3457,7 @@ const getQuizResultById = async (req, res) => {
           instruction: section.instruction || null,
           passage: section.passage || null,
         };
-        
+
         // Handle cloze sections
         if (sectionType === "cloze" && hasClozeItems) {
           processedSection.items = (section.items || []).map(item => ({
@@ -3442,14 +3471,14 @@ const getQuizResultById = async (req, res) => {
             questionId: item.questionId,
             questionText: item.questionText || `Cloze ${item.number}`,
           }));
-          
+
           processedSection.totalPoints = processedSection.items.reduce(
             (sum, i) => sum + (i.points || 1), 0
           );
           processedSection.earnedPoints = processedSection.items.reduce(
             (sum, i) => sum + (i.earnedPoints || 0), 0
           );
-        } 
+        }
         // Handle standard sections
         else {
           processedSection.questions = (section.questions || []).map(q => ({
@@ -3467,7 +3496,7 @@ const getQuizResultById = async (req, res) => {
             feedback: q.feedback || "",
             timeSpent: q.timeSpent || 0,
           }));
-          
+
           processedSection.totalPoints = processedSection.questions.reduce(
             (sum, q) => sum + (q.points || 1), 0
           );
@@ -3475,21 +3504,21 @@ const getQuizResultById = async (req, res) => {
             (sum, q) => sum + (q.earnedPoints || 0), 0
           );
         }
-        
+
         return processedSection;
       });
-      
+
       result.isFlatQuiz = false;
-    } 
+    }
     // 🔥 FALLBACK: If no sections exist but quiz is sectioned
     else {
       console.log("⚠️ [FALLBACK] Creating sections from answers");
-      
+
       // Group answers by section
       const sectionsMap = {};
       result.answers.forEach((answer) => {
         const sectionKey = answer.sectionInstruction || answer.sectionTitle || "__DEFAULT__";
-        
+
         if (!sectionsMap[sectionKey]) {
           sectionsMap[sectionKey] = {
             sectionId: answer.sectionId || new mongoose.Types.ObjectId(),
@@ -3501,7 +3530,7 @@ const getQuizResultById = async (req, res) => {
             items: [],
           };
         }
-        
+
         if (answer.questionType === "cloze") {
           sectionsMap[sectionKey].items.push({
             number: answer.clozeNumber || 0,
@@ -3532,7 +3561,7 @@ const getQuizResultById = async (req, res) => {
           });
         }
       });
-      
+
       // Convert map to array
       result.sections = Object.values(sectionsMap).map(section => {
         if (section.sectionType === "cloze") {
@@ -3549,9 +3578,9 @@ const getQuizResultById = async (req, res) => {
           };
         }
       });
-      
-      result.isFlatQuiz = result.sections.length === 1 && 
-                         result.sections[0].sectionTitle === "Quiz Questions";
+
+      result.isFlatQuiz = result.sections.length === 1 &&
+        result.sections[0].sectionTitle === "Quiz Questions";
     }
 
     // --------------------------------------------------
@@ -3570,7 +3599,7 @@ const getQuizResultById = async (req, res) => {
     // Ensure score and totalPoints are accurate
     result.score = totalEarnedFromSections;
     result.totalPoints = totalPointsFromSections;
-    result.percentage = totalPointsFromSections > 0 
+    result.percentage = totalPointsFromSections > 0
       ? Number(((totalEarnedFromSections / totalPointsFromSections) * 100).toFixed(2))
       : 0;
 
@@ -3609,7 +3638,7 @@ const getQuizResultById = async (req, res) => {
 // --------------------------- 
 // 16c. Get All Quiz Results for Teacher (Highly Optimized)
 // ---------------------------
-const getAllClassQuizResultsForTeacher = async (req, res) => { 
+const getAllClassQuizResultsForTeacher = async (req, res) => {
   try {
     const teacherUserId = req.user._id;
     const school = toObjectId(req.user.school);
@@ -3763,71 +3792,71 @@ const getAllClassQuizResultsForTeacher = async (req, res) => {
       const sections =
         Object.keys(sectionsMap).length > 0
           ? Object.entries(sectionsMap).map(([instruction, sectionAnswers]) => {
-              const clozeItems = sectionAnswers.filter(
-  (a) => a.questionType === "cloze"
-);
+            const clozeItems = sectionAnswers.filter(
+              (a) => a.questionType === "cloze"
+            );
 
 
-              // ==========================
-              // 🟣 CLOZE SECTION
-              // ==========================
-              if (clozeItems.length > 0) {
-                const items = clozeItems.map(item => ({
-                  number: Number(
-                    (item.questionText || "").replace("Cloze ", "")
-                  ),
-                  selectedAnswer: item.selectedAnswer,
-                  correctAnswer: item.correctAnswer,
-                  isCorrect: item.isCorrect,
-                  earnedPoints: item.earnedPoints,
-                  points: item.points,
-                }));
+            // ==========================
+            // 🟣 CLOZE SECTION
+            // ==========================
+            if (clozeItems.length > 0) {
+              const items = clozeItems.map(item => ({
+                number: Number(
+                  (item.questionText || "").replace("Cloze ", "")
+                ),
+                selectedAnswer: item.selectedAnswer,
+                correctAnswer: item.correctAnswer,
+                isCorrect: item.isCorrect,
+                earnedPoints: item.earnedPoints,
+                points: item.points,
+              }));
 
-                return {
-                  instruction:
-                    instruction === "__NO_SECTION__" ? null : instruction,
-                  sectionType: "cloze",
-                  items,
-                  totalPoints: items.reduce(
-                    (s, i) => s + (i.points || 1),
-                    0
-                  ),
-                  earnedPoints: items.reduce(
-                    (s, i) => s + (i.earnedPoints || 0),
-                    0
-                  ),
-                };
-              }
-
-              // ==========================
-              // 🟢 STANDARD SECTION
-              // ==========================
               return {
                 instruction:
                   instruction === "__NO_SECTION__" ? null : instruction,
-                sectionType: "standard",
-                questions: sectionAnswers.map(q => ({
-                  questionId: q.questionId,
-                  questionText: q.questionText,
-                  questionType: q.questionType,
-                  selectedAnswer: q.selectedAnswer,
-                  correctAnswer: q.correctAnswer,
-                  explanation: q.explanation,
-                  isCorrect: q.isCorrect,
-                  points: q.points,
-                  earnedPoints: q.earnedPoints,
-                  manualReviewRequired: q.manualReviewRequired,
-                })),
-                totalPoints: sectionAnswers.reduce(
-                  (s, q) => s + (q.points || 1),
+                sectionType: "cloze",
+                items,
+                totalPoints: items.reduce(
+                  (s, i) => s + (i.points || 1),
                   0
                 ),
-                earnedPoints: sectionAnswers.reduce(
-                  (s, q) => s + (q.earnedPoints || 0),
+                earnedPoints: items.reduce(
+                  (s, i) => s + (i.earnedPoints || 0),
                   0
                 ),
               };
-            })
+            }
+
+            // ==========================
+            // 🟢 STANDARD SECTION
+            // ==========================
+            return {
+              instruction:
+                instruction === "__NO_SECTION__" ? null : instruction,
+              sectionType: "standard",
+              questions: sectionAnswers.map(q => ({
+                questionId: q.questionId,
+                questionText: q.questionText,
+                questionType: q.questionType,
+                selectedAnswer: q.selectedAnswer,
+                correctAnswer: q.correctAnswer,
+                explanation: q.explanation,
+                isCorrect: q.isCorrect,
+                points: q.points,
+                earnedPoints: q.earnedPoints,
+                manualReviewRequired: q.manualReviewRequired,
+              })),
+              totalPoints: sectionAnswers.reduce(
+                (s, q) => s + (q.points || 1),
+                0
+              ),
+              earnedPoints: sectionAnswers.reduce(
+                (s, q) => s + (q.earnedPoints || 0),
+                0
+              ),
+            };
+          })
           : null;
 
       groupedByClass[classId].quizzes[quizIdStr].results.push({
