@@ -1484,7 +1484,7 @@ module.exports = {
       if (schoolInfo.logo) {
         try {
           doc.image(schoolInfo.logo, 250, 30, {
-            fit: [35, 35],
+            fit: [40, 40],
             align: 'center',
             valign: 'center',
           });
@@ -1629,7 +1629,7 @@ module.exports = {
       if (schoolInfo.logo) {
         try {
           doc.image(schoolInfo.logo, 250, 30, {
-            fit: [35, 35],
+            fit: [40, 40],
             align: 'center',
             valign: 'center',
           });
