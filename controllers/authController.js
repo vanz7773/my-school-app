@@ -88,14 +88,15 @@ exports.register = async (req, res) => {
         email: user.email,
         role: user.role,
         school: {
-          id: user.school._id || user.school,
-          name: user.school.name,
-          schoolType: user.school.schoolType, // 🔥 ADD THIS
-          location: user.school.location || null,
+          id: school._id,
+          name: school.name,
+          schoolType: school.schoolType,     // ✅ NOW REAL
+          features: school.features,         // ✅ NOW REAL
+          location: school.location || null,
         },
-
       },
     });
+
   } catch (err) {
     console.error("Registration error:", err);
     return sendError(res, 500, "Registration failed");
@@ -174,7 +175,8 @@ exports.login = async (req, res) => {
       })
         .select("name admissionNumber class school gender")
         .populate("class", "name")
-        .populate("school", "name")
+        .populate("school", "name schoolType features")
+
         .lean();
 
       userResponse.children = children;
