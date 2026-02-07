@@ -17,6 +17,14 @@ const MODEL_HAS = {
   readBy: !!Notification.schema.paths.readBy,
 };
 
+function resolveSchoolId(user) {
+  return (
+    user?.school?._id ||
+    user?.school?.id ||
+    (mongoose.Types.ObjectId.isValid(user?.school) ? user.school : null)
+  );
+}
+
 /* ------------------------------------------------------------------
    HELPERS
 ------------------------------------------------------------------ */
@@ -71,7 +79,8 @@ function buildNotificationPayload(req, body) {
     message,
     type,
     sender: req.user?._id || null,
-    school: req.user?.school || null,
+    school: resolveSchoolId(req.user),
+
     relatedResource: relatedResource || null,
     resourceModel: resourceModel || null,
   };
@@ -222,7 +231,13 @@ exports.createNotification = async (req, res) => {
 exports.getMyNotifications = async (req, res) => {
   try {
     const userId = String(req.user._id);
-    const schoolId = String(req.user.school);
+    const schoolId = resolveSchoolId(req.user);
+
+    if (!schoolId) {
+      console.error("❌ schoolId unresolved in getMyNotifications", req.user.school);
+      return res.status(400).json({ message: "School not resolved" });
+    }
+
     const role = req.user.role;
 
     // resolve user's class (may query Student)
@@ -292,7 +307,12 @@ exports.markAllAsRead = async (req, res) => {
   try {
     const userId = String(req.user._id);
     const role = req.user.role;
-    const schoolId = String(req.user.school);
+    const schoolId = resolveSchoolId(req.user);
+
+    if (!schoolId) {
+      return res.status(400).json({ message: "School not resolved" });
+    }
+
 
     const userClass = await resolveUserClass(req, userId);
 
@@ -335,7 +355,10 @@ exports.deleteNotification = async (req, res) => {
 
     const user = req.user;
     const isSender = String(n.sender) === String(user._id);
-    const isAdmin = user.role === 'admin' && String(n.school) === String(user.school);
+    const schoolId = resolveSchoolId(user);
+    const isAdmin =
+      user.role === 'admin' && String(n.school) === String(schoolId);
+
 
     const isRecipient =
       (MODEL_HAS.recipient && String(n.recipient) === String(user._id)) ||
@@ -389,11 +412,18 @@ exports.markTypesAsRead = async (req, res) => {
       { recipientRoles: 'all' },
     ];
 
+    const schoolId = resolveSchoolId(req.user);
+
+    if (!schoolId) {
+      return res.status(400).json({ message: "School not resolved" });
+    }
+
     const filter = {
-      school: req.user.school,
+      school: schoolId,
       type: { $in: types },
       $or: or,
     };
+
 
     if (classId) {
       // classId provided explicitly -> restrict to that class
