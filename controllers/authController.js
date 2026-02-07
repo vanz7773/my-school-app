@@ -36,15 +36,7 @@ const hashToken = (token) =>
 // ------------------------------
 exports.register = async (req, res) => {
   try {
-    const {
-      name,
-      email,
-      password,
-      role,
-      schoolName,
-      schoolType, // ✅ NEW
-    } = req.body;
-
+    const { name, email, password, role, schoolName } = req.body;
     if (!name || !email || !password || !role || !schoolName)
       return sendError(res, 400, "All fields are required");
 
@@ -55,19 +47,8 @@ exports.register = async (req, res) => {
 
     // Find or create school (single query when possible)
     let school = await School.findOne({ name: schoolName }).lean();
-
     if (!school) {
-      const isPrivate = schoolType !== "government";
-
-      const created = await School.create({
-        name: schoolName,
-        schoolType: isPrivate ? "private" : "government",
-        features: {
-          feesEnabled: isPrivate,
-          feedingEnabled: isPrivate,
-        },
-      });
-
+      const created = await School.create({ name: schoolName });
       school = created.toObject();
     }
 
@@ -88,15 +69,12 @@ exports.register = async (req, res) => {
         email: user.email,
         role: user.role,
         school: {
-          id: school._id,
+          id: school._id || school.id,
           name: school.name,
-          schoolType: school.schoolType,     // ✅ NOW REAL
-          features: school.features,         // ✅ NOW REAL
           location: school.location || null,
         },
       },
     });
-
   } catch (err) {
     console.error("Registration error:", err);
     return sendError(res, 500, "Registration failed");
@@ -116,7 +94,7 @@ exports.login = async (req, res) => {
 
     const user = await User.findOne({ email: normalizedEmail })
       .select("+password")
-      .populate("school", "name location schoolType features") // ✅ UPDATED
+      .populate("school", "name location")
       .lean({ virtuals: true });
 
     if (!user) return sendError(res, 401, "Invalid email or password");
@@ -135,12 +113,15 @@ exports.login = async (req, res) => {
       );
     }
 
-    // 📱 SAVE EXPO PUSH TOKEN
+    // ------------------------------------------------------------
+    // 📱 SAVE EXPO PUSH TOKEN (NEW + REQUIRED)
+    // ------------------------------------------------------------
     if (pushToken && typeof pushToken === "string") {
       try {
         const userDoc = await User.findById(user._id);
         userDoc.pushToken = pushToken;
         await userDoc.save();
+        console.log("✅ Expo Push Token saved:", pushToken);
       } catch (tokenErr) {
         console.error("⚠️ Failed to save push token:", tokenErr.message);
       }
@@ -157,26 +138,19 @@ exports.login = async (req, res) => {
         ? {
           id: user.school._id || user.school,
           name: user.school.name,
-          schoolType: user.school.schoolType, // ✅ NEW
-          features: user.school.features,     // ✅ NEW
           location: user.school.location || null,
         }
         : null,
     };
 
-    if (
-      user.role === "parent" &&
-      Array.isArray(user.childIds) &&
-      user.childIds.length
-    ) {
+    if (user.role === "parent" && Array.isArray(user.childIds) && user.childIds.length) {
       const children = await Student.find({
         _id: { $in: user.childIds },
         school: user.school ? user.school._id || user.school : undefined,
       })
         .select("name admissionNumber class school gender")
         .populate("class", "name")
-        .populate("school", "name schoolType features")
-
+        .populate("school", "name")
         .lean();
 
       userResponse.children = children;
@@ -194,7 +168,6 @@ exports.login = async (req, res) => {
     return sendError(res, 500, "Login failed");
   }
 };
-
 
 
 // ------------------------------

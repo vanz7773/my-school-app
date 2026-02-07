@@ -1,6 +1,5 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const School = require('../models/School'); // ✅ NEW
 const FeedingFeeConfig = require('../models/FeedingFeeConfig');
 
 // ============================
@@ -32,10 +31,7 @@ const protect = async (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-    const user = await User.findById(decoded.id)
-      .select('-password')
-      .populate('school', 'schoolType features'); // ✅ NEW
+    const user = await User.findById(decoded.id).select('-password');
 
     if (!user) {
       console.warn('❌ User not found for decoded token:', decoded);
@@ -49,18 +45,10 @@ const protect = async (req, res, next) => {
 
     req.user = user;
 
-    // ✅ Attach school info globally
-    req.school = {
-      id: user.school._id,
-      schoolType: user.school.schoolType || 'private',
-      features: user.school.features || {},
-    };
-
     console.log('✅ Authenticated User:', {
       id: user._id.toString(),
       role: user.role,
-      school: req.school.id.toString(),
-      schoolType: req.school.schoolType,
+      school: user.school?.toString(),
     });
 
     next();
@@ -139,7 +127,7 @@ const verifySchoolOwnership = (Model, idParam = 'id') => {
         return res.status(404).json({ message: 'Resource not found' });
       }
 
-      if (resource.school?.toString() !== req.user.school._id.toString()) {
+      if (resource.school?.toString() !== req.user.school.toString()) {
         console.warn('❌ Access denied: School mismatch');
         return res.status(403).json({ message: 'Access denied: resource not in your school' });
       }
@@ -160,18 +148,10 @@ const verifySchoolOwnership = (Model, idParam = 'id') => {
 // Create default school configuration (e.g., Feeding Fee)
 const initializeSchoolConfig = async (schoolId) => {
   try {
-    const school = await School.findById(schoolId).lean();
-
-    // 🚫 Government schools do NOT get feeding config
-    if (school?.schoolType === 'government') {
-      console.log(`ℹ️ Skipping FeedingFeeConfig for government school ${schoolId}`);
-      return;
-    }
-
     await FeedingFeeConfig.create({
       school: schoolId,
+      // Model schema defaults will populate other values
     });
-
     console.log(`✅ Initialized FeedingFeeConfig for school ${schoolId}`);
   } catch (error) {
     console.error('❌ Error initializing school config:', error);
@@ -185,7 +165,7 @@ module.exports = {
   protect,
   restrictTo,
   requireAdmin,
-  isAdmin,
+  isAdmin, // ✅ added for new admin reset approval routes
   requireSchool,
   verifySchoolOwnership,
   initializeSchoolConfig,
