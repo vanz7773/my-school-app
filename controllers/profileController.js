@@ -117,10 +117,14 @@ exports.getProfile = async (req, res) => {
   const userId = req.user.id;
 
   try {
+    // 🔥 TEMP DEBUG: bypass cache (IMPORTANT)
+    profileCache.delete(userId);
+
     // Check cache first
     const cachedProfile = getCachedProfile(userId);
     if (cachedProfile) {
       console.log(`⚡ Profile cache hit for user ${userId}`);
+      console.log("🧪 cached school:", cachedProfile.school);
       return res.json(cachedProfile);
     }
 
@@ -131,12 +135,15 @@ exports.getProfile = async (req, res) => {
       .lean()
       .exec();
 
-
+    // 🧪 CRITICAL DEBUG LOGS
+    console.log("🧪 RAW user.school value:", user?.school);
+    console.log("🧪 typeof user.school:", typeof user?.school);
+    console.log("🧪 has schoolType?:", user?.school?.schoolType);
 
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: "User not found"
+        message: "User not found",
       });
     }
 
@@ -149,16 +156,16 @@ exports.getProfile = async (req, res) => {
   } catch (err) {
     console.error("❌ Error fetching profile:", err);
 
-    // Determine appropriate status code
-    const statusCode = err.name === 'CastError' ? 400 : 500;
+    const statusCode = err.name === "CastError" ? 400 : 500;
 
     res.status(statusCode).json({
       success: false,
       message: "Error fetching profile",
-      error: process.env.NODE_ENV === 'production' ? undefined : err.message
+      error: process.env.NODE_ENV === "production" ? undefined : err.message,
     });
   }
 };
+
 
 /**
  * Update profile picture with transaction-like safety
