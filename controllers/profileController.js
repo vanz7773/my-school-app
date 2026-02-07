@@ -62,7 +62,7 @@ async function deleteFileFromFirebase(url, retries = 2) {
 
     await file.delete();
     console.log("🗑️ Successfully deleted profile picture:", filePath);
-    
+
     // Invalidate cache for any user with this profile picture
     profileCache.forEach((value, key) => {
       if (value.profilePicture === url) {
@@ -77,7 +77,7 @@ async function deleteFileFromFirebase(url, retries = 2) {
       await new Promise(resolve => setTimeout(resolve, delay));
       return deleteFileFromFirebase(url, retries - 1);
     }
-    
+
     // Don't throw for deletion errors - log and continue
     console.warn("⚠️ Could not delete old profile picture:", error.message);
   }
@@ -126,16 +126,17 @@ exports.getProfile = async (req, res) => {
 
     // Cache miss - fetch from database
     const user = await User.findById(userId)
-  .select("name email profilePicture role school")
-  .populate("school", "name")
-  .lean()
-  .exec();
+      .select("name email profilePicture role school")
+      .populate("school", "name schoolType features")
+      .lean()
+      .exec();
+
 
 
     if (!user) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: "User not found" 
+        message: "User not found"
       });
     }
 
@@ -147,10 +148,10 @@ exports.getProfile = async (req, res) => {
 
   } catch (err) {
     console.error("❌ Error fetching profile:", err);
-    
+
     // Determine appropriate status code
     const statusCode = err.name === 'CastError' ? 400 : 500;
-    
+
     res.status(statusCode).json({
       success: false,
       message: "Error fetching profile",
@@ -211,7 +212,7 @@ exports.updateProfilePicture = async (req, res) => {
 
     // Upload new file to Firebase
     newFileUrl = await uploadFile(file);
-    
+
     if (!newFileUrl) {
       throw new Error('File upload failed - no URL returned');
     }
@@ -234,7 +235,7 @@ exports.updateProfilePicture = async (req, res) => {
     }
 
     console.log(`✅ Profile picture updated in ${Date.now() - startTime}ms`);
-    
+
     res.json({
       success: true,
       message: "Profile picture updated successfully",
@@ -243,7 +244,7 @@ exports.updateProfilePicture = async (req, res) => {
 
   } catch (err) {
     console.error("❌ Error updating profile picture:", err);
-    
+
     // Cleanup: Delete the new file if upload was successful but something else failed
     if (newFileUrl) {
       process.nextTick(() => {
@@ -291,7 +292,7 @@ exports.deleteProfilePicture = async (req, res) => {
     }
 
     const oldProfilePicture = user.profilePicture;
-    
+
     if (!oldProfilePicture) {
       return res.status(400).json({
         success: false,
@@ -321,7 +322,7 @@ exports.deleteProfilePicture = async (req, res) => {
 
   } catch (err) {
     console.error("❌ Error deleting profile picture:", err);
-    
+
     res.status(500).json({
       success: false,
       message: "Error deleting profile picture",
@@ -390,9 +391,9 @@ exports.updateProfile = async (req, res) => {
 
   } catch (err) {
     console.error("❌ Error updating profile:", err);
-    
+
     const statusCode = err.name === 'ValidationError' ? 400 : 500;
-    
+
     res.status(statusCode).json({
       success: false,
       message: "Error updating profile",
@@ -406,14 +407,14 @@ exports.updateProfile = async (req, res) => {
 setInterval(() => {
   const now = Date.now();
   let cleanedCount = 0;
-  
+
   profileCache.forEach((value, key) => {
     if (now - value.timestamp > CACHE_TTL) {
       profileCache.delete(key);
       cleanedCount++;
     }
   });
-  
+
   if (cleanedCount > 0) {
     console.log(`🧹 Cleaned ${cleanedCount} expired cache entries`);
   }

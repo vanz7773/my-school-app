@@ -88,12 +88,12 @@ exports.register = async (req, res) => {
         email: user.email,
         role: user.role,
         school: {
-          id: school._id || school.id,
-          name: school.name,
-          schoolType: school.schoolType, // ✅ NEW
-          features: school.features,     // ✅ NEW
-          location: school.location || null,
+          id: user.school._id || user.school,
+          name: user.school.name,
+          schoolType: user.school.schoolType, // 🔥 ADD THIS
+          location: user.school.location || null,
         },
+
       },
     });
   } catch (err) {
