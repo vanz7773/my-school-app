@@ -41,11 +41,6 @@ const classSchema = new mongoose.Schema(
       ref: "School",
       required: [true, "School reference is required"],
     },
-    // Class schema (example)
-    subjects: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Subject"
-    },
 
     students: [
       {
