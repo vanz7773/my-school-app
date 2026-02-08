@@ -21,6 +21,7 @@ const { Expo } = require("expo-server-sdk");
 const expo = new Expo();
 const StudentAttendance = require("../models/StudentAttendance");
 const mongoose = require("mongoose");
+const Subject = require("../models/Subject");
 
 // ==============================
 // Helper: Resolve class names (SBA / Reports)
