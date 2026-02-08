@@ -588,6 +588,19 @@ exports.downloadClassTemplate = async (req, res) => {
     // ✅ Always use this from now on
     const subject = subjectName;
 
+    // ⛔ HARD STOP: Subject teacher without resolvable subject
+    if (!isClassTeacher && !subject) {
+      log("❌ Subject teacher has no resolvable subject — aborting download", {
+        teacherId: teacher._id,
+        rawSubject: teacher.subject,
+        school: classDocFinal.school
+      });
+
+      return res.status(400).json({
+        message: "Teacher subject is not properly assigned for this school. Please contact admin.",
+        logs: logMessages
+      });
+    }
 
     const students = await Student.find({ class: targetClassId })
       .populate("user", "name")
