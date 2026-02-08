@@ -560,36 +560,27 @@ exports.downloadClassTemplate = async (req, res) => {
     let subject = null;
 
     // --------------------------------------------------
-    // 2️⃣ Resolve subject (ONLY for subject teachers)
+    // 2️⃣ Resolve subject (SUBJECT TEACHERS ONLY)
     // --------------------------------------------------
     if (!isClassTeacher) {
 
-      if (!Array.isArray(teacher.subjects) || teacher.subjects.length === 0) {
+      const subjectId = req.query.subjectId;
+
+      if (!subjectId) {
         return res.status(400).json({
-          message: "Teacher has no assigned subjects"
+          message: "Subject selection required"
         });
       }
 
-      const subjectIdFromReq = req.query.subjectId;
-
-      if (teacher.subjects.length > 1 && !subjectIdFromReq) {
+      // ✅ ONLY validate against TEACHER
+      if (!teacher.subjects.some(s => String(s) === String(subjectId))) {
         return res.status(400).json({
-          message: "Subject selection required",
-          subjects: teacher.subjects
-        });
-      }
-
-      const resolvedSubjectId = subjectIdFromReq || teacher.subjects[0];
-
-      // ✅ ONLY validate teacher → subject
-      if (!teacher.subjects.some(s => String(s) === String(resolvedSubjectId))) {
-        return res.status(400).json({
-          message: "Subject not assigned to this teacher"
+          message: "Invalid subject selection"
         });
       }
 
       const subjectDoc = await Subject.findOne({
-        _id: resolvedSubjectId,
+        _id: subjectId,
         school: teacher.school
       }).lean();
 
@@ -600,13 +591,8 @@ exports.downloadClassTemplate = async (req, res) => {
       }
 
       subject = subjectDoc.shortName || subjectDoc.name;
-
-      log("📚 Resolved teacher subject", {
-        subjectId: resolvedSubjectId,
-        subject,
-        classId: classDocFinal._id
-      });
     }
+
 
 
 
