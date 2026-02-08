@@ -5,27 +5,8 @@ const schoolSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
 
-    // -----------------------------------------
-    // School type (PRIVATE vs GOVERNMENT)
-    // -----------------------------------------
-    schoolType: {
-      type: String,
-      enum: ["private", "government"],
-      required: true,
-      default: "private", // ensures backward compatibility
-    },
 
-    // -----------------------------------------
-    // Feature flags (finance-related)
-    // -----------------------------------------
-    features: {
-      feesEnabled: { type: Boolean, default: true },
-      feedingEnabled: { type: Boolean, default: true },
-    },
-
-    // -----------------------------------------
     // Geofence — optional
-    // -----------------------------------------
     location: {
       type: {
         type: String,
@@ -101,14 +82,6 @@ schoolSchema.pre("save", function (next) {
     this.location.coordinates = this.location.coordinates.map((ring) =>
       ring.map((point) => point.map((n) => Number(n)))
     );
-  }
-
-  // -----------------------------------------
-  // Enforce feature flags based on schoolType
-  // -----------------------------------------
-  if (this.schoolType === "government") {
-    this.features.feesEnabled = false;
-    this.features.feedingEnabled = false;
   }
 
   this.updatedAt = Date.now();
