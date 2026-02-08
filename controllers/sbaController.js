@@ -572,13 +572,7 @@ exports.downloadClassTemplate = async (req, res) => {
         });
       }
 
-      // ✅ ONLY validate against TEACHER
-      if (!teacher.subjects.some(s => String(s) === String(subjectId))) {
-        return res.status(400).json({
-          message: "Invalid subject selection"
-        });
-      }
-
+      // ✅ Validate subject exists AND belongs to school
       const subjectDoc = await Subject.findOne({
         _id: subjectId,
         school: teacher.school
@@ -591,6 +585,13 @@ exports.downloadClassTemplate = async (req, res) => {
       }
 
       subject = subjectDoc.shortName || subjectDoc.name;
+
+      log("📚 Subject resolved", {
+        subjectId,
+        subject,
+        teacherId: teacher._id,
+        classId: classDocFinal._id
+      });
     }
 
 
