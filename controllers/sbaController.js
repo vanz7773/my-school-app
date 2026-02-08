@@ -118,11 +118,11 @@ function log(message, data = null) {
  */
 function getClassLevelKey(className) {
   if (!className) return null;
-  
+
   const cleaned = className.trim().replace(/\s+/g, "_").toUpperCase();
-  
+
   console.log(`📝 Raw class name: "${className}" → Cleaned: "${cleaned}"`);
-  
+
   // 📚 FLEXIBLE CLASS NAME MAPPINGS
   const classMappings = {
     // Map GRADE_X to BASIC_X
@@ -135,7 +135,7 @@ function getClassLevelKey(className) {
     'GRADE_7': 'BASIC_7',
     'GRADE_8': 'BASIC_8',
     'GRADE_9': 'BASIC_9',
-    
+
     // Map CLASS_X to BASIC_X
     'CLASS_1': 'BASIC_1',
     'CLASS_2': 'BASIC_2',
@@ -146,7 +146,7 @@ function getClassLevelKey(className) {
     'CLASS_7': 'BASIC_7',
     'CLASS_8': 'BASIC_8',
     'CLASS_9': 'BASIC_9',
-    
+
     // Map PRIMARY_X to BASIC_X
     'PRIMARY_1': 'BASIC_1',
     'PRIMARY_2': 'BASIC_2',
@@ -154,7 +154,7 @@ function getClassLevelKey(className) {
     'PRIMARY_4': 'BASIC_4',
     'PRIMARY_5': 'BASIC_5',
     'PRIMARY_6': 'BASIC_6',
-    
+
     // Map STD_X to BASIC_X
     'STD_1': 'BASIC_1',
     'STD_2': 'BASIC_2',
@@ -162,12 +162,12 @@ function getClassLevelKey(className) {
     'STD_4': 'BASIC_4',
     'STD_5': 'BASIC_5',
     'STD_6': 'BASIC_6',
-    
+
     // Map JHS_X to BASIC_X+3
     'JHS_1': 'BASIC_7',
     'JHS_2': 'BASIC_8',
     'JHS_3': 'BASIC_9',
-    
+
     // Map P_X to BASIC_X
     'P_1': 'BASIC_1',
     'P_2': 'BASIC_2',
@@ -175,46 +175,50 @@ function getClassLevelKey(className) {
     'P_4': 'BASIC_4',
     'P_5': 'BASIC_5',
     'P_6': 'BASIC_6',
-    
+
     // KG variations
     'KINDERGARTEN_1': 'KG_1',
     'KINDERGARTEN_2': 'KG_2',
     'KINDERGARTEN_3': 'KG_3',
     'K_G_1': 'KG_1',
     'K_G_2': 'KG_2',
-    
+
     // Nursery variations
     'NURSERY_ONE': 'NURSERY_1',
     'NURSERY_TWO': 'NURSERY_2',
     'PRE_NURSERY': 'NURSERY_1',
   };
-  
+
   // Check if we have a direct mapping
   if (classMappings[cleaned]) {
     const mappedKey = classMappings[cleaned];
     console.log(`🗺️ Class name mapped: "${cleaned}" → "${mappedKey}"`);
     return mappedKey;
   }
-  
+
   // Check patterns with regex for flexibility
   const patterns = [
     // Match GRADE/CLASS/PRIMARY/STD/P followed by number
-    { regex: /^(GRADE|CLASS|PRIMARY|STD|P)_([1-9])$/i, 
+    {
+      regex: /^(GRADE|CLASS|PRIMARY|STD|P)_([1-9])$/i,
       replacer: (match, prefix, num) => {
         const number = parseInt(num);
         return `BASIC_${number}`; // BASIC_1 through BASIC_9
       }
     },
     // Match JHS followed by number
-    { regex: /^JHS_([1-3])$/i, 
+    {
+      regex: /^JHS_([1-3])$/i,
       replacer: (match, num) => `BASIC_${parseInt(num) + 6}` // JHS_1 → BASIC_7
     },
     // Match KG variations
-    { regex: /^(KG|KINDERGARTEN|K_G)_([1-3])$/i, 
+    {
+      regex: /^(KG|KINDERGARTEN|K_G)_([1-3])$/i,
       replacer: (match, prefix, num) => `KG_${num}`
     },
     // Match Nursery variations
-    { regex: /^(NURSERY|PRE_NURSERY|NURS)_([1-2]|ONE|TWO)$/i, 
+    {
+      regex: /^(NURSERY|PRE_NURSERY|NURS)_([1-2]|ONE|TWO)$/i,
       replacer: (match, prefix, num) => {
         if (num === 'ONE') return 'NURSERY_1';
         if (num === 'TWO') return 'NURSERY_2';
@@ -222,7 +226,7 @@ function getClassLevelKey(className) {
       }
     }
   ];
-  
+
   for (const pattern of patterns) {
     const match = cleaned.match(pattern.regex);
     if (match) {
@@ -231,7 +235,7 @@ function getClassLevelKey(className) {
       return mappedKey;
     }
   }
-  
+
   // Check if it's already a standard key
   const standardKeys = [
     'BASIC_1', 'BASIC_2', 'BASIC_3', 'BASIC_4', 'BASIC_5', 'BASIC_6',
@@ -239,12 +243,12 @@ function getClassLevelKey(className) {
     'KG_1', 'KG_2', 'KG_3',
     'NURSERY_1', 'NURSERY_2'
   ];
-  
+
   if (standardKeys.includes(cleaned)) {
     console.log(`✅ Already standard key: "${cleaned}"`);
     return cleaned;
   }
-  
+
   // Try to extract number from any class name
   const numberMatch = cleaned.match(/(\d+)/);
   if (numberMatch) {
@@ -259,7 +263,7 @@ function getClassLevelKey(className) {
       return key;
     }
   }
-  
+
   console.log(`⚠️ No mapping found for: "${cleaned}", using as-is`);
   return cleaned;
 }
@@ -267,11 +271,11 @@ function getClassLevelKey(className) {
 // Helper function to debug available templates
 async function debugAvailableTemplates(schoolId, classLevelKey) {
   console.log(`[DEBUG] Checking templates for school: ${schoolId}, classKey: ${classLevelKey}`);
-  
+
   // 1. Check global templates
   const globalTemplates = await SbaTemplate.find({}).lean();
   console.log(`[DEBUG] Global templates available: ${globalTemplates.map(t => t.key).join(', ')}`);
-  
+
   // 2. Check school's sbaMaster
   const school = await School.findById(schoolId).select('sbaMaster').lean();
   if (school?.sbaMaster) {
@@ -279,14 +283,14 @@ async function debugAvailableTemplates(schoolId, classLevelKey) {
   } else {
     console.log('[DEBUG] School has no SBA master');
   }
-  
+
   // 3. Check all class names in the school to understand patterns
   const classes = await Class.find({ school: schoolId }).select('name displayName').lean();
   console.log(`[DEBUG] All class names in school:`);
   classes.forEach(cls => {
     console.log(`[DEBUG]   - "${cls.name}" (display: "${cls.displayName}") → key: "${getClassLevelKey(cls.name)}"`);
   });
-  
+
   return {
     globalTemplates: globalTemplates.map(t => t.key),
     schoolKeys: school?.sbaMaster ? Object.keys(school.sbaMaster) : [],
@@ -297,17 +301,17 @@ async function debugAvailableTemplates(schoolId, classLevelKey) {
 // Helper function for flexible template fallback
 async function findFlexibleTemplate(school, classLevelKey) {
   console.log(`🔍 Starting flexible template search for key: ${classLevelKey}`);
-  
+
   // 1. First, check for alternative global template keys
   const globalTemplateKeys = await SbaTemplate.find({}).distinct('key');
   console.log(`🔍 Available global template keys: ${globalTemplateKeys.join(', ')}`);
-  
+
   let globalTemplate = null;
   let usedKey = classLevelKey;
-  
+
   // Try exact match first
   globalTemplate = await SbaTemplate.findOne({ key: classLevelKey }).lean();
-  
+
   // If not found, try case-insensitive
   if (!globalTemplate) {
     globalTemplate = await SbaTemplate.findOne({
@@ -318,7 +322,7 @@ async function findFlexibleTemplate(school, classLevelKey) {
       usedKey = globalTemplate.key;
     }
   }
-  
+
   // If still not found, try to find any template with same number
   if (!globalTemplate) {
     const numMatch = classLevelKey.match(/\d+/);
@@ -327,12 +331,12 @@ async function findFlexibleTemplate(school, classLevelKey) {
       const templatesWithSameNumber = await SbaTemplate.find({
         key: new RegExp(num + '$')
       }).lean();
-      
+
       console.log(`🔍 Templates with number ${num}: ${templatesWithSameNumber.map(t => t.key).join(', ')}`);
-      
+
       if (templatesWithSameNumber.length > 0) {
         // Prioritize BASIC templates for numbers 1-9
-        const basicTemplate = templatesWithSameNumber.find(t => 
+        const basicTemplate = templatesWithSameNumber.find(t =>
           t.key.toUpperCase().startsWith('BASIC_')
         );
         if (basicTemplate) {
@@ -347,25 +351,25 @@ async function findFlexibleTemplate(school, classLevelKey) {
       }
     }
   }
-  
+
   // If still not found, check school's existing templates for similar key
   if (!globalTemplate && school?.sbaMaster) {
     const schoolKeys = Object.keys(school.sbaMaster);
     console.log(`🔍 Checking school templates for fallback: ${schoolKeys.join(', ')}`);
-    
+
     // Look for templates with same number
     const numMatch = classLevelKey.match(/\d+/);
     if (numMatch) {
       const num = numMatch[0];
       const similarSchoolKey = schoolKeys.find(key => key.includes(num));
-      
+
       if (similarSchoolKey) {
         console.log(`🔍 Found school template with same number: ${similarSchoolKey}`);
         // We can't return this directly, but we can use it to find corresponding global template
         globalTemplate = await SbaTemplate.findOne({
           key: { $regex: new RegExp(similarSchoolKey.replace(/\d+$/, ''), 'i') }
         }).lean();
-        
+
         if (globalTemplate) {
           usedKey = globalTemplate.key;
           console.log(`🔍 Found corresponding global template: ${usedKey}`);
@@ -373,7 +377,7 @@ async function findFlexibleTemplate(school, classLevelKey) {
       }
     }
   }
-  
+
   return {
     found: !!globalTemplate,
     template: globalTemplate,
@@ -385,19 +389,19 @@ async function findFlexibleTemplate(school, classLevelKey) {
 // Helper function to find similar key in school SBA master
 function findSimilarSchoolKey(school, classLevelKey) {
   if (!school?.sbaMaster) return null;
-  
+
   const allKeys = Object.keys(school.sbaMaster);
   console.log(`🔍 Looking for similar key among: ${allKeys.join(', ')}`);
-  
+
   // 1. Case-insensitive exact match
-  const caseInsensitiveMatch = allKeys.find(key => 
+  const caseInsensitiveMatch = allKeys.find(key =>
     key.toUpperCase() === classLevelKey.toUpperCase()
   );
   if (caseInsensitiveMatch) {
     console.log(`🔍 Found case-insensitive match: ${caseInsensitiveMatch}`);
     return caseInsensitiveMatch;
   }
-  
+
   // 2. Match by number
   const numMatch = classLevelKey.match(/\d+/);
   if (numMatch) {
@@ -406,25 +410,25 @@ function findSimilarSchoolKey(school, classLevelKey) {
       const keyNum = (key.match(/\d+/) || [])[0];
       return keyNum === num;
     });
-    
+
     if (sameNumberKey) {
       console.log(`🔍 Found key with same number (${num}): ${sameNumberKey}`);
       return sameNumberKey;
     }
   }
-  
+
   // 3. Match by level (Basic vs JHS vs KG vs Nursery)
   const levelMatch = allKeys.find(key => {
     const level1 = classLevelKey.split('_')[0]; // e.g., "BASIC" from "BASIC_1"
     const level2 = key.split('_')[0]; // e.g., "BASIC" from "BASIC_2"
     return level1 === level2;
   });
-  
+
   if (levelMatch) {
     console.log(`🔍 Found key with same level: ${levelMatch}`);
     return levelMatch;
   }
-  
+
   console.log(`🔍 No similar key found for: ${classLevelKey}`);
   return null;
 }
@@ -456,7 +460,7 @@ async function getStudentTermAttendance(studentId, termId, schoolId) {
 exports.downloadClassTemplate = async (req, res) => {
   let tempFilePath = null;
   let logMessages = []; // Array to collect all logs for debugging
-  
+
   // Helper function to clean strings for HTTP headers
   const safeForHeader = (str) => {
     if (!str) return '';
@@ -465,7 +469,7 @@ exports.downloadClassTemplate = async (req, res) => {
       .replace(/[^\x20-\x7E]/g, '') // Remove non-printable ASCII
       .substring(0, 1000); // Limit length
   };
-  
+
   const log = (message, data = null) => {
     const timestamp = new Date().toISOString();
     const logEntry = data ? `[${timestamp}] ${message}: ${JSON.stringify(data)}` : `[${timestamp}] ${message}`;
@@ -486,9 +490,9 @@ exports.downloadClassTemplate = async (req, res) => {
     const { teacherId } = req.params;
     if (!teacherId) {
       log("❌ ERROR: teacherId is required but missing");
-      return res.status(400).json({ 
+      return res.status(400).json({
         message: "teacherId is required",
-        logs: logMessages 
+        logs: logMessages
       });
     }
 
@@ -496,9 +500,9 @@ exports.downloadClassTemplate = async (req, res) => {
     const teacher = await Teacher.findById(teacherId).lean();
     if (!teacher) {
       log("❌ ERROR: Teacher not found");
-      return res.status(404).json({ 
+      return res.status(404).json({
         message: "Teacher not found",
-        logs: logMessages 
+        logs: logMessages
       });
     }
     log("✅ Teacher found", {
@@ -508,11 +512,11 @@ exports.downloadClassTemplate = async (req, res) => {
     });
 
     const userId = teacher.user;
-    
+
     // Locate class
     log("🔍 Looking for class by classTeacher", { userId });
     const classDoc = await Class.findOne({ classTeacher: userId }).lean();
-    
+
     log("🔍 Class search result", {
       found: !!classDoc,
       classId: classDoc?._id,
@@ -531,9 +535,9 @@ exports.downloadClassTemplate = async (req, res) => {
 
     if (!targetClassId) {
       log("❌ ERROR: No class found for this teacher");
-      return res.status(400).json({ 
+      return res.status(400).json({
         message: "No class found for this teacher",
-        logs: logMessages 
+        logs: logMessages
       });
     }
 
@@ -542,9 +546,9 @@ exports.downloadClassTemplate = async (req, res) => {
     const classDocFinal = classDoc || (await Class.findById(targetClassId).lean());
     if (!classDocFinal) {
       log("❌ ERROR: Final class document not found");
-      return res.status(404).json({ 
+      return res.status(404).json({
         message: "Class not found",
-        logs: logMessages 
+        logs: logMessages
       });
     }
 
@@ -568,18 +572,18 @@ exports.downloadClassTemplate = async (req, res) => {
 
     if (!students.length) {
       log("❌ ERROR: No students found for this class");
-      return res.status(400).json({ 
+      return res.status(400).json({
         message: "No students found for this class",
-        logs: logMessages 
+        logs: logMessages
       });
     }
 
     const school = await School.findById(classDocFinal.school).lean();
     if (!school) {
       log("❌ ERROR: School not found");
-      return res.status(404).json({ 
+      return res.status(404).json({
         message: "School not found",
-        logs: logMessages 
+        logs: logMessages
       });
     }
 
@@ -613,16 +617,16 @@ exports.downloadClassTemplate = async (req, res) => {
 
       // 🔥 1️⃣ FIRST PRIORITY: termId from frontend filter
       if (req.query.termId) {
-        log("🔄 Step 1: Looking for term by frontend termId", { 
+        log("🔄 Step 1: Looking for term by frontend termId", {
           termId: req.query.termId,
-          schoolId: classDocFinal.school 
+          schoolId: classDocFinal.school
         });
-        
+
         termDoc = await Term.findOne({
           _id: req.query.termId,
           school: classDocFinal.school,
         }).lean();
-        
+
         log("🔍 Step 1 result", {
           found: !!termDoc,
           termDoc: termDoc ? {
@@ -639,12 +643,12 @@ exports.downloadClassTemplate = async (req, res) => {
 
       // 2️⃣ Use class term if available
       if (!termDoc && classDocFinal.termId) {
-        log("🔄 Step 2: Looking for term by class.termId", { 
-          classTermId: classDocFinal.termId 
+        log("🔄 Step 2: Looking for term by class.termId", {
+          classTermId: classDocFinal.termId
         });
-        
+
         termDoc = await Term.findById(classDocFinal.termId).lean();
-        
+
         log("🔍 Step 2 result", {
           found: !!termDoc,
           termDoc: termDoc ? {
@@ -658,17 +662,17 @@ exports.downloadClassTemplate = async (req, res) => {
       // 3️⃣ Fallback to active term by date
       if (!termDoc) {
         const today = new Date();
-        log("🔄 Step 3: Looking for active term by date", { 
+        log("🔄 Step 3: Looking for active term by date", {
           today: today.toISOString(),
-          schoolId: classDocFinal.school 
+          schoolId: classDocFinal.school
         });
-        
+
         termDoc = await Term.findOne({
           school: classDocFinal.school,
           startDate: { $lte: today },
           endDate: { $gte: today },
         }).lean();
-        
+
         log("🔍 Step 3 result", {
           found: !!termDoc,
           termDoc: termDoc ? {
@@ -683,11 +687,11 @@ exports.downloadClassTemplate = async (req, res) => {
       // 4️⃣ Final fallback: most recent term
       if (!termDoc) {
         log("🔄 Step 4: Looking for most recent term");
-        
+
         termDoc = await Term.findOne({ school: classDocFinal.school })
           .sort({ startDate: -1 })
           .lean();
-        
+
         log("🔍 Step 4 result", {
           found: !!termDoc,
           termDoc: termDoc ? {
@@ -703,7 +707,7 @@ exports.downloadClassTemplate = async (req, res) => {
         termName = termDoc.term || "N/A";
         academicYear = termDoc.academicYear || "N/A";
         resolvedTermId = termDoc._id;
-        
+
         log("✅ TERM RESOLVED SUCCESSFULLY", {
           resolvedTermId,
           termName,
@@ -730,10 +734,10 @@ exports.downloadClassTemplate = async (req, res) => {
     const bucket = admin.storage().bucket();
     const { className, classDisplayName } = resolveClassNames(classDocFinal);
     log("📝 Class name resolution", { className, classDisplayName });
-    
+
     const classLevelKey = getClassLevelKey(className);
     log("🔑 Class level key", { classLevelKey });
-    
+
     const subject = teacher.subject;
     log("📚 Teacher subject", { subject });
 
@@ -753,9 +757,9 @@ exports.downloadClassTemplate = async (req, res) => {
     // If school doesn't have this key, try to find a similar one
     if (!school.sbaMaster?.[classLevelKey]) {
       log("📄 School master missing for exact key, checking alternatives...");
-      
+
       const similarKey = findSimilarSchoolKey(school, classLevelKey);
-      
+
       if (similarKey) {
         log(`🔄 Using similar key instead: ${similarKey}`);
         actualMasterKey = similarKey;
@@ -767,9 +771,9 @@ exports.downloadClassTemplate = async (req, res) => {
 
     if (!school.sbaMaster?.[actualMasterKey]) {
       log("📄 School master missing, attempting to clone global template with flexible search");
-      
+
       const templateSearch = await findFlexibleTemplate(school, classLevelKey);
-      
+
       log("🔍 Global template search result", {
         found: !!templateSearch.template,
         originalKey: classLevelKey,
@@ -785,7 +789,7 @@ exports.downloadClassTemplate = async (req, res) => {
       if (!templateSearch.template) {
         // Run debug to show what's available
         const debugInfo = await debugAvailableTemplates(school._id, classLevelKey);
-        
+
         log("❌ ERROR: No suitable global template found");
         return res.status(404).json({
           message: `SBA template for "${className}" has not been uploaded yet.`,
@@ -812,17 +816,39 @@ exports.downloadClassTemplate = async (req, res) => {
         const resp = await axios.get(templateSearch.template.url, { responseType: "arraybuffer" });
         buffer = resp.data;
       } else {
-        log("❌ ERROR: Global template missing file reference");
-        return res.status(500).json({ 
-          message: "Global template missing file reference",
-          logs: logMessages 
+        // ✅ MULTI-TENANT SAFE FALLBACK
+        const derivedPath = templateKeyToDestination(templateSearch.template.key);
+
+        log("⚠️ Global template missing DB file reference — using derived Firebase path", {
+          derivedPath,
+          templateKey: templateSearch.template.key
         });
+
+        const file = bucket.file(derivedPath);
+        const [exists] = await file.exists();
+
+        if (!exists) {
+          log("❌ ERROR: Derived Firebase template does not exist", {
+            derivedPath
+          });
+
+          return res.status(404).json({
+            message: `Global SBA template file missing in storage for ${templateSearch.template.key}`,
+            expectedPath: derivedPath,
+            logs: logMessages
+          });
+        }
+
+        // ✅ Treat Firebase as source of truth
+        templateSearch.template.path = derivedPath;
+        templateSearch.template.url = `https://storage.googleapis.com/${bucket.name}/${derivedPath}`;
       }
+
 
       // Use the original classLevelKey for the school path, not the found key
       const schoolPath = `templates/${school._id}/${classLevelKey}_master.xlsx`;
       tempFilePath = path.join("uploads", `clone_${school._id}_${Date.now()}.xlsx`);
-      
+
       log("💾 Saving temporary file", { tempFilePath });
       fs.writeFileSync(tempFilePath, buffer);
 
@@ -833,7 +859,7 @@ exports.downloadClassTemplate = async (req, res) => {
           contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         },
       });
-      
+
       await bucket.file(schoolPath).makePublic();
 
       log("🧹 Cleaning up temp file");
@@ -851,14 +877,14 @@ exports.downloadClassTemplate = async (req, res) => {
           },
         },
       });
-      
+
       // Update local school object for this request
       school.sbaMaster = school.sbaMaster || {};
       school.sbaMaster[classLevelKey] = {
         path: schoolPath,
         url: `https://storage.googleapis.com/${bucket.name}/${schoolPath}`,
       };
-      
+
       log("✅ School master initialized", {
         schoolPath,
         url: school.sbaMaster[classLevelKey].url,
@@ -870,16 +896,16 @@ exports.downloadClassTemplate = async (req, res) => {
     log("📥 Downloading master file from Firebase", {
       path: school.sbaMaster?.[classLevelKey]?.path || school.sbaMaster?.[actualMasterKey]?.path
     });
-    
+
     const masterFilePath = school.sbaMaster?.[classLevelKey]?.path || school.sbaMaster?.[actualMasterKey]?.path;
     if (!masterFilePath) {
       log("❌ ERROR: No master file path found");
-      return res.status(500).json({ 
+      return res.status(500).json({
         message: "No master file path found",
-        logs: logMessages 
+        logs: logMessages
       });
     }
-    
+
     const masterFile = bucket.file(masterFilePath);
     const [masterBuffer] = await masterFile.download();
     log("✅ Master file downloaded", { size: masterBuffer.length });
@@ -935,33 +961,33 @@ exports.downloadClassTemplate = async (req, res) => {
     if (resolvedTermId) {
       log("✅ Attendance injection enabled - term found");
       const reportSheet = xpWorkbook.sheet("REPORT");
-      
+
       if (!reportSheet) {
         log("⚠️ WARNING: REPORT sheet not found in template");
       } else {
         log("✅ REPORT sheet found");
-        
+
         // Inject attendance for each student
         for (let i = 0; i < students.length; i++) {
           const student = students[i];
-          
-          log(`📊 Processing attendance for student ${i+1}/${students.length}`, {
+
+          log(`📊 Processing attendance for student ${i + 1}/${students.length}`, {
             studentId: student._id,
             studentName: student.user?.name
           });
-          
+
           const totalAttendance = await getStudentTermAttendance(
             student._id,
             resolvedTermId,
             classDocFinal.school
           );
-          
+
           log(`📝 Student attendance result`, {
             studentId: student._id,
             totalAttendance,
             termId: resolvedTermId.toString()
           });
-          
+
           // Determine position based on class type
           let firstAttendanceRow = 30;
           let rowInterval = 40;
@@ -979,18 +1005,18 @@ exports.downloadClassTemplate = async (req, res) => {
 
           const targetRow = firstAttendanceRow + (i * rowInterval);
           const targetCell = `${attendanceColumn}${targetRow}`;
-          
+
           log(`📝 Writing attendance to cell`, {
             targetCell,
             attendanceValue: totalAttendance,
             rowInterval,
             firstAttendanceRow
           });
-          
+
           reportSheet.cell(targetCell).value(totalAttendance);
           reportSheet.cell(targetCell).style("numberFormat", "0");
         }
-        
+
         log("✅ Attendance writing completed!");
       }
     } else {
@@ -1043,9 +1069,9 @@ exports.downloadClassTemplate = async (req, res) => {
               .find((x) => keepList.includes(x.name()) && !x.hidden());
             if (nextVisible) {
               xpWorkbook.activeSheet(nextVisible.name());
-              log("🔄 Changed active sheet for deletion", { 
-                from: sheetName, 
-                to: nextVisible.name() 
+              log("🔄 Changed active sheet for deletion", {
+                from: sheetName,
+                to: nextVisible.name()
               });
             }
           }
@@ -1088,17 +1114,17 @@ exports.downloadClassTemplate = async (req, res) => {
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     );
-    
+
     // Optional: Send log count (safe string)
     res.setHeader("X-Log-Count", String(logMessages.length));
-    
+
     // Only send debug logs in development mode or as base64
     if (process.env.NODE_ENV === 'development') {
       try {
         // Clean logs for headers
         const debugLogs = logMessages.slice(-20).map(log => safeForHeader(log));
         const safeLogsString = debugLogs.join(' | ');
-        
+
         // Check if it's safe for headers
         if (/^[\x20-\x7E]*$/.test(safeLogsString)) {
           res.setHeader("X-Debug-Logs", safeLogsString);
@@ -1112,7 +1138,7 @@ exports.downloadClassTemplate = async (req, res) => {
         // Continue without debug headers
       }
     }
-    
+
     res.send(finalBuffer);
 
     log("✅ Download complete — formulas + hyperlinks preserved");
@@ -1124,10 +1150,10 @@ exports.downloadClassTemplate = async (req, res) => {
       stack: err.stack,
       timestamp: new Date().toISOString()
     });
-    
+
     // Send detailed error with logs
     const safeLogs = logMessages.map(log => safeForHeader(log));
-    
+
     res.status(500).json({
       message: "Server error downloading class template",
       error: err.message,
@@ -1139,17 +1165,17 @@ exports.downloadClassTemplate = async (req, res) => {
       log("🧹 Cleaning up temporary file", { tempFilePath });
       fs.unlinkSync(tempFilePath);
     }
-    
+
     // Also log to a file for persistent debugging
     try {
       const logDir = path.join(__dirname, '../logs');
       if (!fs.existsSync(logDir)) {
         fs.mkdirSync(logDir, { recursive: true });
       }
-      
+
       const logFileName = `download_${new Date().toISOString().replace(/[:.]/g, '-')}.log`;
       const logFile = path.join(logDir, logFileName);
-      
+
       fs.writeFileSync(logFile, logMessages.join('\n'));
       console.log(`📝 Full logs saved to: ${logFile}`);
     } catch (fileErr) {
@@ -1190,7 +1216,7 @@ exports.uploadClassTemplate = async (req, res) => {
 
     // ✅ Use resolveClassNames helper
     const { className, classDisplayName } = resolveClassNames(classDoc);
-    
+
     console.log(`🏫 Class found: ${className} (Display: ${classDisplayName})`);
     console.log(`👑 Class Teacher from classDoc: ${classDoc.classTeacher}`);
 
@@ -1198,47 +1224,47 @@ exports.uploadClassTemplate = async (req, res) => {
     if (!school) return res.status(404).json({ message: "School not found" });
 
     // Term info
-   let termName = "N/A";
-let academicYear = "N/A";
-try {
-  let termDoc = null;
+    let termName = "N/A";
+    let academicYear = "N/A";
+    try {
+      let termDoc = null;
 
-  // 1️⃣ FRONTEND-SELECTED TERM (display only)
-  if (req.body.termId && mongoose.Types.ObjectId.isValid(req.body.termId)) {
-    termDoc = await Term.findById(req.body.termId).lean();
-  }
+      // 1️⃣ FRONTEND-SELECTED TERM (display only)
+      if (req.body.termId && mongoose.Types.ObjectId.isValid(req.body.termId)) {
+        termDoc = await Term.findById(req.body.termId).lean();
+      }
 
-  // 2️⃣ CLASS-LINKED TERM (fallback)
-  if (!termDoc && classDoc.termId) {
-    termDoc = await Term.findById(classDoc.termId).lean();
-  }
+      // 2️⃣ CLASS-LINKED TERM (fallback)
+      if (!termDoc && classDoc.termId) {
+        termDoc = await Term.findById(classDoc.termId).lean();
+      }
 
-  // 3️⃣ ACTIVE TERM BY DATE
-  if (!termDoc) {
-    const today = new Date();
-    termDoc = await Term.findOne({
-      school: classDoc.school,
-      startDate: { $lte: today },
-      endDate: { $gte: today },
-    }).lean();
-  }
+      // 3️⃣ ACTIVE TERM BY DATE
+      if (!termDoc) {
+        const today = new Date();
+        termDoc = await Term.findOne({
+          school: classDoc.school,
+          startDate: { $lte: today },
+          endDate: { $gte: today },
+        }).lean();
+      }
 
-  // 4️⃣ MOST RECENT TERM (last fallback)
-  if (!termDoc) {
-    termDoc = await Term.findOne({ school: classDoc.school })
-      .sort({ startDate: -1 })
-      .lean();
-  }
+      // 4️⃣ MOST RECENT TERM (last fallback)
+      if (!termDoc) {
+        termDoc = await Term.findOne({ school: classDoc.school })
+          .sort({ startDate: -1 })
+          .lean();
+      }
 
-  if (termDoc) {
-    termName = termDoc.term || "N/A";
-    academicYear = termDoc.academicYear || "N/A";
-  }
+      if (termDoc) {
+        termName = termDoc.term || "N/A";
+        academicYear = termDoc.academicYear || "N/A";
+      }
 
-  console.log(`📅 Term: ${termName}, Academic Year: ${academicYear}`);
-} catch (err) {
-  console.error("❌ Error fetching Term info (upload):", err);
-}
+      console.log(`📅 Term: ${termName}, Academic Year: ${academicYear}`);
+    } catch (err) {
+      console.error("❌ Error fetching Term info (upload):", err);
+    }
 
 
     // Enhanced class teacher detection
@@ -1637,10 +1663,10 @@ exports.uploadReportSheetPDF = [
       // ====================================================
       // Check if termId is a valid MongoDB ObjectId
       if (!mongoose.Types.ObjectId.isValid(termId)) {
-  return res.status(400).json({
-    message: "Invalid termId format. A valid MongoDB ObjectId is required."
-  });
-}
+        return res.status(400).json({
+          message: "Invalid termId format. A valid MongoDB ObjectId is required."
+        });
+      }
 
       // Find the Term document to ensure it exists
       const termDoc = await Term.findById(termId).lean();
@@ -1649,7 +1675,7 @@ exports.uploadReportSheetPDF = [
           message: "Term not found. The provided termId does not exist in the database."
         });
       }
-      
+
       // ✅ 2️⃣ NORMALIZE ONCE AND USE AS SINGLE SOURCE OF TRUTH
       // ====================================================
       const termKey = termDoc._id.toString(); // 🔥 Single, canonical term identifier
@@ -1772,12 +1798,12 @@ exports.uploadReportSheetPDF = [
         const { width, height } = page.getSize();
 
         if (crestImage) {
-  page.drawImage(crestImage, {
-  x: 85,
-  y: height - 160,   // ⬇ lowered a bit
-  width: 65,
-  height: 65
-});
+          page.drawImage(crestImage, {
+            x: 85,
+            y: height - 160,   // ⬇ lowered a bit
+            width: 65,
+            height: 65
+          });
 
         }
 
@@ -1844,7 +1870,7 @@ exports.uploadReportSheetPDF = [
           // 🔥 Store report cards using ONLY the termKey (ObjectId string)
           // 🚫 Never store using: "1", "2", "Term 1", "Term 2", academic years, dates, or derived labels
           await Student.findByIdAndUpdate(student._id, {
-            $set: { 
+            $set: {
               [`reportCards.${termKey}`]: studentUrl,
               // Optionally store metadata separately if needed (not as key)
               reportCardMetadata: {
@@ -2063,7 +2089,7 @@ exports.getOverallSubjectAverage = async (req, res) => {
     // ✅ Use resolveClassNames helper
     const { className, classDisplayName } = resolveClassNames(classDoc);
     const classLevelKey = getClassLevelKey(className);
-    
+
     if (!school.sbaMaster?.[classLevelKey]) {
       return res.status(400).json({ message: "Master SBA not initialized for this class" });
     }
@@ -2231,7 +2257,7 @@ exports.getClassAveragesForChart = async (req, res) => {
         // ✅ Use resolveClassNames helper
         const { className, classDisplayName } = resolveClassNames(classDoc);
         const classLevelKey = getClassLevelKey(className);
-        
+
         if (!school.sbaMaster?.[classLevelKey]) {
           console.log(`⚠️ No SBA master workbook for ${classDisplayName}, skipping`);
           continue;
