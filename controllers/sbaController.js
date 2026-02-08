@@ -581,6 +581,13 @@ exports.downloadClassTemplate = async (req, res) => {
 
       const resolvedSubjectId = subjectIdFromReq || teacher.subjects[0];
 
+      // ✅ CRITICAL CHECK: subject belongs to teacher
+      if (!teacher.subjects.some(s => String(s) === String(resolvedSubjectId))) {
+        return res.status(400).json({
+          message: "Subject not assigned to this teacher"
+        });
+      }
+
       const subjectDoc = await Subject.findOne({
         _id: resolvedSubjectId,
         school: teacher.school
@@ -599,7 +606,6 @@ exports.downloadClassTemplate = async (req, res) => {
         subject
       });
     }
-
 
 
     const students = await Student.find({ class: targetClassId })
