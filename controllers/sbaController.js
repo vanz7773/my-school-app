@@ -556,6 +556,18 @@ exports.downloadClassTemplate = async (req, res) => {
       classTeacher: classDocFinal.classTeacher,
       school: classDocFinal.school
     });
+    // 🚨 CRITICAL: subject must belong to class
+    if (
+      !classDocFinal.subjects ||
+      !classDocFinal.subjects.some(
+        s => String(s) === String(resolvedSubjectId)
+      )
+    ) {
+      return res.status(400).json({
+        message: "Invalid subject selection"
+      });
+    }
+
 
     let subject = null;
 
@@ -564,6 +576,7 @@ exports.downloadClassTemplate = async (req, res) => {
     // --------------------------------------------------
     if (!isClassTeacher) {
 
+      // Teacher must have subjects
       if (!Array.isArray(teacher.subjects) || teacher.subjects.length === 0) {
         return res.status(400).json({
           message: "Teacher has no assigned subjects"
@@ -572,6 +585,7 @@ exports.downloadClassTemplate = async (req, res) => {
 
       const subjectIdFromReq = req.query.subjectId;
 
+      // Multiple subjects → force explicit selection
       if (teacher.subjects.length > 1 && !subjectIdFromReq) {
         return res.status(400).json({
           message: "Subject selection required",
@@ -581,13 +595,26 @@ exports.downloadClassTemplate = async (req, res) => {
 
       const resolvedSubjectId = subjectIdFromReq || teacher.subjects[0];
 
-      // ✅ CRITICAL CHECK: subject belongs to teacher
+      // ✅ 1️⃣ subject must belong to teacher
       if (!teacher.subjects.some(s => String(s) === String(resolvedSubjectId))) {
         return res.status(400).json({
           message: "Subject not assigned to this teacher"
         });
       }
 
+      // 🔥 2️⃣ subject must belong to the selected class (THIS WAS MISSING)
+      if (
+        !Array.isArray(classDocFinal.subjects) ||
+        !classDocFinal.subjects.some(
+          s => String(s) === String(resolvedSubjectId)
+        )
+      ) {
+        return res.status(400).json({
+          message: "Invalid subject selection"
+        });
+      }
+
+      // ✅ 3️⃣ subject must exist in this school
       const subjectDoc = await Subject.findOne({
         _id: resolvedSubjectId,
         school: teacher.school
@@ -603,9 +630,11 @@ exports.downloadClassTemplate = async (req, res) => {
 
       log("📚 Resolved teacher subject", {
         subjectId: resolvedSubjectId,
-        subject
+        subject,
+        classId: classDocFinal._id
       });
     }
+
 
 
     const students = await Student.find({ class: targetClassId })
