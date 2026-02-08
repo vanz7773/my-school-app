@@ -828,9 +828,7 @@ exports.downloadClassTemplate = async (req, res) => {
         const [exists] = await file.exists();
 
         if (!exists) {
-          log("❌ ERROR: Derived Firebase template does not exist", {
-            derivedPath
-          });
+          log("❌ ERROR: Derived Firebase template does not exist", { derivedPath });
 
           return res.status(404).json({
             message: `Global SBA template file missing in storage for ${templateSearch.template.key}`,
@@ -839,10 +837,17 @@ exports.downloadClassTemplate = async (req, res) => {
           });
         }
 
-        // ✅ Treat Firebase as source of truth
+        // 🔥 DOWNLOAD IMMEDIATELY (THIS WAS MISSING)
+        const [downloadedBuffer] = await file.download();
+
+        buffer = downloadedBuffer; // ✅ CRITICAL LINE
+
+        // Patch runtime metadata (no DB writes)
         templateSearch.template.path = derivedPath;
-        templateSearch.template.url = `https://storage.googleapis.com/${bucket.name}/${derivedPath}`;
+        templateSearch.template.url =
+          `https://storage.googleapis.com/${bucket.name}/${derivedPath}`;
       }
+
 
 
       // Use the original classLevelKey for the school path, not the found key
