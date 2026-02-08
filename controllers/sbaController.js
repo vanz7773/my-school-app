@@ -560,6 +560,34 @@ exports.downloadClassTemplate = async (req, res) => {
       school: classDocFinal.school
     });
 
+    // --------------------------------------------------
+    // ✅ Resolve teacher subject to STRING (Excel-safe)
+    // --------------------------------------------------
+    let subjectName = "";
+
+    if (teacher.subject) {
+      const subjectDoc = await Subject.findOne({
+        _id: teacher.subject,
+        school: classDocFinal.school // 🔒 tenant safety
+      }).lean();
+
+      if (subjectDoc) {
+        subjectName =
+          subjectDoc.name ||
+          subjectDoc.shortName ||
+          "";
+      }
+    }
+
+    log("📚 Resolved teacher subject", {
+      rawSubject: teacher.subject,
+      subjectName
+    });
+
+    // ✅ Always use this from now on
+    const subject = subjectName;
+
+
     const students = await Student.find({ class: targetClassId })
       .populate("user", "name")
       .lean();
@@ -738,7 +766,7 @@ exports.downloadClassTemplate = async (req, res) => {
     const classLevelKey = getClassLevelKey(className);
     log("🔑 Class level key", { classLevelKey });
 
-    const subject = teacher.subject;
+
     log("📚 Teacher subject", { subject });
 
     // ====================================================
@@ -1219,6 +1247,35 @@ exports.uploadClassTemplate = async (req, res) => {
     const classDoc = await Class.findById(classId).lean();
     if (!classDoc) return res.status(404).json({ message: "Class not found" });
 
+    // --------------------------------------------------
+    // ✅ Resolve teacher subject to STRING (Excel-safe)
+    // --------------------------------------------------
+    let subjectName = "";
+
+    if (teacher.subject) {
+      const subjectDoc = await Subject.findOne({
+        _id: teacher.subject,
+        school: classDoc.school // 🔒 tenant safety
+      }).lean();
+
+      if (subjectDoc) {
+        subjectName =
+          subjectDoc.name ||
+          subjectDoc.shortName ||
+          "";
+      }
+    }
+
+    console.log("📚 Resolved teacher subject", {
+      rawSubject: teacher.subject,
+      subjectName
+    });
+
+    // ✅ Always use this from now on
+    const subject = subjectName;
+
+
+
     // ✅ Use resolveClassNames helper
     const { className, classDisplayName } = resolveClassNames(classDoc);
 
@@ -1289,7 +1346,7 @@ exports.uploadClassTemplate = async (req, res) => {
 
     const bucket = admin.storage().bucket();
     const classLevelKey = getClassLevelKey(className); // Use className for logic
-    const subject = teacher.subject;
+
 
     if (!school.sbaMaster?.[classLevelKey])
       return res.status(400).json({ message: "Master SBA not initialized. Please download first." });
@@ -1491,14 +1548,41 @@ exports.getSubjectSheet = async (req, res) => {
     const classId = teacher.assignedClasses[0];
     const classDoc = await Class.findById(classId).lean();
     if (!classDoc) return res.status(404).json({ message: "Class not found" });
-
     const school = await School.findById(classDoc.school).lean();
     if (!school) return res.status(404).json({ message: "School not found" });
+
+    // --------------------------------------------------
+    // ✅ Resolve teacher subject to STRING (Excel-safe)
+    // --------------------------------------------------
+    let subjectName = "";
+
+    if (teacher.subject) {
+      const subjectDoc = await Subject.findOne({
+        _id: teacher.subject,
+        school: classDoc.school // 🔒 tenant safety
+      }).lean();
+
+      if (subjectDoc) {
+        subjectName =
+          subjectDoc.name ||
+          subjectDoc.shortName ||
+          "";
+      }
+    }
+
+    console.log("📚 Resolved teacher subject", {
+      rawSubject: teacher.subject,
+      subjectName
+    });
+
+    // ✅ Always use this from now on
+    const subject = subjectName;
+
 
     const bucket = admin.storage().bucket();
     const { className } = resolveClassNames(classDoc);
     const classLevelKey = getClassLevelKey(className);
-    const subject = teacher.subject;
+
     if (!school.sbaMaster?.[classLevelKey]) return res.status(400).json({ message: "Master SBA not initialized. Call download first." });
 
     const masterFile = bucket.file(school.sbaMaster[classLevelKey].path);
@@ -1546,10 +1630,44 @@ exports.saveSubjectSheet = async (req, res) => {
     const school = await School.findById(classDoc.school).lean();
     if (!school) return res.status(404).json({ message: "School not found" });
 
+    // --------------------------------------------------
+    // ✅ Resolve teacher subject to STRING (Excel-safe)
+    // --------------------------------------------------
+    let subjectName = "";
+
+    if (teacher.subject) {
+      const subjectDoc = await Subject.findOne({
+        _id: teacher.subject,
+        school: classDoc.school // 🔒 tenant safety
+      }).lean();
+
+      if (subjectDoc) {
+        subjectName =
+          subjectDoc.name ||
+          subjectDoc.shortName ||
+          "";
+      }
+    }
+
+    console.log("📚 Resolved teacher subject", {
+      rawSubject: teacher.subject,
+      subjectName
+    });
+
+    // ✅ Always use this from now on
+    const subject = subjectName;
+
+    // ⛔ Hard stop if subject cannot be resolved
+    if (!subject) {
+      return res.status(400).json({
+        message: "Teacher has no subject assigned or subject could not be resolved"
+      });
+    }
+
+
     const bucket = admin.storage().bucket();
     const { className } = resolveClassNames(classDoc);
     const classLevelKey = getClassLevelKey(className);
-    const subject = teacher.subject;
     if (!school.sbaMaster?.[classLevelKey]) return res.status(400).json({ message: "Master SBA not initialized. Call download first." });
 
     const masterFile = bucket.file(school.sbaMaster[classLevelKey].path);
