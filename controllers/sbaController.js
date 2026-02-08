@@ -562,31 +562,29 @@ exports.downloadClassTemplate = async (req, res) => {
     });
 
     // --------------------------------------------------
-    // ✅ Resolve teacher subject to STRING (Excel-safe)
+    // ✅ Resolve teacher subject(s) to STRING (Excel-safe)
     // --------------------------------------------------
     let subjectName = "";
 
-    if (teacher.subject) {
+    if (Array.isArray(teacher.subjects) && teacher.subjects.length > 0) {
       const subjectDoc = await Subject.findOne({
-        _id: teacher.subject,
+        _id: { $in: teacher.subjects },
         school: classDocFinal.school // 🔒 tenant safety
       }).lean();
 
       if (subjectDoc) {
-        subjectName =
-          subjectDoc.name ||
-          subjectDoc.shortName ||
-          "";
+        subjectName = subjectDoc.name || subjectDoc.shortName || "";
       }
     }
 
     log("📚 Resolved teacher subject", {
-      rawSubject: teacher.subject,
+      rawSubjects: teacher.subjects,
       subjectName
     });
 
     // ✅ Always use this from now on
     const subject = subjectName;
+
 
     // ⛔ HARD STOP: Subject teacher without resolvable subject
     if (!isClassTeacher && !subject) {
@@ -1262,31 +1260,29 @@ exports.uploadClassTemplate = async (req, res) => {
     if (!classDoc) return res.status(404).json({ message: "Class not found" });
 
     // --------------------------------------------------
-    // ✅ Resolve teacher subject to STRING (Excel-safe)
+    // ✅ Resolve teacher subject(s) to STRING (Excel-safe)
     // --------------------------------------------------
     let subjectName = "";
 
-    if (teacher.subject) {
+    if (Array.isArray(teacher.subjects) && teacher.subjects.length > 0) {
       const subjectDoc = await Subject.findOne({
-        _id: teacher.subject,
-        school: classDoc.school // 🔒 tenant safety
+        _id: { $in: teacher.subjects },
+        school: classDocFinal.school // 🔒 tenant safety
       }).lean();
 
       if (subjectDoc) {
-        subjectName =
-          subjectDoc.name ||
-          subjectDoc.shortName ||
-          "";
+        subjectName = subjectDoc.name || subjectDoc.shortName || "";
       }
     }
 
-    console.log("📚 Resolved teacher subject", {
-      rawSubject: teacher.subject,
+    log("📚 Resolved teacher subject", {
+      rawSubjects: teacher.subjects,
       subjectName
     });
 
     // ✅ Always use this from now on
     const subject = subjectName;
+
 
 
 
@@ -1566,31 +1562,29 @@ exports.getSubjectSheet = async (req, res) => {
     if (!school) return res.status(404).json({ message: "School not found" });
 
     // --------------------------------------------------
-    // ✅ Resolve teacher subject to STRING (Excel-safe)
+    // ✅ Resolve teacher subject(s) to STRING (Excel-safe)
     // --------------------------------------------------
     let subjectName = "";
 
-    if (teacher.subject) {
+    if (Array.isArray(teacher.subjects) && teacher.subjects.length > 0) {
       const subjectDoc = await Subject.findOne({
-        _id: teacher.subject,
-        school: classDoc.school // 🔒 tenant safety
+        _id: { $in: teacher.subjects },
+        school: classDocFinal.school // 🔒 tenant safety
       }).lean();
 
       if (subjectDoc) {
-        subjectName =
-          subjectDoc.name ||
-          subjectDoc.shortName ||
-          "";
+        subjectName = subjectDoc.name || subjectDoc.shortName || "";
       }
     }
 
-    console.log("📚 Resolved teacher subject", {
-      rawSubject: teacher.subject,
+    log("📚 Resolved teacher subject", {
+      rawSubjects: teacher.subjects,
       subjectName
     });
 
     // ✅ Always use this from now on
     const subject = subjectName;
+
 
 
     const bucket = admin.storage().bucket();
@@ -1645,31 +1639,29 @@ exports.saveSubjectSheet = async (req, res) => {
     if (!school) return res.status(404).json({ message: "School not found" });
 
     // --------------------------------------------------
-    // ✅ Resolve teacher subject to STRING (Excel-safe)
+    // ✅ Resolve teacher subject(s) to STRING (Excel-safe)
     // --------------------------------------------------
     let subjectName = "";
 
-    if (teacher.subject) {
+    if (Array.isArray(teacher.subjects) && teacher.subjects.length > 0) {
       const subjectDoc = await Subject.findOne({
-        _id: teacher.subject,
-        school: classDoc.school // 🔒 tenant safety
+        _id: { $in: teacher.subjects },
+        school: classDocFinal.school // 🔒 tenant safety
       }).lean();
 
       if (subjectDoc) {
-        subjectName =
-          subjectDoc.name ||
-          subjectDoc.shortName ||
-          "";
+        subjectName = subjectDoc.name || subjectDoc.shortName || "";
       }
     }
 
-    console.log("📚 Resolved teacher subject", {
-      rawSubject: teacher.subject,
+    log("📚 Resolved teacher subject", {
+      rawSubjects: teacher.subjects,
       subjectName
     });
 
     // ✅ Always use this from now on
     const subject = subjectName;
+
 
     // ⛔ Hard stop if subject cannot be resolved
     if (!subject) {
