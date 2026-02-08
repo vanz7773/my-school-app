@@ -514,42 +514,38 @@ exports.downloadClassTemplate = async (req, res) => {
 
     const userId = teacher.user;
 
-    // Locate class
-    log("🔍 Looking for class by classTeacher", { userId });
-    const classDoc = await Class.findOne({ classTeacher: userId }).lean();
+    // --------------------------------------------------
+    // 1️⃣ Resolve target class (explicit, no guessing)
+    // --------------------------------------------------
+    const classDocByTeacher = await Class.findOne({ classTeacher: userId }).lean();
+    const isClassTeacher = !!classDocByTeacher;
 
-    log("🔍 Class search result", {
-      found: !!classDoc,
-      classId: classDoc?._id,
-      className: classDoc?.name
-    });
+    let targetClassId;
 
-    let targetClassId = classDoc?._id;
-    let isClassTeacher = !!classDoc;
-
-    if (!targetClassId && teacher.assignedClasses?.length) {
-      log("⚠️ No class by classTeacher, using assignedClasses", {
-        assignedClasses: teacher.assignedClasses
-      });
-      targetClassId = teacher.assignedClasses[0];
+    if (isClassTeacher) {
+      targetClassId = classDocByTeacher._id;
+    } else {
+      targetClassId = req.query.classId;
     }
 
     if (!targetClassId) {
-      log("❌ ERROR: No class found for this teacher");
       return res.status(400).json({
-        message: "No class found for this teacher",
-        logs: logMessages
+        message: "Class selection required",
+        classes: teacher.assignedClasses
       });
     }
 
-    log("🎯 Target class ID determined", { targetClassId, isClassTeacher });
+    // --------------------------------------------------
+    // 1️⃣b Validate class belongs to teacher’s school
+    // --------------------------------------------------
+    const classDocFinal = await Class.findOne({
+      _id: targetClassId,
+      school: teacher.school
+    }).lean();
 
-    const classDocFinal = classDoc || (await Class.findById(targetClassId).lean());
     if (!classDocFinal) {
-      log("❌ ERROR: Final class document not found");
-      return res.status(404).json({
-        message: "Class not found",
-        logs: logMessages
+      return res.status(400).json({
+        message: "Invalid class selection"
       });
     }
 
@@ -561,44 +557,50 @@ exports.downloadClassTemplate = async (req, res) => {
       school: classDocFinal.school
     });
 
-    // --------------------------------------------------
-    // ✅ Resolve teacher subject(s) to STRING (Excel-safe)
-    // --------------------------------------------------
-    let subjectName = "";
+    let subject = null;
 
-    if (Array.isArray(teacher.subjects) && teacher.subjects.length > 0) {
+    // --------------------------------------------------
+    // 2️⃣ Resolve subject (ONLY for subject teachers)
+    // --------------------------------------------------
+    if (!isClassTeacher) {
+
+      if (!Array.isArray(teacher.subjects) || teacher.subjects.length === 0) {
+        return res.status(400).json({
+          message: "Teacher has no assigned subjects"
+        });
+      }
+
+      const subjectIdFromReq = req.query.subjectId;
+
+      if (teacher.subjects.length > 1 && !subjectIdFromReq) {
+        return res.status(400).json({
+          message: "Subject selection required",
+          subjects: teacher.subjects
+        });
+      }
+
+      const resolvedSubjectId = subjectIdFromReq || teacher.subjects[0];
+
       const subjectDoc = await Subject.findOne({
-        _id: { $in: teacher.subjects },
-        school: classDocFinal.school // 🔒 tenant safety
+        _id: resolvedSubjectId,
+        school: teacher.school
       }).lean();
 
-      if (subjectDoc) {
-        subjectName = subjectDoc.name || subjectDoc.shortName || "";
+      if (!subjectDoc) {
+        return res.status(400).json({
+          message: "Invalid subject selection"
+        });
       }
-    }
 
-    log("📚 Resolved teacher subject", {
-      rawSubjects: teacher.subjects,
-      subjectName
-    });
+      subject = subjectDoc.shortName || subjectDoc.name;
 
-    // ✅ Always use this from now on
-    const subject = subjectName;
-
-
-    // ⛔ HARD STOP: Subject teacher without resolvable subject
-    if (!isClassTeacher && !subject) {
-      log("❌ Subject teacher has no resolvable subject — aborting download", {
-        teacherId: teacher._id,
-        rawSubject: teacher.subject,
-        school: classDocFinal.school
-      });
-
-      return res.status(400).json({
-        message: "Teacher subject is not properly assigned for this school. Please contact admin.",
-        logs: logMessages
+      log("📚 Resolved teacher subject", {
+        subjectId: resolvedSubjectId,
+        subject
       });
     }
+
+
 
     const students = await Student.find({ class: targetClassId })
       .populate("user", "name")
@@ -1071,8 +1073,9 @@ exports.downloadClassTemplate = async (req, res) => {
     // 🧹 Remove unused sheets if not class teacher
     log("🎭 Checking teacher role for sheet pruning", {
       isClassTeacher,
-      teacherSubject: teacher.subject
+      subject
     });
+
 
     if (!isClassTeacher) {
       log("🔪 Pruning sheets for subject teacher");
