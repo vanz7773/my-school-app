@@ -596,7 +596,6 @@ exports.downloadClassTemplate = async (req, res) => {
     // 2️⃣ Resolve subject (SUBJECT TEACHERS ONLY)
     // --------------------------------------------------
     if (!isClassTeacher) {
-
       const subjectId = req.query.subjectId;
 
       log("📥 Subject from request", {
@@ -612,30 +611,30 @@ exports.downloadClassTemplate = async (req, res) => {
         });
       }
 
-      log("🔍 Validating subject against CLASS school", {
-        subjectId,
-        classSchool: classDocFinal.school
-      });
-
-      const subjectDoc = await Subject.findOne({
-        _id: subjectId,
-        school: classDocFinal.school // ✅ correct source of truth
-      }).lean();
+      // ✅ FIX: Trust teacher assignment, NOT school scoping
+      const subjectDoc = await Subject.findById(subjectId).lean();
 
       log("📘 Subject lookup result", {
         found: !!subjectDoc,
-        subjectId,
-        classSchool: classDocFinal.school
+        subjectId
       });
 
       if (!subjectDoc) {
-        log("❌ Invalid subject selection", {
-          subjectId,
-          classSchool: classDocFinal.school
+        log("❌ Invalid subject selection (subject not found)", {
+          subjectId
         });
 
         return res.status(400).json({
           message: "Invalid subject selection"
+        });
+      }
+
+      // ⚠️ OPTIONAL LOG — legacy / mismatched data visibility
+      if (String(subjectDoc.school) !== String(classDocFinal.school)) {
+        log("⚠️ Subject-school mismatch (legacy data)", {
+          subjectId: subjectDoc._id,
+          subjectSchool: subjectDoc.school,
+          classSchool: classDocFinal.school
         });
       }
 
@@ -647,6 +646,7 @@ exports.downloadClassTemplate = async (req, res) => {
         classId: classDocFinal._id
       });
     }
+
 
 
 
