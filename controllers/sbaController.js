@@ -1315,26 +1315,44 @@ exports.uploadClassTemplate = async (req, res) => {
     const classDoc = await Class.findById(classId).lean();
     if (!classDoc) return res.status(404).json({ message: "Class not found" });
 
-    const { subjectId } = req.body; // or req.query depending on your route
 
-    let subjectName = "";
 
-    if (subjectId) {
-      const subjectDoc = await Subject.findOne({
-        _id: subjectId,
-        school: classDocFinal.school // ✅ correct tenant
-      }).lean();
+    // --------------------------------------------------
+    // ✅ Resolve subject from request (UPLOAD)
+    // --------------------------------------------------
+    let subject = null;
 
-      if (!subjectDoc) {
-        return res.status(400).json({
-          message: "Invalid subject selection"
-        });
-      }
+    const subjectId = req.body.subjectId || req.query.subjectId;
 
-      subjectName = subjectDoc.shortName || subjectDoc.name || "";
+    log("📥 Subject from upload request", { subjectId });
+
+    if (!subjectId) {
+      return res.status(400).json({
+        message: "Subject selection required for subject teacher upload"
+      });
     }
 
-    const subject = subjectName;
+    const subjectDoc = await Subject.findOne({
+      _id: subjectId,
+      school: classDoc.school
+    }).lean();
+
+    if (!subjectDoc) {
+      return res.status(400).json({
+        message: "Invalid subject selection"
+      });
+    }
+
+    const subjectName = subjectDoc.name?.trim();
+    const subjectShort = subjectDoc.shortName?.trim();
+
+    subject = subjectName; // ✅ ALWAYS full name for Excel
+
+    log("📚 Subject resolved for upload (Excel-safe)", {
+      subjectId: subjectDoc._id,
+      subjectName,
+      subjectShort
+    });
 
 
 
