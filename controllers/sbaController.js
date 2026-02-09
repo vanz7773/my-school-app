@@ -572,7 +572,7 @@ exports.downloadClassTemplate = async (req, res) => {
         });
       }
 
-      // ✅ Validate subject exists AND belongs to school
+      // ✅ ONLY check: subject exists in this school
       const subjectDoc = await Subject.findOne({
         _id: subjectId,
         school: teacher.school
@@ -587,12 +587,13 @@ exports.downloadClassTemplate = async (req, res) => {
       subject = subjectDoc.shortName || subjectDoc.name;
 
       log("📚 Subject resolved", {
-        subjectId,
+        subjectId: subjectDoc._id,
         subject,
-        teacherId: teacher._id,
-        classId: classDocFinal._id
+        classId: classDocFinal._id,
+        teacherId: teacher._id
       });
     }
+
 
 
 
