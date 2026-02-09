@@ -1324,35 +1324,63 @@ exports.uploadClassTemplate = async (req, res) => {
 
     const subjectId = req.body.subjectId || req.query.subjectId;
 
-    log("📥 Subject from upload request", { subjectId });
+    log("📥 Subject from upload request", {
+      subjectId,
+      teacherSchool: teacher.school,
+      classSchool: classDoc.school
+    });
 
     if (!subjectId) {
+      log("❌ Upload aborted — subjectId missing");
       return res.status(400).json({
         message: "Subject selection required for subject teacher upload"
       });
     }
 
+    // 🔑 IMPORTANT: validate subject against TEACHER school (single source of truth)
+    log("🔍 Validating subject for upload", {
+      subjectId,
+      validateAgainst: "teacher.school",
+      teacherSchool: teacher.school
+    });
+
     const subjectDoc = await Subject.findOne({
       _id: subjectId,
-      school: classDoc.school
+      school: teacher.school // ✅ FIXED (DO NOT use classDoc.school)
     }).lean();
 
+    log("📘 Subject lookup result (upload)", {
+      found: !!subjectDoc,
+      subjectId
+    });
+
     if (!subjectDoc) {
+      log("❌ Invalid subject selection during upload", {
+        subjectId,
+        teacherSchool: teacher.school
+      });
+
       return res.status(400).json({
         message: "Invalid subject selection"
       });
     }
 
+    // --------------------------------------------------
+    // ✅ Normalize subject name for Excel usage
+    // --------------------------------------------------
     const subjectName = subjectDoc.name?.trim();
     const subjectShort = subjectDoc.shortName?.trim();
 
-    subject = subjectName; // ✅ ALWAYS full name for Excel
+    // ✅ ALWAYS use FULL NAME for Excel sheet operations
+    subject = subjectName;
 
     log("📚 Subject resolved for upload (Excel-safe)", {
       subjectId: subjectDoc._id,
       subjectName,
-      subjectShort
+      subjectShort,
+      finalSubjectUsedInExcel: subject
     });
+
 
 
 
