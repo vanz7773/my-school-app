@@ -638,7 +638,11 @@ exports.downloadClassTemplate = async (req, res) => {
         });
       }
 
-      subject = subjectDoc.shortName || subjectDoc.name;
+      const subjectName = subjectDoc.name?.trim();
+      const subjectShort = subjectDoc.shortName?.trim();
+
+      subject = subjectName;
+
 
       log("✅ Subject resolved successfully", {
         subjectId: subjectDoc._id,
@@ -1643,7 +1647,11 @@ exports.getSubjectSheet = async (req, res) => {
       });
     }
 
-    const subject = subjectDoc.shortName || subjectDoc.name;
+    const subjectName = subjectDoc.name?.trim();
+    const subjectShort = subjectDoc.shortName?.trim();
+
+    subject = subjectName;
+
 
     log("📚 Subject resolved", {
       subjectId: subjectDoc._id,
@@ -1750,7 +1758,11 @@ exports.saveSubjectSheet = async (req, res) => {
       });
     }
 
-    const subject = subjectDoc.shortName || subjectDoc.name;
+    const subjectName = subjectDoc.name?.trim();
+    const subjectShort = subjectDoc.shortName?.trim();
+
+    subject = subjectName;
+
 
     log("📚 Subject resolved", {
       subjectId: subjectDoc._id,
