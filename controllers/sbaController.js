@@ -1326,28 +1326,20 @@ exports.uploadClassTemplate = async (req, res) => {
 
     log("📥 Subject from upload request", {
       subjectId,
-      teacherSchool: teacher.school,
-      classSchool: classDoc.school
+      teacherId: teacher._id,
+      classId: classDoc._id
     });
 
     if (!subjectId) {
-      log("❌ Upload aborted — subjectId missing");
+      log("❌ Subject missing for subject teacher upload");
+
       return res.status(400).json({
         message: "Subject selection required for subject teacher upload"
       });
     }
 
-    // 🔑 IMPORTANT: validate subject against TEACHER school (single source of truth)
-    log("🔍 Validating subject for upload", {
-      subjectId,
-      validateAgainst: "teacher.school",
-      teacherSchool: teacher.school
-    });
-
-    const subjectDoc = await Subject.findOne({
-      _id: subjectId,
-      school: teacher.school // ✅ FIXED (DO NOT use classDoc.school)
-    }).lean();
+    // ✅ FIX: Subject is GLOBAL — do NOT scope to school
+    const subjectDoc = await Subject.findById(subjectId).lean();
 
     log("📘 Subject lookup result (upload)", {
       found: !!subjectDoc,
@@ -1355,9 +1347,8 @@ exports.uploadClassTemplate = async (req, res) => {
     });
 
     if (!subjectDoc) {
-      log("❌ Invalid subject selection during upload", {
-        subjectId,
-        teacherSchool: teacher.school
+      log("❌ Invalid subject selection (subject not found)", {
+        subjectId
       });
 
       return res.status(400).json({
@@ -1365,21 +1356,27 @@ exports.uploadClassTemplate = async (req, res) => {
       });
     }
 
-    // --------------------------------------------------
-    // ✅ Normalize subject name for Excel usage
-    // --------------------------------------------------
+    // ⚠️ OPTIONAL VISIBILITY LOG (legacy / mixed data)
+    if (subjectDoc.school && String(subjectDoc.school) !== String(classDoc.school)) {
+      log("⚠️ Subject-school mismatch (legacy/global subject)", {
+        subjectId: subjectDoc._id,
+        subjectSchool: subjectDoc.school,
+        classSchool: classDoc.school
+      });
+    }
+
+    // ✅ ALWAYS use FULL NAME for Excel
     const subjectName = subjectDoc.name?.trim();
     const subjectShort = subjectDoc.shortName?.trim();
 
-    // ✅ ALWAYS use FULL NAME for Excel sheet operations
     subject = subjectName;
 
-    log("📚 Subject resolved for upload (Excel-safe)", {
+    log("✅ Subject resolved for upload (Excel-safe)", {
       subjectId: subjectDoc._id,
-      subjectName,
-      subjectShort,
-      finalSubjectUsedInExcel: subject
+      subject,
+      subjectShort
     });
+
 
 
 
