@@ -523,8 +523,18 @@ exports.downloadClassTemplate = async (req, res) => {
     // --------------------------------------------------
     // 1️⃣ Resolve target class (explicit, no guessing)
     // --------------------------------------------------
+    log("🧭 Resolving target class", {
+      userId,
+      queryClassId: req.query.classId
+    });
+
     const classDocByTeacher = await Class.findOne({ classTeacher: userId }).lean();
     const isClassTeacher = !!classDocByTeacher;
+
+    log("👨‍🏫 Class-teacher check", {
+      isClassTeacher,
+      classTeacherClassId: classDocByTeacher?._id || null
+    });
 
     let targetClassId;
 
@@ -534,7 +544,13 @@ exports.downloadClassTemplate = async (req, res) => {
       targetClassId = req.query.classId;
     }
 
+    log("🎯 Target class resolved", { targetClassId });
+
     if (!targetClassId) {
+      log("❌ No class selected", {
+        assignedClasses: teacher.assignedClasses
+      });
+
       return res.status(400).json({
         message: "Class selection required",
         classes: teacher.assignedClasses
@@ -549,7 +565,18 @@ exports.downloadClassTemplate = async (req, res) => {
       school: teacher.school
     }).lean();
 
+    log("🏫 Class validation result", {
+      found: !!classDocFinal,
+      targetClassId,
+      teacherSchool: teacher.school
+    });
+
     if (!classDocFinal) {
+      log("❌ Invalid class selection", {
+        targetClassId,
+        teacherSchool: teacher.school
+      });
+
       return res.status(400).json({
         message: "Invalid class selection"
       });
@@ -572,29 +599,54 @@ exports.downloadClassTemplate = async (req, res) => {
 
       const subjectId = req.query.subjectId;
 
+      log("📥 Subject from request", {
+        subjectId,
+        isClassTeacher
+      });
+
       if (!subjectId) {
+        log("❌ Subject missing for subject teacher");
+
         return res.status(400).json({
           message: "Subject selection required"
         });
       }
 
+      log("🔍 Validating subject against CLASS school", {
+        subjectId,
+        classSchool: classDocFinal.school
+      });
+
       const subjectDoc = await Subject.findOne({
         _id: subjectId,
-        school: classDocFinal.school // ✅ FIX
+        school: classDocFinal.school // ✅ correct source of truth
       }).lean();
 
+      log("📘 Subject lookup result", {
+        found: !!subjectDoc,
+        subjectId,
+        classSchool: classDocFinal.school
+      });
+
       if (!subjectDoc) {
+        log("❌ Invalid subject selection", {
+          subjectId,
+          classSchool: classDocFinal.school
+        });
+
         return res.status(400).json({
           message: "Invalid subject selection"
         });
       }
 
       subject = subjectDoc.shortName || subjectDoc.name;
+
+      log("✅ Subject resolved successfully", {
+        subjectId: subjectDoc._id,
+        subject,
+        classId: classDocFinal._id
+      });
     }
-
-
-
-
 
 
 
