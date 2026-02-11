@@ -23,4 +23,4 @@ router.get('/student/receipts/:paymentId', protect, requirePrivateSchool, allcon
 
 router.get('/fees/student/receipt-data/:paymentId', protect, requirePrivateSchool, allcontrollers.getReceiptData);
 
-module.exports = router; ß
+module.exports = router;
