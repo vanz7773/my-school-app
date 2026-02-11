@@ -351,7 +351,7 @@ const getTeacherDailyRecords = async (req, res) => {
         path: 'school',
         match: { _id: { $exists: true } } // Ensure school exists
       });
-      
+
     console.log('Teacher found:', teacher ? teacher._id : 'None');
 
     if (!teacher) {
@@ -397,18 +397,18 @@ const getAdminDailyRecords = async (req, res) => {
 
     if (teacherId) match.teacher = new mongoose.Types.ObjectId(teacherId);
     if (from && to) {
-      match.date = { 
-        $gte: startOfDay(new Date(from)), 
-        $lte: endOfDay(new Date(to)) 
+      match.date = {
+        $gte: startOfDay(new Date(from)),
+        $lte: endOfDay(new Date(to))
       };
     }
 
     if (termId) {
       const term = await Term.findOne({ _id: termId, school: req.user.school });
       if (!term) {
-        return res.status(404).json({ 
-          status: 'fail', 
-          message: 'Term not found' 
+        return res.status(404).json({
+          status: 'fail',
+          message: 'Term not found'
         });
       }
       match.term = term._id;
@@ -432,7 +432,7 @@ const getAdminDailyRecords = async (req, res) => {
       try {
         const recordDate = new Date(record.date);
         const day = recordDate.toLocaleDateString('en-US', { weekday: 'long' });
-        
+
         if (weekdays.includes(day)) {
           dayCounts[day].total += 1;
 
@@ -459,7 +459,7 @@ const getAdminDailyRecords = async (req, res) => {
       };
     });
 
-    res.status(200).json({ 
+    res.status(200).json({
       status: 'success',
       data: {
         records,
@@ -468,9 +468,9 @@ const getAdminDailyRecords = async (req, res) => {
     });
   } catch (err) {
     console.error('Admin daily records error:', err);
-    res.status(500).json({ 
-      status: 'error', 
-      message: 'Failed to fetch daily records' 
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to fetch daily records'
     });
   } finally {
     console.log('=== GET ADMIN DAILY RECORDS COMPLETED ===');
@@ -491,7 +491,7 @@ const getTermWeeks = async (req, res) => {
 
     const weeks = calculateTermWeeks(term.startDate, term.endDate);
 
-    res.status(200).json({ 
+    res.status(200).json({
       status: 'success',
       data: {
         termInfo: { academicYear: term.academicYear, term: term.name, startDate: term.startDate, endDate: term.endDate },
@@ -513,7 +513,7 @@ const getAdminWeeklySummary = async (req, res) => {
   console.log('=== GET ADMIN WEEKLY SUMMARY STARTED ===');
   console.log('Query parameters:', req.query);
   console.log('User school:', req.user.school);
-  
+
   try {
     // 👇 NEW: Ensure absentees are marked for today (after school hours)
     await markAbsenteesForTodayIfNeeded();
@@ -525,30 +525,40 @@ const getAdminWeeklySummary = async (req, res) => {
       match.teacher = new mongoose.Types.ObjectId(teacherId);
       console.log('Filtering by teacher ID:', teacherId);
     }
-    
+
     let termWeeks = [];
     if (termId) {
       console.log('Looking up term with ID:', termId);
-      const term = await Term.findOne({ 
-        _id: termId, 
-        school: req.user.school 
+      const term = await Term.findOne({
+        _id: termId,
+        school: req.user.school
       });
-      
+
       if (!term) {
         console.log('Term not found');
-        return res.status(404).json({ 
+        return res.status(404).json({
           status: 'fail',
-          message: 'Term not found' 
+          message: 'Term not found'
         });
       }
-      
-      match.date = { 
-        $gte: startOfDay(new Date(term.startDate)), 
-        $lte: endOfDay(new Date(term.endDate)) 
+
+      match.date = {
+        $gte: startOfDay(new Date(term.startDate)),
+        $lte: endOfDay(new Date(term.endDate))
       };
-      
+
       termWeeks = calculateTermWeeks(term.startDate, term.endDate);
-      console.log('Calculated term weeks:', termWeeks.length);
+      console.log('Calculating term weeks:', termWeeks.length);
+    }
+
+    // Allow overriding with specific date range (e.g. for specific week)
+    const { from, to } = req.query;
+    if (from && to) {
+      match.date = {
+        $gte: startOfDay(new Date(from)),
+        $lte: endOfDay(new Date(to))
+      };
+      console.log('Overriding filter with date range:', { from, to });
     }
 
     const summary = await Attendance.aggregate([
@@ -556,16 +566,16 @@ const getAdminWeeklySummary = async (req, res) => {
       {
         $group: {
           _id: {
-            weekStart: { 
-              $dateToString: { 
-                format: "%Y-%m-%d", 
+            weekStart: {
+              $dateToString: {
+                format: "%Y-%m-%d",
                 date: { $dateTrunc: { date: "$date", unit: "week" } }
-              } 
+              }
             },
             weekEnd: {
               $dateToString: {
                 format: "%Y-%m-%d",
-                date: { 
+                date: {
                   $dateAdd: {
                     startDate: { $dateTrunc: { date: "$date", unit: "week" } },
                     unit: "day",
@@ -618,10 +628,10 @@ const getAdminWeeklySummary = async (req, res) => {
     // If we have term weeks, map the week numbers to the summary
     if (termId && termWeeks.length > 0) {
       const summaryWithWeekNumbers = summary.map(week => {
-        const matchingTermWeek = termWeeks.find(termWeek => 
+        const matchingTermWeek = termWeeks.find(termWeek =>
           new Date(termWeek.startDate).toISOString() === new Date(week.weekStart).toISOString()
         );
-        
+
         return {
           ...week,
           weekNumber: matchingTermWeek?.weekNumber || null,
@@ -629,25 +639,25 @@ const getAdminWeeklySummary = async (req, res) => {
         };
       });
 
-      res.status(200).json({ 
+      res.status(200).json({
         status: 'success',
-        data: { 
+        data: {
           termWeeks,
           attendance: summaryWithWeekNumbers,
           currentWeek: termWeeks.find(week => week.isCurrent)
         }
       });
     } else {
-      res.status(200).json({ 
+      res.status(200).json({
         status: 'success',
-        data: summary 
+        data: summary
       });
     }
   } catch (err) {
     console.error('Admin weekly summary error:', err);
-    res.status(500).json({ 
+    res.status(500).json({
       status: 'error',
-      message: 'Failed to fetch weekly summary' 
+      message: 'Failed to fetch weekly summary'
     });
   } finally {
     console.log('=== GET ADMIN WEEKLY SUMMARY COMPLETED ===');
@@ -661,17 +671,17 @@ const getAdminWeeklySummary = async (req, res) => {
 const getTeacherWeeklySummary = async (req, res) => {
   console.log('=== GET TEACHER WEEKLY SUMMARY STARTED ===');
   console.log('Query params:', req.query);
-  
+
   try {
     // 👇 NEW: Ensure absentees are marked for today (after school hours)
     await markAbsenteesForTodayIfNeeded();
 
     const teacher = await Teacher.findOne({ user: req.user.id }).populate('school');
-    
+
     if (!teacher) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         status: 'fail',
-        message: 'Teacher not found' 
+        message: 'Teacher not found'
       });
     }
 
@@ -682,9 +692,9 @@ const getTeacherWeeklySummary = async (req, res) => {
     if (termId) {
       currentTerm = await Term.findById(termId);
     } else {
-      currentTerm = await Term.findOne({ 
-        school: teacher.school._id, 
-        isCurrent: true 
+      currentTerm = await Term.findOne({
+        school: teacher.school._id,
+        isCurrent: true
       });
     }
 
@@ -699,9 +709,9 @@ const getTeacherWeeklySummary = async (req, res) => {
     const termEnd = new Date(currentTerm.endDate);
 
     // Build match conditions
-    const matchConditions = { 
+    const matchConditions = {
       teacher: teacher._id,
-      date: { 
+      date: {
         $gte: termStart,
         $lte: termEnd,
         $type: 'date'
@@ -717,15 +727,15 @@ const getTeacherWeeklySummary = async (req, res) => {
     // Group by consistent week numbers (aligned with homepage)
     const weeklySummary = {};
     const millisecondsPerWeek = 7 * 24 * 60 * 60 * 1000;
-    
+
     attendanceData.forEach(record => {
       const recordDate = new Date(record.date);
-      
+
       // Calculate week number exactly like the homepage
       const weekNumber = Math.floor((recordDate - termStart) / millisecondsPerWeek) + 1;
-      
+
       // Ensure week number is within bounds
-      const boundedWeek = Math.max(1, Math.min(weekNumber, 
+      const boundedWeek = Math.max(1, Math.min(weekNumber,
         Math.ceil((termEnd - termStart) / millisecondsPerWeek)));
 
       if (!weeklySummary[boundedWeek]) {
@@ -739,11 +749,11 @@ const getTeacherWeeklySummary = async (req, res) => {
       }
 
       weeklySummary[boundedWeek].total++;
-      
+
       if (record.status === 'On Time' || record.status === 'Late') {
         weeklySummary[boundedWeek].present++;
       }
-      
+
       if (record.status === 'Late') {
         weeklySummary[boundedWeek].late++;
       }
@@ -757,15 +767,15 @@ const getTeacherWeeklySummary = async (req, res) => {
 
     console.log('Weekly summary generated:', result.length, 'weeks with attendance records');
 
-    res.status(200).json({ 
+    res.status(200).json({
       status: 'success',
-      data: result 
+      data: result
     });
   } catch (err) {
     console.error('Teacher weekly summary error:', err);
-    res.status(500).json({ 
+    res.status(500).json({
       status: 'error',
-      message: 'Failed to fetch weekly summary' 
+      message: 'Failed to fetch weekly summary'
     });
   } finally {
     console.log('=== GET TEACHER WEEKLY SUMMARY COMPLETED ===');
@@ -778,19 +788,19 @@ const getTeacherWeeklySummary = async (req, res) => {
 const getTeacherMonthlySummary = async (req, res) => {
   console.log('=== GET TEACHER MONTHLY SUMMARY STARTED ===');
   console.log('User ID:', req.user.id);
-  
+
   try {
     // 👇 NEW: Ensure absentees are marked for today (after school hours)
     await markAbsenteesForTodayIfNeeded();
 
     const teacher = await Teacher.findOne({ user: req.user.id });
     console.log('Teacher found:', teacher ? teacher._id : 'None');
-    
+
     if (!teacher) {
       console.log('Teacher not found');
-      return res.status(404).json({ 
+      return res.status(404).json({
         status: 'fail',
-        message: 'Teacher not found' 
+        message: 'Teacher not found'
       });
     }
 
@@ -820,15 +830,15 @@ const getTeacherMonthlySummary = async (req, res) => {
 
     console.log('Monthly summary count:', summary.length);
 
-    res.status(200).json({ 
+    res.status(200).json({
       status: 'success',
-      data: summary 
+      data: summary
     });
   } catch (err) {
     console.error('Teacher monthly summary error:', err);
-    res.status(500).json({ 
+    res.status(500).json({
       status: 'error',
-      message: 'Failed to fetch monthly summary' 
+      message: 'Failed to fetch monthly summary'
     });
   } finally {
     console.log('=== GET TEACHER MONTHLY SUMMARY COMPLETED ===');
@@ -843,7 +853,7 @@ const getAdminMonthlySummary = async (req, res) => {
   console.log('=== GET ADMIN MONTHLY SUMMARY STARTED ===');
   console.log('Query parameters:', req.query);
   console.log('User school:', req.user.school);
-  
+
   try {
     // 👇 NEW: Ensure absentees are marked for today (after school hours)
     await markAbsenteesForTodayIfNeeded();
@@ -857,9 +867,9 @@ const getAdminMonthlySummary = async (req, res) => {
     }
 
     if (from && to) {
-      match.date = { 
-        $gte: startOfDay(new Date(from)), 
-        $lte: endOfDay(new Date(to)) 
+      match.date = {
+        $gte: startOfDay(new Date(from)),
+        $lte: endOfDay(new Date(to))
       };
       console.log('Filtering by date range:', { from, to });
     }
@@ -920,15 +930,15 @@ const getAdminMonthlySummary = async (req, res) => {
 
     console.log('Monthly summary count:', summary.length);
 
-    res.status(200).json({ 
+    res.status(200).json({
       status: 'success',
-      data: summary 
+      data: summary
     });
   } catch (err) {
     console.error('Admin monthly summary error:', err);
-    res.status(500).json({ 
+    res.status(500).json({
       status: 'error',
-      message: 'Failed to fetch monthly summary' 
+      message: 'Failed to fetch monthly summary'
     });
   } finally {
     console.log('=== GET ADMIN MONTHLY SUMMARY COMPLETED ===');
@@ -1006,16 +1016,16 @@ const getTodayAttendance = async (req, res) => {
 const getMissedClockouts = async (req, res) => {
   console.log('=== GET MISSED CLOCKOUTS STARTED ===');
   console.log('User ID:', req.user.id);
-  
+
   try {
     const teacher = await Teacher.findOne({ user: req.user.id });
     console.log('Teacher found:', teacher ? teacher._id : 'None');
-    
+
     if (!teacher) {
       console.log('Teacher not found');
-      return res.status(404).json({ 
+      return res.status(404).json({
         status: 'fail',
-        message: 'Teacher not found' 
+        message: 'Teacher not found'
       });
     }
 
@@ -1024,20 +1034,20 @@ const getMissedClockouts = async (req, res) => {
       signInTime: { $ne: null },
       signOutTime: null
     })
-    .sort({ date: -1 })
-    .limit(5);
+      .sort({ date: -1 })
+      .limit(5);
 
     console.log('Missed clockouts found:', missed.length);
 
-    res.status(200).json({ 
+    res.status(200).json({
       status: 'success',
-      data: missed 
+      data: missed
     });
   } catch (err) {
     console.error('Missed clockouts error:', err);
-    res.status(500).json({ 
+    res.status(500).json({
       status: 'error',
-      message: 'Failed to fetch missed clockouts' 
+      message: 'Failed to fetch missed clockouts'
     });
   } finally {
     console.log('=== GET MISSED CLOCKOUTS COMPLETED ===');
@@ -1057,12 +1067,12 @@ const getTeacherAttendanceHistory = async (req, res) => {
 
     const teacher = await Teacher.findOne({ user: req.user.id });
     console.log('Teacher found:', teacher ? teacher._id : 'None');
-    
+
     if (!teacher) {
       console.log('Teacher not found');
-      return res.status(404).json({ 
+      return res.status(404).json({
         status: 'fail',
-        message: 'Teacher not found' 
+        message: 'Teacher not found'
       });
     }
 
@@ -1073,15 +1083,15 @@ const getTeacherAttendanceHistory = async (req, res) => {
 
     console.log('History records found:', history.length);
 
-    res.status(200).json({ 
+    res.status(200).json({
       status: 'success',
-      data: history 
+      data: history
     });
   } catch (err) {
     console.error('Attendance history error:', err);
-    res.status(500).json({ 
+    res.status(500).json({
       status: 'error',
-      message: 'Failed to fetch attendance history' 
+      message: 'Failed to fetch attendance history'
     });
   } finally {
     console.log('=== GET TEACHER ATTENDANCE HISTORY COMPLETED ===');
@@ -1096,14 +1106,14 @@ const getAdminAttendanceHistory = async (req, res) => {
   console.log('=== GET ADMIN ATTENDANCE HISTORY STARTED ===');
   console.log('Query parameters:', req.query);
   console.log('User school:', req.user.school);
-  
+
   try {
     // 👇 NEW: Ensure absentees are marked for today (after school hours)
     await markAbsenteesForTodayIfNeeded();
 
     const { teacherId } = req.query;
     const filter = { school: req.user.school };
-    
+
     if (teacherId && mongoose.Types.ObjectId.isValid(teacherId)) {
       filter.teacher = teacherId;
       console.log('Filtering by teacher ID:', teacherId);
@@ -1118,15 +1128,15 @@ const getAdminAttendanceHistory = async (req, res) => {
 
     console.log('History records found:', history.length);
 
-    res.status(200).json({ 
+    res.status(200).json({
       status: 'success',
-      data: history 
+      data: history
     });
   } catch (err) {
     console.error('Admin attendance history error:', err);
-    res.status(500).json({ 
+    res.status(500).json({
       status: 'error',
-      message: 'Failed to fetch admin attendance history' 
+      message: 'Failed to fetch admin attendance history'
     });
   } finally {
     console.log('=== GET ADMIN ATTENDANCE HISTORY COMPLETED ===');
