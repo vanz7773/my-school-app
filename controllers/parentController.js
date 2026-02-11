@@ -131,7 +131,7 @@ exports.createParent = async (req, res) => {
       }
     });
   } catch (err) {
-    try { await session.abortTransaction(); } catch (e) {}
+    try { await session.abortTransaction(); } catch (e) { }
     session.endSession();
     console.error('❌ Error creating parent:', err);
     return res.status(500).json({ message: 'Error creating parent', error: err.message });
@@ -190,6 +190,7 @@ exports.getMyChildren = async (req, res) => {
 
     const children = await Student.find({ _id: { $in: parent.childIds }, school: schoolId })
       .populate('user', 'name email')
+      .populate('school', 'name schoolType')
       .lean();
 
     return res.json(children);
@@ -328,7 +329,7 @@ exports.updateParent = async (req, res) => {
       }
     });
   } catch (err) {
-    try { await session.abortTransaction(); } catch (e) {}
+    try { await session.abortTransaction(); } catch (e) { }
     session.endSession();
     console.error('❌ updateParent error:', err);
     return res.status(500).json({ message: 'Error updating parent', error: err.message });
@@ -440,7 +441,7 @@ exports.getChildrenByParentId = async (req, res) => {
       school: parent.school
     })
       .populate('class', 'name')
-      .populate('school', 'name')
+      .populate('school', 'name schoolType')
       .select('name admissionNumber class school academicYear gender')
       .lean();
 
