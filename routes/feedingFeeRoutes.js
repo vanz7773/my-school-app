@@ -10,25 +10,25 @@ const {
   getFeedingFeeSummary,
   getClassesWithFeeBands
 } = require('../controllers/feedingFeeController');
-const { protect } = require('../middlewares/authMiddleware');
+const { protect, requirePrivateSchool } = require('../middlewares/authMiddleware');
 
 // ----------------- Configuration Routes -----------------
-router.get('/config', protect, getFeedingFeeConfig);
-router.post('/config', protect, setFeedingFeeConfig);
+router.get('/config', protect, requirePrivateSchool, getFeedingFeeConfig);
+router.post('/config', protect, requirePrivateSchool, setFeedingFeeConfig);
 
 // ----------------- Utility & Helper Routes -----------------
-router.get('/classes-with-bands', protect, getClassesWithFeeBands);
+router.get('/classes-with-bands', protect, requirePrivateSchool, getClassesWithFeeBands);
 
 // ----------------- Core Fee Collection Routes -----------------
-router.post('/calculate', protect, calculateFeedingFeeCollection);
+router.post('/calculate', protect, requirePrivateSchool, calculateFeedingFeeCollection);
 
 // ----------------- Student-Focused Routes -----------------
-router.get('/student/:studentId', protect, getFeedingFeeForStudent);
+router.get('/student/:studentId', protect, requirePrivateSchool, getFeedingFeeForStudent);
 
 // ----------------- Reporting Routes -----------------
-router.get('/summary', protect, getFeedingFeeSummary);
+router.get('/summary', protect, requirePrivateSchool, getFeedingFeeSummary);
 
 // ----------------- Manual Marking Routes -----------------
-router.post("/mark", protect, markFeeding);
+router.post("/mark", protect, requirePrivateSchool, markFeeding);
 
 module.exports = router;

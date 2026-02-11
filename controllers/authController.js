@@ -36,7 +36,7 @@ const hashToken = (token) =>
 // ------------------------------
 exports.register = async (req, res) => {
   try {
-    const { name, email, password, role, schoolName } = req.body;
+    const { name, email, password, role, schoolName, schoolType } = req.body;
     if (!name || !email || !password || !role || !schoolName)
       return sendError(res, 400, "All fields are required");
 
@@ -48,7 +48,10 @@ exports.register = async (req, res) => {
     // Find or create school (single query when possible)
     let school = await School.findOne({ name: schoolName }).lean();
     if (!school) {
-      const created = await School.create({ name: schoolName });
+      const created = await School.create({
+        name: schoolName,
+        schoolType: schoolType || "Private"
+      });
       school = created.toObject();
     }
 
@@ -71,6 +74,7 @@ exports.register = async (req, res) => {
         school: {
           id: school._id || school.id,
           name: school.name,
+          schoolType: school.schoolType || "Private",
           location: school.location || null,
         },
       },
@@ -94,7 +98,7 @@ exports.login = async (req, res) => {
 
     const user = await User.findOne({ email: normalizedEmail })
       .select("+password")
-      .populate("school", "name location")
+      .populate("school", "name location schoolType")
       .lean({ virtuals: true });
 
     if (!user) return sendError(res, 401, "Invalid email or password");
@@ -138,6 +142,7 @@ exports.login = async (req, res) => {
         ? {
           id: user.school._id || user.school,
           name: user.school.name,
+          schoolType: user.school.schoolType || "Private",
           location: user.school.location || null,
         }
         : null,
