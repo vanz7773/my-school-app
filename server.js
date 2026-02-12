@@ -66,7 +66,7 @@ mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('✅ MongoDB connected'))
   .catch((err) => console.error('❌ DB connection error:', err));
 
-  // In your server.js or app.js after mongoose connects
+// In your server.js or app.js after mongoose connects
 
 const { GridFSBucket } = require('mongodb');
 
@@ -114,6 +114,7 @@ const questionSourceRoutes = require("./routes/questionSource.routes");
 const questionBlock = require("./routes/questionBlock.routes");
 const examQuestion = require("./routes/examQuestion.routes");
 const pdfTest = require("./routes/pdfTest.routes");
+const searchRoutes = require('./routes/searchRoutes');
 // Define API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/students', studentRoutes);
@@ -152,6 +153,7 @@ app.use("/api/question-sources", questionSourceRoutes);
 app.use("/api/question-blocks", questionBlock);
 app.use("/api/exam-questions", examQuestion);
 app.use("/api/test", pdfTest);
+app.use("/api/search", searchRoutes);
 
 
 
