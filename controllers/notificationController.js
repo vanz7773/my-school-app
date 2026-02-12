@@ -1,8 +1,11 @@
-// controllers/notificationController.js
+const { Expo } = require('expo-server-sdk');
 const mongoose = require('mongoose');
 const Notification = require('../models/Notification');
 const User = require('../models/User');
 const Student = require('../models/Student');
+
+// Initialize Expo SDK
+const expo = new Expo();
 
 /* ------------------------------------------------------------------
    PRE-COMPUTE MODEL CAPABILITIES (DO ONLY ONCE)
@@ -22,7 +25,6 @@ const MODEL_HAS = {
 ------------------------------------------------------------------ */
 
 // Resolve user's class: prefer req.user.class, otherwise look up Student doc.
-// Cache result in req._localCache to avoid repeated DB calls during one request.
 async function resolveUserClass(req, userId) {
   req._localCache = req._localCache || {};
   if (req._localCache[`userClass:${userId}`] !== undefined) {
@@ -42,7 +44,6 @@ async function resolveUserClass(req, userId) {
     req._localCache[`userClass:${userId}`] = cls;
     return cls;
   } catch (e) {
-    // best-effort: cache null to avoid retries
     req._localCache[`userClass:${userId}`] = null;
     return null;
   }
@@ -50,8 +51,6 @@ async function resolveUserClass(req, userId) {
 
 /* ------------------------------------------------------------------
    UTILITY: Build payload based on model fields
-   Accepts: audience, recipientIds (array), recipientRoles (array optional),
-            classId (optional), type, title, message, relatedResource, resourceModel
 ------------------------------------------------------------------ */
 function buildNotificationPayload(req, body) {
   const {
@@ -79,16 +78,13 @@ function buildNotificationPayload(req, body) {
   if (MODEL_HAS.class) payload.class = classId || null;
 
   if (MODEL_HAS.recipientUsers) {
-    // ensure array (mongoose will cast to ObjectId where required)
     payload.recipientUsers = Array.isArray(recipientIds) ? recipientIds : [];
   }
 
   if (MODEL_HAS.recipientRoles) {
-    // allow explicit override, otherwise build from audience
     if (Array.isArray(recipientRoles) && recipientRoles.length > 0) {
       payload.recipientRoles = recipientRoles;
     } else {
-      // audience === 'all' -> ['all'] else if audience is a role -> [audience]
       payload.recipientRoles = audience === 'all' ? ['all'] : (audience ? [audience] : []);
     }
   }
@@ -105,19 +101,58 @@ function buildNotificationPayload(req, body) {
 }
 
 /* ------------------------------------------------------------------
-   REAL-TIME BROADCAST FILTER (class-aware)
-   Returns true if the notification should be delivered to the given userObj
-   userObj expected shape: { _id, role, school, class? }
+   PUSH NOTIFICATION SERVICE
+------------------------------------------------------------------ */
+async function sendPushNotifications(userIds, title, message, data = {}) {
+  try {
+    if (!userIds || userIds.length === 0) return;
+
+    // Fetch users with push tokens
+    const users = await User.find({
+      _id: { $in: userIds },
+      pushToken: { $exists: true, $ne: null }
+    }).select('pushToken');
+
+    let messages = [];
+    for (let user of users) {
+      if (!Expo.isExpoPushToken(user.pushToken)) {
+        console.error(`Push token ${user.pushToken} is not a valid Expo push token`);
+        continue;
+      }
+
+      messages.push({
+        to: user.pushToken,
+        sound: 'default',
+        title: title,
+        body: message,
+        data: data,
+      });
+    }
+
+    let chunks = expo.chunkPushNotifications(messages);
+    let tickets = [];
+
+    for (let chunk of chunks) {
+      try {
+        let ticketChunk = await expo.sendPushNotificationsAsync(chunk);
+        tickets.push(...ticketChunk);
+      } catch (error) {
+        console.error("Error sending push notification chunk:", error);
+      }
+    }
+  } catch (error) {
+    console.error("Error in sendPushNotifications:", error);
+  }
+}
+
+/* ------------------------------------------------------------------
+   REAL-TIME BROADCAST FILTER & PUSH TRIGGER
 ------------------------------------------------------------------ */
 function shouldDeliverNotificationToUser(notification, userObj) {
-  // school mismatch -> never deliver
   if (String(notification.school) !== String(userObj.school)) return false;
 
-  // class-level notifications: if notification.class exists, user must belong to that class
   if (notification.class) {
-    // if userObj.class is missing, we conservatively don't deliver (unless the user is explicitly targeted)
     if (!userObj.class) {
-      // allow if user is explicitly in recipientUsers
       if (notification.recipientUsers && notification.recipientUsers.map(String).includes(String(userObj._id))) {
         return true;
       }
@@ -126,73 +161,79 @@ function shouldDeliverNotificationToUser(notification, userObj) {
     if (String(userObj.class) !== String(notification.class)) return false;
   }
 
-  // explicit recipientUsers override everything
   if (notification.recipientUsers && notification.recipientUsers.map(String).includes(String(userObj._id))) return true;
-
-  // audience equals role
   if (notification.audience && notification.audience !== 'all' && notification.audience === userObj.role) return true;
-
-  // recipientRoles includes user's role
   if (notification.recipientRoles && notification.recipientRoles.includes(userObj.role)) return true;
-
-  // audience = all OR recipientRoles includes 'all'
   if (notification.audience === 'all') return true;
   if (notification.recipientRoles && notification.recipientRoles.includes('all')) return true;
 
   return false;
 }
 
-/* ------------------------------------------------------------------
-   SOCKET BROADCAST: deliver notification to connected users using preloaded caches
-   - req.app.get('userCache') should be Map<userId, { role, school, class? }>
-   - req.app.get('connectedUsers') should be Map<userId, socketId>
------------------------------------------------------------------- */
 async function broadcastNotification(req, notification) {
   try {
     const io = req.app.get('io');
-    if (!io) return;
+    const userCache = req.app.get('userCache');
+    const connectedUsers = req.app.get('connectedUsers');
 
-    const userCache = req.app.get('userCache'); // Map(userId -> { role, school, class? })
-    const connectedUsers = req.app.get('connectedUsers'); // Map(userId -> socketId)
-    if (!userCache || !connectedUsers) return;
+    const recipientsForPush = [];
 
-    // Avoid DB queries inside loop. If userCache lacks class for a user we skip class delivery
-    for (const [uid, userObj] of userCache.entries()) {
-      // only consider connected users
-      const socketId = connectedUsers.get(uid);
-      if (!socketId) continue;
+    if (io && userCache) {
+      for (const [uid, userObj] of userCache.entries()) {
+        const u = {
+          _id: uid,
+          role: userObj.role,
+          school: userObj.school,
+          class: userObj.class || null,
+        };
 
-      // Deliver only for same school quickly
-      if (String(userObj.school) !== String(notification.school)) continue;
-
-      // Build a shallow user object for checking
-      const u = {
-        _id: uid,
-        role: userObj.role,
-        school: userObj.school,
-        class: userObj.class || null,
-      };
-
-      if (shouldDeliverNotificationToUser(notification, u)) {
-        io.to(socketId).emit('notification', {
-          _id: notification._id,
-          title: notification.title,
-          message: notification.message,
-          type: notification.type,
-          audience: notification.audience,
-          class: notification.class || null,
-          createdAt: notification.createdAt,
-          sender: notification.sender ? { _id: notification.sender, name: notification.senderName || null } : null,
-        });
+        if (shouldDeliverNotificationToUser(notification, u)) {
+          // Socket delivery
+          if (connectedUsers && connectedUsers.has(uid)) {
+            const socketId = connectedUsers.get(uid);
+            io.to(socketId).emit('notification', {
+              _id: notification._id,
+              title: notification.title,
+              message: notification.message,
+              type: notification.type,
+              createdAt: notification.createdAt,
+              sender: notification.sender ? { _id: notification.sender, name: notification.senderName || null } : null,
+            });
+          } else {
+            // Determine offline users for Push Notification
+            recipientsForPush.push(uid);
+          }
+        }
       }
     }
+
+    // Also consider explicitly targeted recipientUsers even if not in cache (fresh startup scenario)
+    if (notification.recipientUsers && notification.recipientUsers.length > 0) {
+      const explicitIds = notification.recipientUsers.map(String);
+      recipientsForPush.push(...explicitIds);
+    }
+
+    // Deduplicate push recipients
+    const uniquePushRecipients = [...new Set(recipientsForPush)];
+
+    if (uniquePushRecipients.length > 0) {
+      // Send Push Notifications Background Task
+      sendPushNotifications(uniquePushRecipients, notification.title, notification.message, { notificationId: notification._id });
+    }
+
   } catch (err) {
     console.warn('broadcastNotification error:', err);
   }
 }
 
+// Helper to manually trigger push from other controllers
+exports.sendPushToUser = async (userId, title, message, data = {}) => {
+  await sendPushNotifications([userId], title, message, data);
+};
+
+
 /* ------------------------------------------------------------------
-   CREATE NOTIFICATION — CLASS-AWARE & SAFE
+   CREATE NOTIFICATION
 ------------------------------------------------------------------ */
 exports.createNotification = async (req, res) => {
   try {
@@ -202,11 +243,9 @@ exports.createNotification = async (req, res) => {
     const payload = buildNotificationPayload(req, req.body);
     const notification = await Notification.create(payload);
 
-    // attach sender name for socket convenience (no DB join)
     const senderName = req.user?.name || null;
     notification.senderName = senderName;
 
-    // Broadcast using cached maps (best-effort)
     await broadcastNotification(req, notification);
 
     return res.status(201).json({ message: 'Notification created', notification });
@@ -217,7 +256,7 @@ exports.createNotification = async (req, res) => {
 };
 
 /* ------------------------------------------------------------------
-   GET MY NOTIFICATIONS — CLASS-AWARE
+   GET MY NOTIFICATIONS
 ------------------------------------------------------------------ */
 exports.getMyNotifications = async (req, res) => {
   try {
@@ -225,10 +264,8 @@ exports.getMyNotifications = async (req, res) => {
     const schoolId = String(req.user.school);
     const role = req.user.role;
 
-    // resolve user's class (may query Student)
     const userClass = await resolveUserClass(req, userId);
 
-    // Build OR clauses (only include model-backed fields)
     const or = [];
     if (MODEL_HAS.recipient) or.push({ recipient: userId });
     if (MODEL_HAS.recipientUsers) or.push({ recipientUsers: userId });
@@ -237,7 +274,6 @@ exports.getMyNotifications = async (req, res) => {
     or.push({ audience: 'all' });
     or.push({ recipientRoles: 'all' });
 
-    // class filter: either global (class: null) or match user's class
     const classFilter = MODEL_HAS.class
       ? { $or: [{ class: null }, { class: userClass }] }
       : {};
@@ -286,7 +322,7 @@ exports.markAsRead = async (req, res) => {
 };
 
 /* ------------------------------------------------------------------
-   MARK ALL AS READ — CLASS-AWARE
+   MARK ALL AS READ
 ------------------------------------------------------------------ */
 exports.markAllAsRead = async (req, res) => {
   try {
@@ -368,7 +404,7 @@ exports.cleanupOldNotifications = async (req, res) => {
 };
 
 /* ------------------------------------------------------------------
-   MARK TYPES AS READ — WITH CLASS FILTERING
+   MARK TYPES AS READ
 ------------------------------------------------------------------ */
 exports.markTypesAsRead = async (req, res) => {
   try {
@@ -396,10 +432,8 @@ exports.markTypesAsRead = async (req, res) => {
     };
 
     if (classId) {
-      // classId provided explicitly -> restrict to that class
       filter.class = classId;
     } else {
-      // otherwise include notifications intended for user's class or global ones
       const userClass = await resolveUserClass(req, userId);
       if (MODEL_HAS.class) {
         filter.$and = [{ $or: [{ class: null }, { class: userClass }] }];
