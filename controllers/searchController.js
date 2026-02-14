@@ -49,7 +49,7 @@ exports.globalSearch = async (req, res) => {
                 ]
             })
                 .populate('user', 'name profilePicture')
-                .populate('class', 'name')
+                .populate({ path: 'class', select: 'name', strictPopulate: false })
                 .limit(5)
                 .lean(),
 

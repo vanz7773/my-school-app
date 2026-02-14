@@ -17,7 +17,7 @@ const studentSchema = new mongoose.Schema({
   class: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Class',
-    default: null   // ⭐ Needed because graduates have no class
+    default: null   // ⭐ Needed because graduates have no class. Ensure strictPopulate is false if this path is missing in some environments.
   },
 
   gender: {
