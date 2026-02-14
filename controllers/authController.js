@@ -261,6 +261,48 @@ exports.resetPassword = async (req, res) => {
 };
 
 // ------------------------------
+// SELF-SERVICE: Admin Request Reset (No DOB check)
+// ------------------------------
+exports.requestResetForAdmin = async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return sendError(res, 400, "Email is required");
+
+    const normalizedEmail = String(email).toLowerCase().trim();
+    const user = await User.findOne({ email: normalizedEmail, role: 'admin' }).select("_id name").lean();
+
+    if (!user) {
+      // Return 404 so frontend knows to show "contact super admin" message
+      // In a real generic app, we might return generic success to prevent enumeration,
+      // but for this specific UX requirement, we return 404.
+      return sendError(res, 404, "No admin account found with this email");
+    }
+
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Save hashed code on user
+    await User.findByIdAndUpdate(user._id, {
+      passwordResetTokenHash: hashToken(code),
+      passwordResetExpiresAt: Date.now() + 15 * 60 * 1000,
+    });
+
+    // In a real app, SEND EMAIL HERE.
+    // For now, we return the code to the frontend for demo purposes.
+    console.log(`🔐 RESET CODE for ${user.email}: ${code}`);
+
+    return res.json({
+      success: true,
+      message: "Verification code sent to email",
+      code, // TODO: Remove this in production and send email instead
+      expiresIn: "15 minutes",
+    });
+  } catch (err) {
+    console.error("requestResetForAdmin error:", err);
+    return sendError(res, 500, "Server error");
+  }
+};
+
+// ------------------------------
 // SELF-SERVICE: Request Reset Using DOB
 // ------------------------------
 exports.requestResetWithDOB = async (req, res) => {
@@ -293,7 +335,7 @@ exports.requestResetWithDOB = async (req, res) => {
     return res.json({
       success: true,
       message: "Verification code created",
-      code,
+      code, // DEMO ONLY
       expiresIn: "15 minutes",
     });
   } catch (err) {

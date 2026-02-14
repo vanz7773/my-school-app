@@ -33,6 +33,9 @@ router.post('/request-reset-dob', authController.requestResetWithDOB);
 // ✅ SELF-SERVICE: Complete password reset using the 6-digit verification code
 router.post('/reset-password-dob', authController.resetPasswordWithCode);
 
+// ✅ ADMIN SELF-SERVICE: Request password reset (no DOB)
+router.post('/admin/request-reset', authController.requestResetForAdmin);
+
 // ✅ ADMIN-ASSIGNED RESET (Teachers/Parents): Request password reset → logged for admin approval
 // 🔹 NOTE: The "/auth" prefix was removed to prevent double prefixing (/api/auth/auth/...)
 router.post('/request-reset-admin', authController.requestAdminResetSelfService);
