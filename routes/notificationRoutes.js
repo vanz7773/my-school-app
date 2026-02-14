@@ -5,6 +5,7 @@ const {
   createNotification,
   getMyNotifications,
   markAsRead,
+  markAllAsRead,
   markTypesAsRead
 } = require('../controllers/notificationController');
 
@@ -13,6 +14,7 @@ const {
 // ========================================================
 router.post('/', protect, createNotification);
 router.get('/', protect, getMyNotifications);
+router.patch('/mark-all-read', protect, markAllAsRead);
 router.patch('/:id/read', protect, markAsRead);
 router.post('/mark-read', protect, markTypesAsRead);
 
