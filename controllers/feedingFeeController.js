@@ -56,17 +56,17 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 async function getFeeConfigWithCache(schoolId) {
   const cacheKey = `feeConfig_${schoolId}`;
   const cached = feeConfigCache.get(cacheKey);
-  
+
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
     return cached.data;
   }
 
   const config = await FeedingFeeConfig.findOne({ school: schoolId });
-  
+
   if (config) {
     feeConfigCache.set(cacheKey, { data: config, timestamp: Date.now() });
   }
-  
+
   return config;
 }
 // 🧩 Helper: Resolve class display name safely
@@ -92,17 +92,17 @@ const resolveClassNames = (classDoc) => {
 async function getClassWithCache(classId, schoolId) {
   const cacheKey = `class_${classId}_${schoolId}`;
   const cached = classCache.get(cacheKey);
-  
+
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
     return cached.data;
   }
 
   const classDoc = await Class.findOne({ _id: classId, school: schoolId }).lean();
-  
+
   if (classDoc) {
     classCache.set(cacheKey, { data: classDoc, timestamp: Date.now() });
   }
-  
+
   return classDoc;
 }
 
@@ -112,13 +112,13 @@ async function getClassWithCache(classId, schoolId) {
 async function getStudentWithCache(studentId, schoolId, userId = null) {
   const cacheKey = `student_${studentId}_${schoolId}_${userId || 'none'}`;
   const cached = studentCache.get(cacheKey);
-  
+
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
     return cached.data;
   }
 
   let query = { _id: studentId, school: schoolId };
-  
+
   // For parent access, verify ownership
   if (userId) {
     query.$or = [
@@ -131,11 +131,11 @@ async function getStudentWithCache(studentId, schoolId, userId = null) {
     .populate("class")
     .populate("user")
     .lean();
-  
+
   if (student) {
     studentCache.set(cacheKey, { data: student, timestamp: Date.now() });
   }
-  
+
   return student;
 }
 
@@ -244,15 +244,15 @@ function getStudentCategory(student) {
   if (className.includes('creche') || className.includes('kg') || className.includes('nursery')) {
     return 'creche-kg2';
   } else if (className.includes('basic 1') || className.includes('basic1') ||
-             className.includes('basic 2') || className.includes('basic2') ||
-             className.includes('basic 3') || className.includes('basic3') ||
-             className.includes('basic 4') || className.includes('basic4') ||
-             className.includes('basic 5') || className.includes('basic5') ||
-             className.includes('basic 6') || className.includes('basic6')) {
+    className.includes('basic 2') || className.includes('basic2') ||
+    className.includes('basic 3') || className.includes('basic3') ||
+    className.includes('basic 4') || className.includes('basic4') ||
+    className.includes('basic 5') || className.includes('basic5') ||
+    className.includes('basic 6') || className.includes('basic6')) {
     return 'basic1-6';
   } else if (className.includes('basic 7') || className.includes('jhs') ||
-             className.includes('basic7') || className.includes('basic8') ||
-             className.includes('basic9')) {
+    className.includes('basic7') || className.includes('basic8') ||
+    className.includes('basic9')) {
     return 'basic7-9';
   }
 
@@ -282,7 +282,7 @@ try {
     const bands = getFeeBandsFromConfig(config);
     const className = (student?.class?.name || '').toLowerCase().trim();
     if (!className) return 0;
-    if (['crèche','creche','nursery 1','nursery 2','kg 1','kg1','kg 2','kg2'].some(k => className.includes(k))) return Number(bands.crecheToKG2 || 0);
+    if (['crèche', 'creche', 'nursery 1', 'nursery 2', 'kg 1', 'kg1', 'kg 2', 'kg2'].some(k => className.includes(k))) return Number(bands.crecheToKG2 || 0);
     if (/(basic|grade|primary)\s*[1-6]/.test(className)) return Number(bands.basic1To6 || 0);
     if (/(basic|grade|primary)\s*[7-9]|jhs/.test(className)) return Number(bands.basic7To9 || 0);
     return 0;
@@ -297,12 +297,12 @@ try {
     const bands = getFeeBandsFromConfig(config);
     return bands.default || 0;
   };
-  
+
   getClassFeeBands = (config) => {
     if (!config) return {};
     return getFeeBandsFromConfig(config);
   };
-  
+
   getFeeBandsFromConfig = (rawConfig = {}) => {
     if (rawConfig.feeBands && typeof rawConfig.feeBands === 'object') {
       return rawConfig.feeBands;
@@ -463,13 +463,12 @@ const markFeeding = async (req, res) => {
 
     return res.json({
       success: true,
-      message: `${getFullStudentName(studentDoc)} marked as ${
-        normalizedValue === "present"
+      message: `${getFullStudentName(studentDoc)} marked as ${normalizedValue === "present"
           ? "fed (present)"
           : normalizedValue === "absent"
-          ? "not fed (absent)"
-          : "not marked"
-      } for ${day} (Week ${weekNumber})`,
+            ? "not fed (absent)"
+            : "not marked"
+        } for ${day} (Week ${weekNumber})`,
       updatedDays: breakdownEntry.days,
       perDayFee: breakdownEntry.perDayFee,
       amountPerDay,
@@ -610,28 +609,24 @@ const calculateFeedingFeeCollection = async (req, res) => {
         }
       }
 
-      // Reset all-absent → notmarked
-      const values = Object.values(mergedDays);
-      if (!values.includes("present") && values.every((v) => v === "absent")) {
-        mergedDays = { M: "notmarked", T: "notmarked", W: "notmarked", TH: "notmarked", F: "notmarked" };
-      }
+
 
       const daysPaid = Object.values(mergedDays).filter((v) => v === "present").length;
       const calculatedAmount = daysPaid * amountPerDay;
       totalAmount += calculatedAmount;
 
       breakdown.push({
-  studentId,
-  studentName,
+        studentId,
+        studentName,
 
-  className,
-  classDisplayName,
+        className,
+        classDisplayName,
 
-  daysPaid,
-  amountPerDay,
-  total: calculatedAmount,
-  days: ensureDefaultDays(mergedDays),
-});
+        daysPaid,
+        amountPerDay,
+        total: calculatedAmount,
+        days: ensureDefaultDays(mergedDays),
+      });
 
     }
 
@@ -719,12 +714,12 @@ const getFeedingFeeConfig = async (req, res) => {
   try {
     const config = await getFeeConfigWithCache(req.user.school);
     if (!config) return res.status(404).json({ success: false, message: 'Config not found' });
-    
+
     // Get classes for class-based fee bands
     const classes = await Class.find({ school: req.user.school }).select('name level _id');
-    
-    return res.json({ 
-      success: true, 
+
+    return res.json({
+      success: true,
       data: config,
       classes: classes.map((cls) => ({
         _id: cls._id,
@@ -746,7 +741,7 @@ const setFeedingFeeConfig = async (req, res) => {
     const { classFeeBands, feeBands, currency } = req.body;
     const schoolId = req.user.school;
 
-    const update = { 
+    const update = {
       school: schoolId,
       lastUpdated: new Date()
     };
@@ -754,7 +749,7 @@ const setFeedingFeeConfig = async (req, res) => {
     // Set class-based fee bands if provided
     if (classFeeBands && typeof classFeeBands === 'object') {
       update.classFeeBands = new Map();
-      
+
       for (const [classId, bandData] of Object.entries(classFeeBands)) {
         if (bandData && typeof bandData === 'object' && bandData.amount >= 0) {
           update.classFeeBands.set(classId, {
@@ -781,8 +776,8 @@ const setFeedingFeeConfig = async (req, res) => {
     }
 
     const config = await FeedingFeeConfig.findOneAndUpdate(
-      { school: schoolId }, 
-      update, 
+      { school: schoolId },
+      update,
       { upsert: true, new: true, runValidators: true }
     );
 
@@ -806,18 +801,18 @@ const setFeedingFeeConfig = async (req, res) => {
       }
     });
 
-    return res.json({ 
-      success: true, 
-      message: "Feeding fee config updated", 
+    return res.json({
+      success: true,
+      message: "Feeding fee config updated",
       data: config,
       configType: classFeeBands ? 'class-based' : 'category-based'
     });
   } catch (error) {
     console.error("Config update error:", error);
-    return res.status(500).json({ 
-      success: false, 
-      message: error.message.includes('validation') ? "Invalid fee configuration values" : "Server error", 
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined 
+    return res.status(500).json({
+      success: false,
+      message: error.message.includes('validation') ? "Invalid fee configuration values" : "Server error",
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -828,7 +823,7 @@ const setFeedingFeeConfig = async (req, res) => {
 const getClassesWithFeeBands = async (req, res) => {
   try {
     const schoolId = req.user.school;
-    
+
     const [config, classes] = await Promise.all([
       getFeeConfigWithCache(schoolId),
       Class.find({ school: schoolId }).select('name level _id').sort('name')
@@ -838,7 +833,7 @@ const getClassesWithFeeBands = async (req, res) => {
       const classId = String(cls._id);
       let feeAmount = 0;
       let configSource = 'default';
-      
+
       if (config && config.classFeeBands && config.classFeeBands.has(classId)) {
         const band = config.classFeeBands.get(classId);
         feeAmount = band.amount;
@@ -846,7 +841,7 @@ const getClassesWithFeeBands = async (req, res) => {
       } else if (config && config.feeBands) {
         // Fallback to category-based
         const className = cls.name.toLowerCase();
-        if (['crèche','creche','nursery','kg'].some(k => className.includes(k))) {
+        if (['crèche', 'creche', 'nursery', 'kg'].some(k => className.includes(k))) {
           feeAmount = config.feeBands.crecheToKG2 || 0;
           configSource = 'category-creche';
         } else if (/basic\s*[1-6]|grade\s*[1-6]/.test(className)) {
@@ -860,7 +855,7 @@ const getClassesWithFeeBands = async (req, res) => {
           configSource = 'category-default';
         }
       }
-      
+
       return {
         _id: cls._id,
         name: cls.name,
@@ -877,10 +872,10 @@ const getClassesWithFeeBands = async (req, res) => {
     });
   } catch (error) {
     console.error('Error getting classes with fee bands:', error);
-    return res.status(500).json({ 
-      success: false, 
-      message: 'Failed to fetch classes with fee bands', 
-      error: error.message 
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch classes with fee bands',
+      error: error.message
     });
   }
 };
@@ -896,7 +891,7 @@ const getFeedingFeeForStudent = async (req, res) => {
 
     console.log(`🔍 getFeedingFeeForStudent called:`, {
       studentId,
-      termId, 
+      termId,
       week,
       childId,
       userRole: user.role,
@@ -904,9 +899,9 @@ const getFeedingFeeForStudent = async (req, res) => {
     });
 
     if (!termId || !week) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: "Missing termId or week" 
+        message: "Missing termId or week"
       });
     }
 
@@ -916,18 +911,18 @@ const getFeedingFeeForStudent = async (req, res) => {
     // 🟢 Get term
     const term = await Term.findById(termId);
     if (!term) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: "Term not found" 
+        message: "Term not found"
       });
     }
 
     // 🟢 Get fee config
     const feeConfig = await getFeeConfigWithCache(schoolId);
     if (!feeConfig) {
-      return res.status(404).json({ 
+      return res.status(404).json({
         success: false,
-        message: "Feeding fee config not found" 
+        message: "Feeding fee config not found"
       });
     }
 
@@ -935,26 +930,26 @@ const getFeedingFeeForStudent = async (req, res) => {
     // 1️⃣ Identify student (FIXED: Proper student resolution)
     // -----------------------------------------------------
     let students = [];
-    
+
     if (user.role === "student") {
       console.log("🎓 Student role detected, finding student record...");
       // Find student by user ID
-      const student = await Student.findOne({ 
-        user: user._id, 
-        school: schoolId 
+      const student = await Student.findOne({
+        user: user._id,
+        school: schoolId
       })
-      .populate("class")
-      .populate("user");
+        .populate("class")
+        .populate("user");
 
       if (!student) {
-        return res.status(404).json({ 
+        return res.status(404).json({
           success: false,
-          message: "Student record not found for this user" 
+          message: "Student record not found for this user"
         });
       }
       students = [student];
       console.log(`🎓 Found student: ${student._id} - ${getFullStudentName(student)}`);
-      
+
     } else if (user.role === "parent") {
       console.log("👪 Parent role detected, finding children...");
       const filter = {
@@ -1045,7 +1040,7 @@ const getFeedingFeeForStudent = async (req, res) => {
 
       let days = {
         M: "notmarked",
-        T: "notmarked", 
+        T: "notmarked",
         W: "notmarked",
         TH: "notmarked",
         F: "notmarked",
@@ -1084,34 +1079,34 @@ const getFeedingFeeForStudent = async (req, res) => {
         status: val,
         amount: val === "present" ? amountPerDay : 0,
         category: student.class?.level || "N/A",
-        source: manualEntry?.days?.[key] && manualEntry.days[key] !== "notmarked" 
-          ? "manual" 
-          : attendance?.days?.[key] 
-            ? "attendance" 
+        source: manualEntry?.days?.[key] && manualEntry.days[key] !== "notmarked"
+          ? "manual"
+          : attendance?.days?.[key]
+            ? "attendance"
             : "none",
       }));
 
       results.push({
-  studentId: student._id,
-  studentName,
+        studentId: student._id,
+        studentName,
 
-  className,              // BASIC 9 (raw)
-  classDisplayName,       // BASIC 9A (UI-safe)
+        className,              // BASIC 9 (raw)
+        classDisplayName,       // BASIC 9A (UI-safe)
 
-  presentDays,
-  amountPerDay,
-  total,
-  days,
-  records,
-  notification: notifMap[String(student._id)] || null,
-});
+        presentDays,
+        amountPerDay,
+        total,
+        days,
+        records,
+        notification: notifMap[String(student._id)] || null,
+      });
     }
 
     // 🔔 MARK NOTIFICATIONS AS READ
     await Notification.updateMany(
       {
         studentId: { $in: allStudentIds },
-        type: "feedingfee", 
+        type: "feedingfee",
         isRead: false,
         recipientUsers: user._id,
       },
@@ -1231,17 +1226,17 @@ const getFeedingFeeSummary = async (req, res) => {
 
       const { className, classDisplayName } = resolveClassNames(student.class);
 
-breakdown.push({
-  studentId,
-  studentName: getFullStudentName(student),
+      breakdown.push({
+        studentId,
+        studentName: getFullStudentName(student),
 
-  className,
-  classDisplayName,
+        className,
+        classDisplayName,
 
-  daysPaid,
-  amountPerDay,
-  total: studentTotal
-});
+        daysPaid,
+        amountPerDay,
+        total: studentTotal
+      });
 
     }
 
@@ -1268,21 +1263,21 @@ breakdown.push({
 // --------------------------------------------------------------------
 setInterval(() => {
   const now = Date.now();
-  
+
   // Clean fee config cache
   for (const [key, value] of feeConfigCache.entries()) {
     if (now - value.timestamp > CACHE_TTL) {
       feeConfigCache.delete(key);
     }
   }
-  
+
   // Clean class cache
   for (const [key, value] of classCache.entries()) {
     if (now - value.timestamp > CACHE_TTL) {
       classCache.delete(key);
     }
   }
-  
+
   // Clean student cache
   for (const [key, value] of studentCache.entries()) {
     if (now - value.timestamp > CACHE_TTL) {
