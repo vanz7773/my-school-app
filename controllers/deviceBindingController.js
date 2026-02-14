@@ -41,3 +41,38 @@ exports.rebindDevice = async (req, res) => {
     return res.status(500).json({ status: 'error', message: 'Internal server error' });
   }
 };
+
+/**
+ * Admin: Reset a teacher's device binding
+ * This clears the binding so the next device content can bind.
+ */
+exports.resetBinding = async (req, res) => {
+  try {
+    const { teacherId } = req.body;
+
+    if (!teacherId) {
+      return res.status(400).json({ status: 'fail', message: 'Teacher ID is required.' });
+    }
+
+    // 1. Remove from DeviceBinding collection
+    const deletedBinding = await DeviceBinding.findOneAndDelete({ teacher: teacherId });
+
+    // 2. Clear fields in Teacher model (if used)
+    await Teacher.findByIdAndUpdate(teacherId, {
+      $set: {
+        deviceId: null,
+        deviceName: '',
+        deviceBoundAt: null
+      }
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Device binding reset successfully.',
+      data: deletedBinding
+    });
+  } catch (err) {
+    console.error('Reset binding error:', err);
+    return res.status(500).json({ status: 'error', message: 'Internal server error' });
+  }
+};
