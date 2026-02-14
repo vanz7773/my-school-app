@@ -13,6 +13,9 @@ router.post('/register', authController.register);
 // ✅ Login a user
 router.post('/login', authController.login);
 
+// ✅ Logout a user
+router.post('/logout', authController.logout);
+
 // ✅ ADMIN: Issue password reset token/link for a user (admin panel use)
 router.post(
   '/admin/issue-reset',
