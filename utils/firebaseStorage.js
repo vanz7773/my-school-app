@@ -21,10 +21,17 @@ const bucket = admin.storage().bucket();
  * @param {String} schoolId - The school ID for naming
  * @returns {Promise<String>} public URL of the uploaded file
  */
-async function uploadFile(file, folder, schoolId) {
+async function uploadFile(file, folder = 'uploads', identifier = 'common') {
   return new Promise((resolve, reject) => {
-    const filename = `${schoolId}_${Date.now()}_${file.originalname}`;
-    const filePath = `school-info/${folder}/${filename}`;
+    const filename = `${identifier}_${Date.now()}_${file.originalname}`;
+
+    let filePath;
+    if (folder === 'profiles') {
+      filePath = `profiles/${identifier}/${filename}`;
+    } else {
+      filePath = `school-info/${folder}/${filename}`;
+    }
+
     const fileUpload = bucket.file(filePath);
 
     const stream = fileUpload.createWriteStream({

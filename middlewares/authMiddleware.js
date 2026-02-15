@@ -18,6 +18,8 @@ const getTokenFromRequest = (req) => {
   return null;
 };
 
+const School = require('../models/School');
+
 // ============================
 // 🔒 AUTH PROTECTION
 // ============================
@@ -38,12 +40,33 @@ const protect = async (req, res, next) => {
       return res.status(401).json({ message: 'User not found' });
     }
 
+    // 🛡️ Super Admin Bypass Checks
+    if (user.role === 'superadmin') {
+      req.user = user;
+      return next();
+    }
+
     if (!user.school) {
       console.warn('❌ User has no school assigned');
       return res.status(403).json({ message: 'No school linked to user account' });
     }
 
+    // 🏫 Check School Status
+    const school = await School.findById(user.school);
+    if (!school) {
+      console.warn('❌ School not found for user');
+      return res.status(403).json({ message: 'School not found' });
+    }
+
+    if (school.status === 'restricted') {
+      console.warn(`🛑 Access denied: School ${school.name} is restricted.`);
+      return res.status(403).json({
+        message: 'Your school access has been temporarily restricted. Please contact support.'
+      });
+    }
+
     req.user = user;
+    req.school = school; // Attach full school object
 
     console.log('✅ Authenticated User:', {
       id: user._id.toString(),

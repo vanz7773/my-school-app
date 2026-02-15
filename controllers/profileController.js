@@ -209,8 +209,8 @@ exports.updateProfilePicture = async (req, res) => {
 
     oldProfilePicture = user.profilePicture;
 
-    // Upload new file to Firebase
-    newFileUrl = await uploadFile(file);
+    // Upload new file to Firebase - passing proper folder and identifier
+    newFileUrl = await uploadFile(file, 'profiles', userId);
 
     if (!newFileUrl) {
       throw new Error('File upload failed - no URL returned');
