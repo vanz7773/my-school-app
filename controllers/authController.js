@@ -475,10 +475,16 @@ exports.requestAdminResetSelfService = async (req, res) => {
 // ------------------------------
 exports.listAdminResetRequests = async (req, res) => {
   try {
-    const { status, schoolId } = req.query;
+    const { status } = req.query;
+    const admin = req.user;
+
     const filter = {};
     if (status) filter.status = status;
-    if (schoolId) filter.school = schoolId;
+
+    // Security: Only show requests for the admin's school
+    if (admin.school) {
+      filter.school = admin.school;
+    }
 
     const requests = await AdminResetRequest.find(filter)
       .sort({ requestedAt: -1 })
@@ -504,6 +510,12 @@ exports.approveAdminResetRequest = async (req, res) => {
 
     const reqDoc = await AdminResetRequest.findById(id).populate("user");
     if (!reqDoc) return sendError(res, 404, "Request not found");
+
+    // Security: Ensure admin belongs to the same school
+    if (String(reqDoc.school) !== String(admin.school)) {
+      return sendError(res, 403, "Access denied: Request is from a different school");
+    }
+
     if (reqDoc.status !== "pending") return sendError(res, 400, "Request already processed");
 
     const user = reqDoc.user;
@@ -547,6 +559,11 @@ exports.rejectAdminResetRequest = async (req, res) => {
 
     const reqDoc = await AdminResetRequest.findById(id).populate("user");
     if (!reqDoc) return sendError(res, 404, "Request not found");
+
+    // Security: Ensure admin belongs to the same school
+    if (String(reqDoc.school) !== String(admin.school)) {
+      return sendError(res, 403, "Access denied: Request is from a different school");
+    }
 
     reqDoc.status = "rejected";
     reqDoc.handledBy = admin._id;
