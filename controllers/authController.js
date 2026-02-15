@@ -98,10 +98,15 @@ exports.login = async (req, res) => {
 
     const user = await User.findOne({ email: normalizedEmail })
       .select("+password")
-      .populate("school", "name location schoolType")
+      .populate("school", "name location schoolType status")
       .lean({ virtuals: true });
 
     if (!user) return sendError(res, 401, "Invalid email or password");
+
+    // 🚫 CHECK SCHOOL STATUS
+    if (user.school && user.school.status === 'restricted' && user.role !== 'superadmin') {
+      return sendError(res, 403, "Your school's access has been restricted. Please contact the system administrator.");
+    }
 
     const userForCompare = await User.findById(user._id).select("+password");
     if (!userForCompare) return sendError(res, 401, "Invalid email or password");
