@@ -484,9 +484,15 @@ exports.listAdminResetRequests = async (req, res) => {
     // Security: Only show requests for the admin's school
     const schoolId = admin.school?._id || admin.school;
 
+    console.log("🔍 [DEBUG] listAdminResetRequests:");
+    console.log("👤 Admin:", admin?.email, "| Role:", admin?.role);
+    console.log("🏫 School ID:", schoolId);
+
     if (schoolId) {
       filter.school = schoolId;
     }
+
+    console.log("🔍 Filter Object:", JSON.stringify(filter));
 
     const requests = await AdminResetRequest.find(filter)
       .sort({ requestedAt: -1 })
