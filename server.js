@@ -162,7 +162,10 @@ app.use("/api/question-sources", questionSourceRoutes);
 app.use("/api/question-blocks", questionBlock);
 app.use("/api/exam-questions", examQuestion);
 app.use("/api/test", pdfTest);
+const superAdminRoutes = require('./routes/superAdminRoutes');
+
 app.use("/api/search", searchRoutes);
+app.use("/api/super-admin", superAdminRoutes);
 
 
 

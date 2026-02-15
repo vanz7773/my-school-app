@@ -5,6 +5,12 @@ const schoolSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
 
+    status: {
+      type: String,
+      enum: ["active", "restricted"],
+      default: "active",
+    },
+
     schoolType: {
       type: String,
       enum: ["Private", "Government"],
