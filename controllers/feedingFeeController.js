@@ -464,10 +464,10 @@ const markFeeding = async (req, res) => {
     return res.json({
       success: true,
       message: `${getFullStudentName(studentDoc)} marked as ${normalizedValue === "present"
-          ? "fed (present)"
-          : normalizedValue === "absent"
-            ? "not fed (absent)"
-            : "not marked"
+        ? "fed (present)"
+        : normalizedValue === "absent"
+          ? "not fed (absent)"
+          : "not marked"
         } for ${day} (Week ${weekNumber})`,
       updatedDays: breakdownEntry.days,
       perDayFee: breakdownEntry.perDayFee,
@@ -1286,6 +1286,66 @@ setInterval(() => {
   }
 }, CACHE_TTL);
 
+
+// --------------------------------------------------------------------
+// 🔍 Get Absentees for School/Week
+// --------------------------------------------------------------------
+const getAbsenteesForWeek = async (req, res) => {
+  try {
+    const { termId, week } = req.query;
+    if (!termId || !week) {
+      return res.status(400).json({ success: false, message: "Missing termId or week" });
+    }
+
+    const schoolId = req.user.school;
+    const weekNumber = normalizeWeekNumber(week);
+
+    // Find all feeding records for this school/term/week
+    const records = await FeedingFeeRecord.find({
+      school: schoolId,
+      termId,
+      week: weekNumber
+    }).lean();
+
+    const absentees = [];
+
+    for (const record of records) {
+      if (!record.breakdown) continue;
+
+      for (const entry of record.breakdown) {
+        // Check if student has any day marked as 'absent'
+        const absentDays = [];
+        for (const [day, status] of Object.entries(entry.days || {})) {
+          if (status === 'absent') {
+            absentDays.push(day);
+          }
+        }
+
+        if (absentDays.length > 0) {
+          absentees.push({
+            studentId: entry.student,
+            studentName: entry.studentName,
+            classId: record.classId,
+            className: entry.className,
+            absentDays // ['M', 'T'] etc.
+          });
+        }
+      }
+    }
+
+    return res.json({
+      success: true,
+      week: weekNumber,
+      count: absentees.length,
+      absentees
+    });
+
+  } catch (error) {
+    console.error("Error fetching absentees:", error);
+    return res.status(500).json({ success: false, message: "Failed to fetch absentees" });
+  }
+};
+
 module.exports = {
   markFeeding,
   calculateFeedingFeeCollection,
@@ -1293,5 +1353,6 @@ module.exports = {
   setFeedingFeeConfig,
   getFeedingFeeForStudent,
   getFeedingFeeSummary,
-  getClassesWithFeeBands
+  getClassesWithFeeBands,
+  getAbsenteesForWeek
 };

@@ -8,7 +8,8 @@ const {
   setFeedingFeeConfig,
   getFeedingFeeForStudent,
   getFeedingFeeSummary,
-  getClassesWithFeeBands
+  getClassesWithFeeBands,
+  getAbsenteesForWeek
 } = require('../controllers/feedingFeeController');
 const { protect, requirePrivateSchool } = require('../middlewares/authMiddleware');
 
@@ -18,6 +19,7 @@ router.post('/config', protect, requirePrivateSchool, setFeedingFeeConfig);
 
 // ----------------- Utility & Helper Routes -----------------
 router.get('/classes-with-bands', protect, requirePrivateSchool, getClassesWithFeeBands);
+router.get('/absentees', protect, requirePrivateSchool, getAbsenteesForWeek);
 
 // ----------------- Core Fee Collection Routes -----------------
 router.post('/calculate', protect, requirePrivateSchool, calculateFeedingFeeCollection);
