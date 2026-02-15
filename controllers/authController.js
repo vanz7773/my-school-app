@@ -482,8 +482,10 @@ exports.listAdminResetRequests = async (req, res) => {
     if (status) filter.status = status;
 
     // Security: Only show requests for the admin's school
-    if (admin.school) {
-      filter.school = admin.school;
+    const schoolId = admin.school?._id || admin.school;
+
+    if (schoolId) {
+      filter.school = schoolId;
     }
 
     const requests = await AdminResetRequest.find(filter)
