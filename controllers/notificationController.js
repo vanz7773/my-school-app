@@ -202,7 +202,7 @@ function shouldDeliverNotificationToUser(notification, userObj) {
   return false;
 }
 
-async function broadcastNotification(req, notification) {
+exports.broadcastNotification = async function (req, notification) {
   try {
     const io = req.app.get('io');
     const connectedUsers = req.app.get('connectedUsers'); // Map<userId, socketId>
@@ -301,7 +301,7 @@ exports.createNotification = async (req, res) => {
     const senderName = req.user?.name || null;
     notification.senderName = senderName;
 
-    await broadcastNotification(req, notification);
+    await exports.broadcastNotification(req, notification);
 
     return res.status(201).json({ message: 'Notification created', notification });
   } catch (err) {
