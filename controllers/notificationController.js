@@ -205,11 +205,13 @@ function shouldDeliverNotificationToUser(notification, userObj) {
 async function broadcastNotification(req, notification) {
   try {
     const io = req.app.get('io');
-    const userCache = req.app.get('userCache');
-    const connectedUsers = req.app.get('connectedUsers');
+    const connectedUsers = req.app.get('connectedUsers'); // Map<userId, socketId>
+    const userCache = req.app.get('userCache'); // Might be undefined
 
     const recipientsForPush = [];
+    const processedSocketUsers = new Set();
 
+    // 1. Delivery via UserCache (if available - for role/class based filtering)
     if (io && userCache) {
       for (const [uid, userObj] of userCache.entries()) {
         const u = {
@@ -231,6 +233,7 @@ async function broadcastNotification(req, notification) {
               createdAt: notification.createdAt,
               sender: notification.sender ? { _id: notification.sender, name: notification.senderName || null } : null,
             });
+            processedSocketUsers.add(uid);
           } else {
             // Determine offline users for Push Notification
             recipientsForPush.push(uid);
@@ -239,10 +242,30 @@ async function broadcastNotification(req, notification) {
       }
     }
 
-    // Also consider explicitly targeted recipientUsers even if not in cache (fresh startup scenario)
+    // 2. Delivery via explicit recipientUsers (CRITICAL FIX for missing userCache)
     if (notification.recipientUsers && notification.recipientUsers.length > 0) {
-      const explicitIds = notification.recipientUsers.map(String);
-      recipientsForPush.push(...explicitIds);
+      notification.recipientUsers.forEach(userId => {
+        const uid = String(userId);
+
+        // If already sent via cache logic, skip
+        if (processedSocketUsers.has(uid)) return;
+
+        // Check availability
+        if (connectedUsers && connectedUsers.has(uid)) {
+          const socketId = connectedUsers.get(uid);
+          io.to(socketId).emit('notification', {
+            _id: notification._id,
+            title: notification.title,
+            message: notification.message,
+            type: notification.type,
+            createdAt: notification.createdAt,
+            sender: notification.sender ? { _id: notification.sender, name: notification.senderName || null } : null,
+          });
+        } else {
+          // Offline -> Push
+          recipientsForPush.push(uid);
+        }
+      });
     }
 
     // Deduplicate push recipients
