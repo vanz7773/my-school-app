@@ -11,7 +11,7 @@ const Subject = require('../models/Subject');
 // ====================================================================================
 exports.createTeacher = async (req, res) => {
   try {
-    const { name, email, password, assignedClasses, subjects, phone, bio } = req.body;
+    const { name, email, password, gender, assignedClasses, subjects, phone, bio } = req.body;
     const currentSchool = req.user.school;
 
     if (!name || !email || !password) {
@@ -101,6 +101,7 @@ exports.createTeacher = async (req, res) => {
       email,
       password,
       role: "teacher",
+      gender: gender || null,
       school: currentSchool,
     });
     await user.save();
@@ -178,7 +179,7 @@ exports.createTeacher = async (req, res) => {
 exports.getAllTeachers = async (req, res) => {
   try {
     const teachers = await Teacher.find({ school: req.user.school })
-      .populate("user", "name email")
+      .populate("user", "name email gender")
       .populate("assignedClasses", "name")
       .populate("subjects", "name shortName")
       .populate("school", "name schoolType");
@@ -212,7 +213,7 @@ exports.getTeacherById = async (req, res) => {
       _id: req.params.id,
       school: req.user.school
     })
-      .populate("user", "name email role")
+      .populate("user", "name email role gender")
       .populate("assignedClasses", "name")
       .populate("subjects", "name shortName")
       .populate("school", "name schoolType");
@@ -243,7 +244,7 @@ exports.getTeacherById = async (req, res) => {
 // ====================================================================================
 exports.updateTeacher = async (req, res) => {
   try {
-    const { name, email, phone, bio, assignedClasses, subjects } = req.body;
+    const { name, email, gender, phone, bio, assignedClasses, subjects } = req.body;
     const teacherId = req.params.id;
     const currentSchool = req.user.school;
 
@@ -256,6 +257,7 @@ exports.updateTeacher = async (req, res) => {
     // Update user fields
     if (name) user.name = name;
     if (email) user.email = email;
+    if (gender) user.gender = gender;
     await user.save();
 
     // Update teacher fields
@@ -423,7 +425,7 @@ exports.getTeacherByUser = async (req, res) => {
       .populate("assignedClasses", "name")
       .populate("subjects", "name shortName")
       .populate("school", "name schoolType")
-      .populate("user", "name email role");
+      .populate("user", "name email role gender");
 
     if (!teacher) {
       return res.status(404).json({

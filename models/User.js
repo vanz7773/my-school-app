@@ -15,6 +15,12 @@ const userSchema = new mongoose.Schema(
       index: true, // 🔥 faster lookups by name (teacher search, etc.)
     },
 
+    gender: {
+      type: String,
+      enum: ["Male", "Female"],
+      default: null,
+    },
+
     email: {
       type: String,
       required: true,
