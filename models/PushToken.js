@@ -24,7 +24,7 @@ const PushTokenSchema = new mongoose.Schema({
 
   platform: {
     type: String,
-    enum: ["ios", "android"],
+    enum: ["ios", "android", "web"],
     required: true,
     index: true,
   },
@@ -32,6 +32,16 @@ const PushTokenSchema = new mongoose.Schema({
   deviceInfo: {
     type: Object,
     default: {},
+  },
+
+  // For Web Push
+  subscription: {
+    endpoint: String,
+    expirationTime: Number,
+    keys: {
+      p256dh: String,
+      auth: String
+    }
   },
 
   disabled: {

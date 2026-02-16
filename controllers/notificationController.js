@@ -3,9 +3,20 @@ const mongoose = require('mongoose');
 const Notification = require('../models/Notification');
 const User = require('../models/User');
 const Student = require('../models/Student');
+const PushToken = require('../models/PushToken');
+const webpush = require('web-push');
 
 // Initialize Expo SDK
 const expo = new Expo();
+
+// Initialize Web Push
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails(
+    process.env.VAPID_SUBJECT || 'mailto:admin@example.com',
+    process.env.VAPID_PUBLIC_KEY,
+    process.env.VAPID_PRIVATE_KEY
+  );
+}
 
 /* ------------------------------------------------------------------
    PRE-COMPUTE MODEL CAPABILITIES (DO ONLY ONCE)
@@ -107,7 +118,7 @@ async function sendPushNotifications(userIds, title, message, data = {}) {
   try {
     if (!userIds || userIds.length === 0) return;
 
-    // Fetch users with push tokens
+    // --- 1. Mobile Push (Expo) ---
     const users = await User.find({
       _id: { $in: userIds },
       pushToken: { $exists: true, $ne: null }
@@ -130,16 +141,37 @@ async function sendPushNotifications(userIds, title, message, data = {}) {
     }
 
     let chunks = expo.chunkPushNotifications(messages);
-    let tickets = [];
 
     for (let chunk of chunks) {
       try {
-        let ticketChunk = await expo.sendPushNotificationsAsync(chunk);
-        tickets.push(...ticketChunk);
+        await expo.sendPushNotificationsAsync(chunk);
       } catch (error) {
         console.error("Error sending push notification chunk:", error);
       }
     }
+
+    // --- 2. Web Push ---
+    const webTokens = await PushToken.find({
+      userId: { $in: userIds },
+      platform: 'web',
+      disabled: { $ne: true }
+    });
+
+    if (webTokens.length > 0) {
+      const payload = JSON.stringify({ title, message, ...data });
+
+      await Promise.all(webTokens.map(async (tokenDoc) => {
+        try {
+          await webpush.sendNotification(tokenDoc.subscription, payload);
+        } catch (error) {
+          console.error('Error sending web push:', error);
+          if (error.statusCode === 410 || error.statusCode === 404) {
+            await PushToken.findByIdAndUpdate(tokenDoc._id, { disabled: true });
+          }
+        }
+      }));
+    }
+
   } catch (error) {
     console.error("Error in sendPushNotifications:", error);
   }

@@ -166,6 +166,8 @@ const superAdminRoutes = require('./routes/superAdminRoutes');
 
 app.use("/api/search", searchRoutes);
 app.use("/api/super-admin", superAdminRoutes);
+const webPushRoutes = require('./routes/webPushRoutes');
+app.use('/api/web-push', webPushRoutes);
 
 
 
