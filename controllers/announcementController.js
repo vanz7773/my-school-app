@@ -7,6 +7,7 @@ const Teacher = require('../models/Teacher');
 const PushToken = require("../models/PushToken");
 const { Expo } = require("expo-server-sdk");
 const expo = new Expo();
+const { broadcastNotification } = require('./notificationController');
 
 
 // 🔔 Reusable Push Sender (FIXED)
@@ -185,29 +186,33 @@ exports.createAnnouncement = async (req, res) => {
     recipientUsers = [...new Set(recipientUsers)];
 
     // --------------------------------------------------
-// 📣 CREATE NOTIFICATION DOC (FIXED)
-// --------------------------------------------------
-if (recipientUsers.length > 0) {
-  const audience =
-    classId
-      ? "class"
-      : resolvedRoles.length === 1
-        ? resolvedRoles[0]   // "teacher" | "student" | "parent"
-        : "all";             // true school-wide only
+    // 📣 CREATE NOTIFICATION DOC (FIXED)
+    // --------------------------------------------------
+    if (recipientUsers.length > 0) {
+      const audience =
+        classId
+          ? "class"
+          : resolvedRoles.length === 1
+            ? resolvedRoles[0]   // "teacher" | "student" | "parent"
+            : "all";             // true school-wide only
 
-  await Notification.create({
-    title: classId ? "New Class Announcement" : "New School Announcement",
-    sender: creator._id,
-    school: schoolId,
-    message: `Announcement: ${title || "New announcement"}`,
-    type: "announcement",
-    audience,                // ✅ FIX HERE
-    class: classId || null,
-    recipientUsers,
-    recipientRoles: resolvedRoles,
-    announcementId: newAnnouncement._id,
-  });
-}
+      const notificationDoc = await Notification.create({
+        title: classId ? "New Class Announcement" : "New School Announcement",
+        sender: creator._id,
+        school: schoolId,
+        message: `Announcement: ${title || "New announcement"}`,
+        type: "announcement",
+        audience,                // ✅ FIX HERE
+        class: classId || null,
+        recipientUsers,
+        recipientRoles: resolvedRoles,
+        announcementId: newAnnouncement._id,
+      });
+
+      // 🔔 BROADCAST REAL-TIME NOTIFICATION
+      notificationDoc.senderName = creator.name; // Enrich for socket
+      await broadcastNotification(req, notificationDoc);
+    }
 
 
     // --------------------------------------------------
@@ -940,29 +945,29 @@ exports.updateAnnouncement = async (req, res) => {
     recipientUsers = [...new Set(recipientUsers)];
 
     // --------------------------------------------------
-// 📣 CREATE NOTIFICATION DOC (FIXED)
-// --------------------------------------------------
-if (recipientUsers.length > 0) {
-  const audience =
-    classId
-      ? "class"
-      : resolvedRoles.length === 1
-        ? resolvedRoles[0]   // "teacher" | "student" | "parent"
-        : "all";             // true school-wide only
+    // 📣 CREATE NOTIFICATION DOC (FIXED)
+    // --------------------------------------------------
+    if (recipientUsers.length > 0) {
+      const audience =
+        classId
+          ? "class"
+          : resolvedRoles.length === 1
+            ? resolvedRoles[0]   // "teacher" | "student" | "parent"
+            : "all";             // true school-wide only
 
-  await Notification.create({
-    title: classId ? "New Class Announcement" : "New School Announcement",
-    sender: creator._id,
-    school: schoolId,
-    message: `Announcement: ${title || "New announcement"}`,
-    type: "announcement",
-    audience,                // ✅ FIX HERE
-    class: classId || null,
-    recipientUsers,
-    recipientRoles: resolvedRoles,
-    announcementId: newAnnouncement._id,
-  });
-}
+      await Notification.create({
+        title: classId ? "New Class Announcement" : "New School Announcement",
+        sender: creator._id,
+        school: schoolId,
+        message: `Announcement: ${title || "New announcement"}`,
+        type: "announcement",
+        audience,                // ✅ FIX HERE
+        class: classId || null,
+        recipientUsers,
+        recipientRoles: resolvedRoles,
+        announcementId: newAnnouncement._id,
+      });
+    }
 
 
     // --------------------------------------------------
@@ -1051,7 +1056,7 @@ exports.softDeleteAnnouncement = async (req, res) => {
           s.parentIds.forEach(pid => recipientUsers.push(String(pid)));
         }
       });
-    } 
+    }
     else {
       const users = await User.find({
         school: user.school,
