@@ -27,10 +27,21 @@ exports.createStudent = async (req, res) => {
       return res.status(400).json({ message: 'Email already exists' });
     }
 
+    // Helper to format gender to Title Case (Male/Female)
+    const formatGender = (g) => {
+      if (!g || typeof g !== 'string') return 'Male';
+      const lower = g.toLowerCase().trim();
+      if (lower === 'female' || lower === 'girl' || lower === 'f') return 'Female';
+      return 'Male';
+    };
+
+    const formattedGender = formatGender(gender);
+
     const user = new User({
       name,
       email,
       password,
+      gender: formattedGender, // ✅ Pass validated gender to User
       role: 'student',
       school: req.user.school
     });
@@ -39,17 +50,10 @@ exports.createStudent = async (req, res) => {
 
     const admissionNumber = `STU-${Date.now()}`;
 
-    // Helper to format gender to Title Case (Male/Female)
-    const formatGender = (g) => {
-      if (!g) return 'Male'; // Default or handle error? Schema says required.
-      const lower = g.toLowerCase();
-      return lower.charAt(0).toUpperCase() + lower.slice(1);
-    };
-
     const studentData = {
       user: user._id,
       admissionNumber,
-      gender: formatGender(gender),
+      gender: formattedGender,
       dateOfBirth: dob,
       guardianName,
       guardianPhone,
