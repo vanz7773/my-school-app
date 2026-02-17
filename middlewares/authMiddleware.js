@@ -196,6 +196,40 @@ const requirePrivateSchool = async (req, res, next) => {
   }
 };
 
+/* -----------------------------------------------------
+   ONLY GOVERNMENT / BASIC SCHOOLS
+----------------------------------------------------- */
+const requireGovernmentSchool = async (req, res, next) => {
+  try {
+    if (!req.user || !req.user.school) {
+      return res.status(401).json({ message: "Not authorized" });
+    }
+
+    const School = require('../models/School');
+    const school = await School.findById(req.user.school);
+
+    if (!school) {
+      return res.status(404).json({ message: "School not found" });
+    }
+
+    // Allow if schoolType is "Government" or "Basic" (case-insensitive just in case)
+    const type = school.schoolType || "";
+    if (type !== 'Government' && type !== 'Basic') {
+      return res.status(403).json({
+        success: false,
+        message: "This feature is only for Government or Basic schools."
+      });
+    }
+
+    // Attach full school object
+    req.school = school;
+    next();
+  } catch (err) {
+    console.error("requireGovernmentSchool middleware error:", err);
+    return res.status(500).json({ message: "Server error checking school type" });
+  }
+};
+
 // ============================
 // ⚙️ INITIALIZATION HELPERS
 // ============================
@@ -225,4 +259,5 @@ module.exports = {
   verifySchoolOwnership,
   initializeSchoolConfig,
   requirePrivateSchool,
+  requireGovernmentSchool,
 };

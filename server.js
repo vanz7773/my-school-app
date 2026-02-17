@@ -129,6 +129,7 @@ const questionBlock = require("./routes/questionBlock.routes");
 const examQuestion = require("./routes/examQuestion.routes");
 const pdfTest = require("./routes/pdfTest.routes");
 const searchRoutes = require('./routes/searchRoutes');
+const schoolRecordsRoutes = require('./routes/schoolRecordsRoutes');
 // Define API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/students', studentRoutes);
@@ -173,6 +174,7 @@ app.use("/api/search", searchRoutes);
 app.use("/api/super-admin", superAdminRoutes);
 const webPushRoutes = require('./routes/webPushRoutes');
 app.use('/api/web-push', webPushRoutes);
+app.use('/api/school-records', schoolRecordsRoutes);
 
 
 
