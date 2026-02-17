@@ -1,13 +1,12 @@
 const express = require('express');
 const router = express.Router();
-const { protect, requireGovernmentSchool } = require('../middlewares/authMiddleware');
-const { getRecords, updateRecord } = require('../controllers/schoolRecordsController');
+const schoolRecordsController = require('../controllers/schoolRecordsController');
+const { protect, authorize } = require('../middleware/authMiddleware');
 
-// All routes are protected and restricted to Government/Basic schools
-router.use(protect);
-router.use(requireGovernmentSchool);
+// Route to get all records for the school
+router.get('/', protect, authorize('admin', 'superadmin'), schoolRecordsController.getSchoolRecords);
 
-router.get('/', getRecords);
-router.post('/update', updateRecord);
+// Route to update (or create) a record for a specific class
+router.put('/', protect, authorize('admin', 'superadmin'), schoolRecordsController.updateSchoolRecord);
 
 module.exports = router;
