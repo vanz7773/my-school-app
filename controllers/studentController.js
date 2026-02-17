@@ -39,10 +39,17 @@ exports.createStudent = async (req, res) => {
 
     const admissionNumber = `STU-${Date.now()}`;
 
+    // Helper to format gender to Title Case (Male/Female)
+    const formatGender = (g) => {
+      if (!g) return 'Male'; // Default or handle error? Schema says required.
+      const lower = g.toLowerCase();
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    };
+
     const studentData = {
       user: user._id,
       admissionNumber,
-      gender,
+      gender: formatGender(gender),
       dateOfBirth: dob,
       guardianName,
       guardianPhone,
