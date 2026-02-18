@@ -320,7 +320,8 @@ exports.getWeeklyAttendance = async (req, res) => {
       {
         $match: {
           school: schoolId,
-          week: { $exists: true }
+          week: { $exists: true },
+          ...(req.query.termId ? { termId: new mongoose.Types.ObjectId(req.query.termId) } : {})
         }
       },
       {

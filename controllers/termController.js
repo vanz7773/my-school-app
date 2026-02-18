@@ -200,9 +200,9 @@ exports.getAcademicYears = async (req, res) => {
     }
 
     if (!schoolId) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'School ID is required' 
+      return res.status(400).json({
+        success: false,
+        message: 'School ID is required'
       });
     }
 
@@ -211,9 +211,9 @@ exports.getAcademicYears = async (req, res) => {
 
     // Validate if it's a valid ObjectId format (24 hex characters)
     if (!mongoose.Types.ObjectId.isValid(schoolId)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Invalid School ID format' 
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid School ID format'
       });
     }
 
@@ -234,9 +234,9 @@ exports.getAcademicYears = async (req, res) => {
 
   } catch (error) {
     console.error('Get Academic Years Error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message || 'Failed to get academic years' 
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to get academic years'
     });
   }
 };
@@ -276,22 +276,22 @@ exports.getTermWeeks = async (req, res) => {
 
     // Validate school ID format
     if (!mongoose.Types.ObjectId.isValid(schoolId)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Invalid School ID format' 
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid School ID format'
       });
     }
 
-    const foundTerm = await Term.findOne({ 
-      school: new mongoose.Types.ObjectId(schoolId), 
-      academicYear, 
-      term 
+    const foundTerm = await Term.findOne({
+      school: new mongoose.Types.ObjectId(schoolId),
+      academicYear,
+      term
     }).lean();
-    
+
     if (!foundTerm) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Term not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Term not found'
       });
     }
 
@@ -371,9 +371,9 @@ exports.getTermWeeks = async (req, res) => {
 
   } catch (error) {
     console.error('Get Term Weeks Error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to calculate term weeks' 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to calculate term weeks'
     });
   }
 };
@@ -383,9 +383,9 @@ exports.getTermById = async (req, res) => {
   try {
     const term = await Term.findById(req.params.id);
     if (!term) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Term not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Term not found'
       });
     }
 
@@ -393,9 +393,9 @@ exports.getTermById = async (req, res) => {
 
   } catch (error) {
     console.error('Get Term By ID Error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to get term' 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get term'
     });
   }
 };
@@ -405,9 +405,9 @@ exports.updateTerm = async (req, res) => {
   try {
     const term = await Term.findById(req.params.id);
     if (!term) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Term not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Term not found'
       });
     }
 
@@ -421,7 +421,7 @@ exports.updateTerm = async (req, res) => {
       const end = new Date(updatedEndDate);
       let weekCount = 0;
       let current = new Date(start);
-      
+
       while (current <= end) {
         weekCount++;
         current.setDate(current.getDate() + 7);
@@ -444,7 +444,7 @@ exports.updateTerm = async (req, res) => {
       const termEndYear = new Date(updatedEndDate).getFullYear();
 
       if (
-        termStartYear < startYear || termStartYear > endYear || 
+        termStartYear < startYear || termStartYear > endYear ||
         termEndYear < startYear || termEndYear > endYear
       ) {
         return res.status(400).json({
@@ -463,17 +463,17 @@ exports.updateTerm = async (req, res) => {
 
     await term.save();
 
-    res.status(200).json({ 
-      success: true, 
-      message: 'Term updated successfully', 
-      term 
+    res.status(200).json({
+      success: true,
+      message: 'Term updated successfully',
+      term
     });
 
   } catch (error) {
     console.error('❌ Error updating term:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
@@ -483,22 +483,22 @@ exports.deleteTerm = async (req, res) => {
   try {
     const term = await Term.findByIdAndDelete(req.params.id);
     if (!term) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Term not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Term not found'
       });
     }
 
-    res.status(200).json({ 
-      success: true, 
-      message: 'Term deleted successfully' 
+    res.status(200).json({
+      success: true,
+      message: 'Term deleted successfully'
     });
 
   } catch (error) {
     console.error('❌ Error deleting term:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error' 
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
     });
   }
 };
@@ -509,9 +509,9 @@ exports.findTermByQuery = async (req, res) => {
     const user = req.user;
     if (!user) {
       console.warn("❌ No authenticated user on request");
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Unauthorized - No user info' 
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized - No user info'
       });
     }
 
@@ -548,37 +548,37 @@ exports.findTermByQuery = async (req, res) => {
 
     // Validate school ID format
     if (!mongoose.Types.ObjectId.isValid(schoolId)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Invalid School ID format' 
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid School ID format'
       });
     }
 
-    const foundTerm = await Term.findOne({ 
-      school: new mongoose.Types.ObjectId(schoolId), 
-      academicYear, 
-      term 
+    const foundTerm = await Term.findOne({
+      school: new mongoose.Types.ObjectId(schoolId),
+      academicYear,
+      term
     });
 
     if (!foundTerm) {
       console.warn("❌ Term not found for query:", { schoolId, academicYear, term });
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Term not found' 
+      return res.status(404).json({
+        success: false,
+        message: 'Term not found'
       });
     }
 
     console.log("✅ Term found:", foundTerm._id);
-    return res.json({ 
-      success: true, 
-      term: foundTerm 
+    return res.json({
+      success: true,
+      term: foundTerm
     });
 
   } catch (err) {
     console.error("❌ Error during term lookup:", err.message);
-    return res.status(500).json({ 
-      success: false, 
-      message: err.message 
+    return res.status(500).json({
+      success: false,
+      message: err.message
     });
   }
 };
@@ -587,11 +587,11 @@ exports.findTermByQuery = async (req, res) => {
 exports.getCurrentWeek = async (req, res) => {
   try {
     const { school } = req.query;
-    
+
     if (!school) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'School ID is required' 
+      return res.status(400).json({
+        success: false,
+        message: 'School ID is required'
       });
     }
 
@@ -614,21 +614,21 @@ exports.getCurrentWeek = async (req, res) => {
 
     // Validate school ID format
     if (!mongoose.Types.ObjectId.isValid(schoolId)) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Invalid School ID format' 
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid School ID format'
       });
     }
 
     const today = new Date();
-    
+
     // Find current term
     const currentTerm = await Term.findOne({
       school: new mongoose.Types.ObjectId(schoolId),
       startDate: { $lte: today },
       endDate: { $gte: today }
     }).lean();
-    
+
     if (!currentTerm) {
       return res.status(200).json({
         current: 0,
@@ -637,7 +637,7 @@ exports.getCurrentWeek = async (req, res) => {
         academicYear: ''
       });
     }
-    
+
     // Calculate current week
     const startDate = new Date(currentTerm.startDate);
     const diffInDays = Math.floor((today - startDate) / (1000 * 60 * 60 * 24));
@@ -645,17 +645,18 @@ exports.getCurrentWeek = async (req, res) => {
       Math.floor(diffInDays / 7) + 1,
       currentTerm.weeks
     );
-    
+
     res.json({
       current: currentWeek,
       total: currentTerm.weeks,
       termName: currentTerm.term,
-      academicYear: currentTerm.academicYear
+      academicYear: currentTerm.academicYear,
+      termId: currentTerm._id
     });
-    
+
   } catch (error) {
     console.error("Error getting current week:", error);
-    res.status(500).json({ 
+    res.status(500).json({
       current: 0,
       total: 0,
       termName: 'Error',
