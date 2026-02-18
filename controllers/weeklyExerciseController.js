@@ -454,7 +454,10 @@ exports.getExerciseSummary = async (req, res) => {
         .json({ message: "classId and termId are required" });
     }
 
-    const query = { class: classId, term: termId };
+    // Ensure termId is a string, handle potential object if passed incorrectly
+    const termIdValue = typeof termId === 'object' ? termId.toString() : termId;
+
+    const query = { class: classId, term: termIdValue };
     if (week) query.week = parseInt(week);
     if (finalized !== undefined && finalized !== "") {
       query.finalized = finalized === "true";
@@ -484,10 +487,10 @@ exports.getExerciseSummary = async (req, res) => {
 
       const subjects = Array.isArray(teacher.subjects)
         ? teacher.subjects.map(s => ({
-            _id: s._id,
-            name: s.name,
-            shortName: s.shortName
-          }))
+          _id: s._id,
+          name: s.name,
+          shortName: s.shortName
+        }))
         : [];
 
       return {
