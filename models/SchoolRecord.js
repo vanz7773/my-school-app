@@ -22,7 +22,9 @@ const schoolRecordSchema = new mongoose.Schema({
             dualDesks: { type: Number, default: 0 },
             teacherTables: { type: Number, default: 0 },
             teacherChairs: { type: Number, default: 0 },
-            cupboards: { type: Number, default: 0 }
+            cupboards: { type: Number, default: 0 },
+            hexagonalTables: { type: Number, default: 0 },
+            roundTables: { type: Number, default: 0 }
         },
         boards: {
             markerBoards: { type: Number, default: 0 },
