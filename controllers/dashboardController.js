@@ -6,13 +6,217 @@ const Attendance = require('../models/StudentAttendance');
 const Announcement = require('../models/Announcement');
 const Grade = require('../models/Grade');
 const Class = require('../models/Class');
-// ... (MemoryCache class remains same)
 
-// ...
+// ---------------------------------------------------------
+// 🧠 SIMPLE IN-MEMORY CACHE (NO REDIS ANYWHERE)
+// ---------------------------------------------------------
+class MemoryCache {
+  constructor() {
+    this.cache = new Map();
+  }
 
+  get(key) {
+    const item = this.cache.get(key);
+    if (!item) return null;
+
+    if (item.expiry && Date.now() > item.expiry) {
+      this.cache.delete(key);
+      return null;
+    }
+    return item.value;
+  }
+
+  setex(key, ttl, value) {
+    this.cache.set(key, {
+      value,
+      expiry: Date.now() + ttl * 1000
+    });
+  }
+
+  del(key) {
+    this.cache.delete(key);
+  }
+
+  delPattern(pattern) {
+    const base = pattern.replace('*', '');
+    for (const key of this.cache.keys()) {
+      if (key.includes(base)) this.cache.delete(key);
+    }
+  }
+}
+
+// ALWAYS use memory cache (Redis removed)
+const cache = new MemoryCache();
+
+// ---------------------------------------------------------
+// ⏱ CACHE TTL SETTINGS
+// ---------------------------------------------------------
+const CACHE_TTL = {
+  DASHBOARD: 300,  // 5 minutes
+  CHARTS: 2,       // 2 seconds (real-time updates)
+  STATS: 900       // 15 minutes
+};
+
+const generateCacheKey = (prefix, req) =>
+  `${prefix}:${req.user.school}:${req.user.role}:${req.user._id}`;
+
+// ---------------------------------------------------------
+// 🔔 BACKGROUND NOTIFICATION (optional)
+// ---------------------------------------------------------
+const sendDashboardNotification = (userId) => {
+  setImmediate(() => {
+    console.log(`Dashboard processing completed for user ${userId}`);
+  });
+};
+
+// ---------------------------------------------------------
+// 📊 MAIN DASHBOARD ENDPOINT
+// ---------------------------------------------------------
+exports.getDashboard = async (req, res) => {
+  const { role, _id: userId, school: schoolId } = req.user;
+  const cacheKey = generateCacheKey('dashboard', req);
+
+  try {
+    const cached = cache.get(cacheKey);
+    if (cached) return res.json(JSON.parse(cached));
+
+    let result;
+
+    if (role === 'admin') {
+      result = await handleAdminDashboard(schoolId, userId);
+    } else if (role === 'teacher') {
+      result = await handleTeacherDashboard(schoolId, userId);
+    } else if (role === 'student') {
+      result = await handleStudentDashboard(userId);
+    } else if (role === 'parent') {
+      result = await handleParentDashboard(userId);
+    } else {
+      return res.status(403).json({ message: 'Dashboard not available for this role' });
+    }
+
+    cache.setex(cacheKey, CACHE_TTL.DASHBOARD, JSON.stringify(result));
+    sendDashboardNotification(userId);
+
+    res.json(result);
+  } catch (err) {
+    console.error('Dashboard error:', err);
+    res.status(500).json({ message: 'Error fetching dashboard data', error: err.message });
+  }
+};
+
+// ---------------------------------------------------------
+// 📌 ADMIN DASHBOARD LOGIC
+// ---------------------------------------------------------
+const handleAdminDashboard = async (schoolId, userId) => {
+  const [totalStudents, totalTeachers, totalParents, totalMessages] = await Promise.all([
+    User.countDocuments({ role: 'student', school: schoolId }).lean(),
+    User.countDocuments({ role: 'teacher', school: schoolId }).lean(),
+    User.countDocuments({ role: 'parent', school: schoolId }).lean(),
+    Announcement.countDocuments({ sentBy: userId }).lean()
+  ]);
+
+  return {
+    role: 'admin',
+    stats: { totalStudents, totalTeachers, totalParents, totalMessages }
+  };
+};
+
+// ---------------------------------------------------------
+// 📌 TEACHER DASHBOARD LOGIC
+// ---------------------------------------------------------
+const handleTeacherDashboard = async (schoolId, userId) => {
+  const [teacher, classData] = await Promise.all([
+    Teacher.findOne({ user: userId }).populate('user').lean(),
+    Class.findOne({ teacher: userId, school: schoolId }).lean()
+  ]);
+
+  if (!classData) {
+    return {
+      role: 'teacher',
+      stats: { class: 'Not Assigned', totalStudents: 0, attendanceToday: 0 }
+    };
+  }
+
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+
+  const todayEnd = new Date();
+  todayEnd.setHours(23, 59, 59, 999);
+
+  const [students, attendanceToday] = await Promise.all([
+    Student.countDocuments({ class: classData._id }).lean(),
+    Attendance.countDocuments({
+      class: classData._id,
+      createdAt: { $gte: todayStart, $lt: todayEnd }
+    }).lean()
+  ]);
+
+  return {
+    role: 'teacher',
+    stats: {
+      class: classData.name,
+      totalStudents: students,
+      attendanceToday
+    }
+  };
+};
+
+// ---------------------------------------------------------
+// 📌 STUDENT DASHBOARD LOGIC
+// ---------------------------------------------------------
+const handleStudentDashboard = async (userId) => {
+  const student = await Student.findOne({ user: userId })
+    .populate('class')
+    .lean();
+
+  if (!student) {
+    return {
+      role: 'student',
+      stats: { totalAttendance: 0, class: 'Not Assigned' }
+    };
+  }
+
+  const attendanceCount = await Attendance.countDocuments({ student: student._id }).lean();
+
+  return {
+    role: 'student',
+    stats: {
+      totalAttendance: attendanceCount,
+      class: student.class?.name || 'Not Assigned'
+    }
+  };
+};
+
+// ---------------------------------------------------------
+// 📌 PARENT DASHBOARD LOGIC
+// ---------------------------------------------------------
+const handleParentDashboard = async (userId) => {
+  const children = await Student.find({ parent: userId })
+    .populate('class user')
+    .lean();
+
+  const attendanceCounts = await Promise.all(
+    children.map(child =>
+      Attendance.countDocuments({ student: child._id }).lean()
+    )
+  );
+
+  return {
+    role: 'parent',
+    stats: children.map((child, index) => ({
+      name: child.user?.name || `Child ${index + 1}`,
+      class: child.class?.name || 'Not Assigned',
+      attendance: attendanceCounts[index]
+    }))
+  };
+};
+
+// ---------------------------------------------------------
+// 📊 STUDENTS PER CLASS CHART
+// ---------------------------------------------------------
 exports.getStudentsByClass = async (req, res) => {
   const cacheKey = generateCacheKey('studentsByClass', req);
-  // Clear cache for debugging or force refresh
+  // Clear cache for debugging - optional
   cache.del(cacheKey);
 
   try {
@@ -23,6 +227,7 @@ exports.getStudentsByClass = async (req, res) => {
     console.log("Fetching students by class for school:", schoolId);
 
     const result = await Student.aggregate([
+      { $match: { school: schoolId } }, // Optimization: Filter by school first
       {
         $lookup: {
           from: 'classes',
@@ -32,11 +237,18 @@ exports.getStudentsByClass = async (req, res) => {
         }
       },
       { $unwind: '$classInfo' },
-      { $match: { 'classInfo.school': schoolId } },
       {
         $group: {
           _id: '$classInfo._id',
-          className: { $first: '$classInfo.name' },
+          // Use displayName if available, fallback to name + stream, fallback to name
+          className: {
+            $first: {
+              $ifNull: [
+                "$classInfo.displayName",
+                { $concat: ["$classInfo.name", { $cond: [{ $ifNull: ["$classInfo.stream", false] }, { $concat: [" ", "$classInfo.stream"] }, ""] }] }
+              ]
+            }
+          },
           count: { $sum: 1 }
         }
       },
@@ -83,10 +295,44 @@ exports.getAverageGrades = async (req, res) => {
       { $unwind: '$classInfo' },
       { $match: { 'classInfo.school': schoolId } },
       {
+        $project: {
+          classInfo: 1,
+          // Calculate overall score: (Total CA / 60 * 50) + (Exam * 0.5)
+          totalCA: {
+            $add: [
+              { $ifNull: ["$test1", 0] },
+              { $ifNull: ["$test2", 0] },
+              { $ifNull: ["$groupWork", 0] },
+              { $ifNull: ["$projectWork", 0] }
+            ]
+          },
+          exam: { $ifNull: ["$exam", 0] }
+        }
+      },
+      {
+        $project: {
+          classInfo: 1,
+          scaledCA: {
+            $cond: [
+              { $gt: ["$totalCA", 0] },
+              { $multiply: [{ $divide: ["$totalCA", 60] }, 50] },
+              0
+            ]
+          },
+          exam50: { $multiply: ["$exam", 0.5] }
+        }
+      },
+      {
+        $project: {
+          classInfo: 1,
+          overallScore: { $add: ["$scaledCA", "$exam50"] }
+        }
+      },
+      {
         $group: {
           _id: '$classInfo._id',
           className: { $first: '$classInfo.name' },
-          average: { $avg: '$score' }
+          average: { $avg: '$overallScore' }
         }
       },
       {
@@ -264,3 +510,4 @@ exports.getCacheHealth = async (req, res) => {
     });
   }
 };
+
