@@ -4,6 +4,7 @@ const Class = require('../models/Class');
 const Notification = require('../models/Notification');
 const StudentAttendance = require('../models/StudentAttendance');
 const FeedingFeeRecord = require('../models/FeedingFeeRecord');
+const enrollmentController = require('./enrollmentController'); // Ensure cache clearing support
 // ✅ Admin-only: Admit/enroll student (multi-school aware)
 exports.createStudent = async (req, res) => {
   try {
@@ -103,6 +104,14 @@ exports.createStudent = async (req, res) => {
       console.log('✅ Notifications sent');
     } catch (notifyErr) {
       console.warn('⚠️ Notification failed:', notifyErr.message);
+    }
+
+    try {
+      if (enrollmentController.clearEnrollmentCache) {
+        enrollmentController.clearEnrollmentCache(req.user.school);
+      }
+    } catch (cacheErr) {
+      console.warn('⚠️ Failed to clear enrollment cache:', cacheErr.message);
     }
 
     res.status(201).json({ message: 'Student created successfully', student });

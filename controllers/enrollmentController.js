@@ -5,7 +5,7 @@ const mongoose = require('mongoose');
 // 🔍 Cache for enrollment data
 // --------------------------------------------------------------------
 const enrollmentCache = new Map();
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL = 30 * 1000; // 30 seconds
 
 // --------------------------------------------------------------------
 // 📈 Get class enrollment summary (AGGREGATION - RECOMMENDED)
@@ -17,37 +17,37 @@ exports.getClassEnrollmentSummary = async (req, res) => {
     // Cache check
     const cacheKey = `enrollment_agg_${schoolId}`;
     const cached = enrollmentCache.get(cacheKey);
-    
+
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
       return res.json(cached.data);
     }
 
     const aggregationResult = await Class.aggregate([
       // Match classes for current school
-      { 
-        $match: { 
-          school: new mongoose.Types.ObjectId(schoolId) 
-        } 
+      {
+        $match: {
+          school: new mongoose.Types.ObjectId(schoolId)
+        }
       },
-      
+
       // Sort by class name
       { $sort: { name: 1 } },
-      
+
       // Lookup students for each class
       {
         $lookup: {
           from: 'students',
           let: { classId: '$_id' },
           pipeline: [
-            { 
-              $match: { 
-                $expr: { 
+            {
+              $match: {
+                $expr: {
                   $and: [
                     { $eq: ['$class', '$$classId'] },
                     { $eq: ['$school', new mongoose.Types.ObjectId(schoolId)] }
                   ]
                 }
-              } 
+              }
             },
             {
               $lookup: {
@@ -70,70 +70,70 @@ exports.getClassEnrollmentSummary = async (req, res) => {
           as: 'students'
         }
       },
-      
+
       // Project final structure
       // Project final structure
-{
-  $project: {
-    classId: '$_id',
+      {
+        $project: {
+          classId: '$_id',
 
-    // ✅ ADD THESE TWO LINES
-    className: '$name',
-    classDisplayName: { $ifNull: ['$displayName', '$name'] },
+          // ✅ ADD THESE TWO LINES
+          className: '$name',
+          classDisplayName: { $ifNull: ['$displayName', '$name'] },
 
-    boys: {
-      $size: {
-        $filter: {
-          input: '$students',
-          as: 'student',
-          cond: { $eq: [{ $toLower: '$$student.gender' }, 'male'] }
-        }
-      }
-    },
-    girls: {
-      $size: {
-        $filter: {
-          input: '$students',
-          as: 'student',
-          cond: { $eq: [{ $toLower: '$$student.gender' }, 'female'] }
-        }
-      }
-    },
-    total: {
-      $add: [
-        {
-          $size: {
-            $filter: {
+          boys: {
+            $size: {
+              $filter: {
+                input: '$students',
+                as: 'student',
+                cond: { $eq: [{ $toLower: '$$student.gender' }, 'male'] }
+              }
+            }
+          },
+          girls: {
+            $size: {
+              $filter: {
+                input: '$students',
+                as: 'student',
+                cond: { $eq: [{ $toLower: '$$student.gender' }, 'female'] }
+              }
+            }
+          },
+          total: {
+            $add: [
+              {
+                $size: {
+                  $filter: {
+                    input: '$students',
+                    as: 'student',
+                    cond: { $eq: [{ $toLower: '$$student.gender' }, 'male'] }
+                  }
+                }
+              },
+              {
+                $size: {
+                  $filter: {
+                    input: '$students',
+                    as: 'student',
+                    cond: { $eq: [{ $toLower: '$$student.gender' }, 'female'] }
+                  }
+                }
+              }
+            ]
+          },
+          students: {
+            $map: {
               input: '$students',
               as: 'student',
-              cond: { $eq: [{ $toLower: '$$student.gender' }, 'male'] }
+              in: {
+                name: { $ifNull: ['$$student.userName', 'Unnamed'] },
+                dateOfBirth: '$$student.dateOfBirth',
+                admissionNumber: '$$student.admissionNumber'
+              }
             }
           }
-        },
-        {
-          $size: {
-            $filter: {
-              input: '$students',
-              as: 'student',
-              cond: { $eq: [{ $toLower: '$$student.gender' }, 'female'] }
-            }
-          }
-        }
-      ]
-    },
-    students: {
-      $map: {
-        input: '$students',
-        as: 'student',
-        in: {
-          name: { $ifNull: ['$$student.userName', 'Unnamed'] },
-          dateOfBirth: '$$student.dateOfBirth',
-          admissionNumber: '$$student.admissionNumber'
         }
       }
-    }
-  }
-}
     ]);
 
     // Calculate school-wide summary
@@ -169,6 +169,14 @@ exports.getClassEnrollmentSummary = async (req, res) => {
 // --------------------------------------------------------------------
 // 🧹 Cache cleanup
 // --------------------------------------------------------------------
+exports.clearEnrollmentCache = (schoolId) => {
+  if (schoolId) {
+    enrollmentCache.delete(`enrollment_agg_${schoolId}`);
+  } else {
+    enrollmentCache.clear();
+  }
+};
+
 setInterval(() => {
   const now = Date.now();
   for (const [key, value] of enrollmentCache.entries()) {
