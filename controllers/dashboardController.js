@@ -216,8 +216,6 @@ const handleParentDashboard = async (userId) => {
 // ---------------------------------------------------------
 exports.getStudentsByClass = async (req, res) => {
   const cacheKey = generateCacheKey('studentsByClass', req);
-  // Clear cache for debugging - optional
-  cache.del(cacheKey);
 
   try {
     const cached = cache.get(cacheKey);
@@ -249,13 +247,25 @@ exports.getStudentsByClass = async (req, res) => {
               ]
             }
           },
-          count: { $sum: 1 }
+          count: { $sum: 1 },
+          boys: {
+            $sum: {
+              $cond: [{ $eq: [{ $toLower: "$gender" }, "male"] }, 1, 0]
+            }
+          },
+          girls: {
+            $sum: {
+              $cond: [{ $eq: [{ $toLower: "$gender" }, "female"] }, 1, 0]
+            }
+          }
         }
       },
       {
         $project: {
           className: 1,
           count: 1,
+          boys: 1,
+          girls: 1,
           _id: 0
         }
       }
