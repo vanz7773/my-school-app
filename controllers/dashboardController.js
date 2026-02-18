@@ -12,12 +12,15 @@ const Class = require('../models/Class');
 
 exports.getStudentsByClass = async (req, res) => {
   const cacheKey = generateCacheKey('studentsByClass', req);
+  // Clear cache for debugging or force refresh
+  cache.del(cacheKey);
 
   try {
     const cached = cache.get(cacheKey);
     if (cached) return res.json(JSON.parse(cached));
 
     const schoolId = new mongoose.Types.ObjectId(req.user.school);
+    console.log("Fetching students by class for school:", schoolId);
 
     const result = await Student.aggregate([
       {
@@ -30,7 +33,6 @@ exports.getStudentsByClass = async (req, res) => {
       },
       { $unwind: '$classInfo' },
       { $match: { 'classInfo.school': schoolId } },
-
       {
         $group: {
           _id: '$classInfo._id',
@@ -46,6 +48,8 @@ exports.getStudentsByClass = async (req, res) => {
         }
       }
     ]);
+
+    console.log("Students by class result:", result);
 
     cache.setex(cacheKey, CACHE_TTL.CHARTS, JSON.stringify(result));
     res.json(result);
