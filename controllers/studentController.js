@@ -48,7 +48,17 @@ exports.createStudent = async (req, res) => {
     await user.save();
     console.log('✅ Created user:', user._id);
 
-    const admissionNumber = `STU-${Date.now()}`;
+    // Generate sequential admission number
+    const existingStudents = await Student.find({ school: req.user.school }).select('admissionNumber');
+    const numericAdmNos = existingStudents
+      .map(s => parseInt(s.admissionNumber, 10))
+      .filter(n => !isNaN(n));
+
+    let nextNum = 1;
+    if (numericAdmNos.length > 0) {
+      nextNum = Math.max(...numericAdmNos) + 1;
+    }
+    const admissionNumber = String(nextNum).padStart(3, '0');
 
     const studentData = {
       user: user._id,

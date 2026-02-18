@@ -10,8 +10,7 @@ const studentSchema = new mongoose.Schema({
 
   admissionNumber: {
     type: String,
-    required: true,
-    unique: true
+    required: true
   },
 
   class: {
@@ -68,6 +67,7 @@ const studentSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 studentSchema.index({ school: 1, class: 1 });
+studentSchema.index({ school: 1, admissionNumber: 1 }, { unique: true });
 
 module.exports =
   mongoose.models.Student || mongoose.model('Student', studentSchema);
