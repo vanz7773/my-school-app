@@ -224,3 +224,14 @@ exports.proxyImage = async (req, res) => {
     res.status(500).send('Error fetching image');
   }
 };
+
+// Restore missing getFileById
+exports.getFileById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    // logic to fetch file info from DB or storage
+    res.json({ message: `File ${id} would be returned here.` });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+};
