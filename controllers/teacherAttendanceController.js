@@ -229,7 +229,7 @@ const clockAttendance = async (req, res) => {
     if (existingByDevice && !existingByDevice.teacher.equals(teacher._id)) {
       return res.status(403).json({
         status: "fail",
-        message: "This device belongs to another teacher.",
+        message: "This device is registered to another teacher. Contact HeadTeacher.",
       });
     }
 
