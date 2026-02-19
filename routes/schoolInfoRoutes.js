@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 
-const { saveSchoolInfo, getSchoolInfo, updateSchoolLocation } = require('../controllers/schoolInfocontroller');
+const { saveSchoolInfo, getSchoolInfo, updateSchoolLocation, proxyImage } = require('../controllers/schoolInfoController');
 const { protect, restrictTo } = require('../middlewares/authMiddleware');
 
 // IMPORTANT: require the multer instance (memory storage) here.
@@ -29,6 +29,9 @@ function multerWrapper(req, res, next) {
     next();
   });
 }
+
+// Proxy image route (public to simplify fetching)
+router.get('/proxy-image', proxyImage);
 
 // GET school info
 router.get('/', protect, getSchoolInfo);

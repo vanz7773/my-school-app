@@ -1,16 +1,16 @@
 const SchoolInfo = require('../models/SchoolInfo');
 const { uploadFile } = require('../utils/firebaseStorage'); // New Firebase helper
-const School = require('../models/School'); 
+const School = require('../models/School');
 // GET school info
 exports.getSchoolInfo = async (req, res) => {
   try {
     const schoolId = req.user.school;
     if (!schoolId) return res.status(400).json({ message: 'No school found for this user' });
 
-    
-const schoolInfo = await SchoolInfo.findOne({ school: schoolId })
-  .populate('school', 'name location') // ✅ include location here
-  .lean();
+
+    const schoolInfo = await SchoolInfo.findOne({ school: schoolId })
+      .populate('school', 'name location') // ✅ include location here
+      .lean();
 
     if (!schoolInfo) return res.status(404).json({ message: 'School info not found' });
 
@@ -161,7 +161,7 @@ exports.getUploadSignature = async (req, res) => {
     res.status(500).json({ message: 'Error generating upload URL', error: err.message });
   }
 };
- 
+
 exports.updateSchoolLocation = async (req, res) => {
   const { id } = req.params;
   const { coordinates } = req.body; // Expect [[[lng, lat], ...]]
@@ -192,12 +192,35 @@ exports.updateSchoolLocation = async (req, res) => {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 };
-exports.getFileById = async (req, res) => {
+// Proxy image to bypass CORS
+exports.proxyImage = async (req, res) => {
+  const { url } = req.query;
+
+  if (!url) {
+    return res.status(400).send('Missing url parameter');
+  }
+
   try {
-    const { id } = req.params;
-    // logic to fetch file info from DB or storage
-    res.json({ message: `File ${id} would be returned here.` });
+    // Use native fetch (Node 18+)
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      return res.status(response.status).send(`Failed to fetch image: ${response.statusText}`);
+    }
+
+    const contentType = response.headers.get('content-type');
+    if (contentType) {
+      res.setHeader('Content-Type', contentType);
+    }
+
+    // Convert Web Stream / ArrayBuffer to Node Buffer
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    res.send(buffer);
+
   } catch (err) {
-    res.status(500).json({ message: 'Server error', error: err.message });
+    console.error('Proxy error:', err);
+    res.status(500).send('Error fetching image');
   }
 };
