@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 
-const { saveSchoolInfo, getSchoolInfo, updateSchoolLocation, proxyImage } = require('../controllers/schoolInfoController');
+const { saveSchoolInfo, getSchoolInfo, updateSchoolLocation, proxyImage } = require('../controllers/schoolInfocontroller');
 const { protect, restrictTo } = require('../middlewares/authMiddleware');
 
 // IMPORTANT: require the multer instance (memory storage) here.
