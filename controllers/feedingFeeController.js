@@ -1346,6 +1346,56 @@ const getAbsenteesForWeek = async (req, res) => {
   }
 };
 
+// Get daily totals across ALL classes for the selected week
+const getDailyTotalSummary = async (req, res) => {
+  try {
+    const { termId, week } = req.query;
+    const schoolId = req.user.school;
+
+    if (!termId || !week) {
+      return res.status(400).json({ message: 'Missing termId or week' });
+    }
+
+    const weekNumber = normalizeWeekNumber(week);
+
+    // Find records for ALL classes in this school for this term/week
+    const records = await FeedingFeeRecord.find({
+      school: schoolId,
+      termId,
+      week: weekNumber
+    }).lean();
+
+    const totals = { M: 0, T: 0, W: 0, TH: 0, F: 0 };
+    let grandTotal = 0;
+
+    for (const record of records) {
+      if (!record.breakdown) continue;
+      for (const entry of record.breakdown) {
+        // entry.perDayFee is { M: amount, T: amount, ... }
+        if (entry.perDayFee) {
+          totals.M += (Number(entry.perDayFee.M) || 0);
+          totals.T += (Number(entry.perDayFee.T) || 0);
+          totals.W += (Number(entry.perDayFee.W) || 0);
+          totals.TH += (Number(entry.perDayFee.TH) || 0);
+          totals.F += (Number(entry.perDayFee.F) || 0);
+        }
+      }
+    }
+
+    grandTotal = totals.M + totals.T + totals.W + totals.TH + totals.F;
+
+    res.json({
+      success: true,
+      totals,
+      grandTotal
+    });
+
+  } catch (error) {
+    console.error('Error fetching daily totals:', error);
+    res.status(500).json({ success: false, message: 'Server error', error: error.message });
+  }
+};
+
 module.exports = {
   markFeeding,
   calculateFeedingFeeCollection,
@@ -1354,5 +1404,6 @@ module.exports = {
   getFeedingFeeForStudent,
   getFeedingFeeSummary,
   getClassesWithFeeBands,
-  getAbsenteesForWeek
+  getAbsenteesForWeek,
+  getDailyTotalSummary
 };
