@@ -1418,7 +1418,9 @@ const getDebtorsForWeek = async (req, res) => {
     const records = await FeedingFeeRecord.find({
       school: schoolId,
       termId
-    }).lean();
+    })
+      .populate('breakdown.student', 'guardianName guardianPhone')
+      .lean();
 
     const debtors = [];
 
@@ -1436,13 +1438,18 @@ const getDebtorsForWeek = async (req, res) => {
         }
 
         if (debtorDays.length > 0) {
+          const studentObj = entry.student || {};
+          const studentId = studentObj._id ? studentObj._id : studentObj;
+
           debtors.push({
-            studentId: entry.student,
+            studentId,
             studentName: entry.studentName,
             classId: record.classId,
             className: entry.className,
             week: record.week,
-            debtorDays // ['M', 'T'] etc.
+            debtorDays, // ['M', 'T'] etc.
+            guardianName: studentObj.guardianName || '',
+            guardianPhone: studentObj.guardianPhone || ''
           });
         }
       }
