@@ -605,6 +605,20 @@ const calculateFeedingFeeCollection = async (req, res) => {
       }
     }
 
+    // Calculate current week for debt recovery check
+    const today = new Date();
+    let currentWeek = null;
+    const termDoc = await Term.findById(termId).lean();
+    if (termDoc) {
+      const startDate = new Date(termDoc.startDate);
+      const diffInDays = Math.floor((today - startDate) / (1000 * 60 * 60 * 24));
+      currentWeek = Math.min(
+        Math.floor(diffInDays / 7) + 1,
+        termDoc.weeks
+      );
+    }
+    const isPastWeek = currentWeek && weekNumber < currentWeek;
+
     let totalAmount = 0;
     const breakdown = [];
 
@@ -1267,6 +1281,20 @@ const getFeedingFeeSummary = async (req, res) => {
       attendanceByStudent.set(sid, attendanceDaysPaid);
     }
 
+    // Calculate current week for debt recovery check
+    const today = new Date();
+    let currentWeek = null;
+    const termDoc = await Term.findById(termId).lean();
+    if (termDoc) {
+      const startDate = new Date(termDoc.startDate);
+      const diffInDays = Math.floor((today - startDate) / (1000 * 60 * 60 * 24));
+      currentWeek = Math.min(
+        Math.floor(diffInDays / 7) + 1,
+        termDoc.weeks
+      );
+    }
+    const isPastWeek = currentWeek && normalizedWeek && normalizedWeek < currentWeek;
+
     let totalAmount = 0;
     let studentCount = 0;
     const breakdown = [];
@@ -1297,7 +1325,8 @@ const getFeedingFeeSummary = async (req, res) => {
 
         daysPaid,
         amountPerDay,
-        total: studentTotal
+        total: studentTotal,
+        isRecoveredDebt: isPastWeek && daysPaid > 0,
       });
 
     }
