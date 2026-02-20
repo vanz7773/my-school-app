@@ -1402,6 +1402,66 @@ const getAbsenteesForWeek = async (req, res) => {
   }
 };
 
+// --------------------------------------------------------------------
+// 🔍 Get Debtors for School/Week
+// --------------------------------------------------------------------
+const getDebtorsForWeek = async (req, res) => {
+  try {
+    const { termId, week } = req.query;
+    if (!termId || !week) {
+      return res.status(400).json({ success: false, message: "Missing termId or week" });
+    }
+
+    const schoolId = req.user.school;
+    const weekNumber = normalizeWeekNumber(week);
+
+    // Find all feeding records for this school/term/week
+    const records = await FeedingFeeRecord.find({
+      school: schoolId,
+      termId,
+      week: weekNumber
+    }).lean();
+
+    const debtors = [];
+
+    for (const record of records) {
+      if (!record.breakdown) continue;
+
+      for (const entry of record.breakdown) {
+        // Debtor implies they haven't paid, so any status other than 'present'
+        const debtorDays = [];
+        for (const day of ['M', 'T', 'W', 'TH', 'F']) {
+          const status = entry.days?.[day];
+          if (status !== 'present') {
+            debtorDays.push(day);
+          }
+        }
+
+        if (debtorDays.length > 0) {
+          debtors.push({
+            studentId: entry.student,
+            studentName: entry.studentName,
+            classId: record.classId,
+            className: entry.className,
+            debtorDays // ['M', 'T'] etc.
+          });
+        }
+      }
+    }
+
+    return res.json({
+      success: true,
+      week: weekNumber,
+      count: debtors.length,
+      debtors
+    });
+
+  } catch (error) {
+    console.error("Error fetching debtors:", error);
+    return res.status(500).json({ success: false, message: "Failed to fetch debtors" });
+  }
+};
+
 // Get daily totals across ALL classes for the selected week
 const getDailyTotalSummary = async (req, res) => {
   try {
@@ -1458,8 +1518,9 @@ module.exports = {
   getFeedingFeeConfig,
   setFeedingFeeConfig,
   getFeedingFeeForStudent,
+  getFeedingFeeForStudent,
   getFeedingFeeSummary,
-  getClassesWithFeeBands,
   getAbsenteesForWeek,
+  getDebtorsForWeek,
   getDailyTotalSummary
 };
