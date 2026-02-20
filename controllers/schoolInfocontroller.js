@@ -90,7 +90,7 @@ exports.saveSchoolInfo = async (req, res) => {
     }
 
     // Prepare updateData with preservation of existing fields
-    const textFields = ["address", "phone", "email", "headTeacherName"];
+    const textFields = ["address", "phone", "email", "motto", "headTeacherName"];
     const updateData = {
       school: schoolId,
       logo: logoUrl,
