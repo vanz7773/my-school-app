@@ -674,6 +674,7 @@ const calculateFeedingFeeCollection = async (req, res) => {
         amountPerDay,
         total: calculatedAmount,
         days: ensureDefaultDays(mergedDays),
+        isRecoveredDebt: isPastWeek && daysPaid > 0,
       });
 
     }
@@ -1058,12 +1059,25 @@ const getFeedingFeeForStudent = async (req, res) => {
       .select("studentId isRead createdAt message")
       .lean();
 
-    const notifMap = {};
-    notifications.forEach((n) => {
-      notifMap[String(n.studentId)] = n;
-    });
+    const notifMap = notifications.reduce((acc, n) => {
+      acc[String(n.studentId)] = n;
+      return acc;
+    }, {});
 
-    for (const student of students) {
+    // Calculate current week for debt recovery check
+    const today = new Date();
+    let currentWeek = null;
+    if (term) { // Use 'term' object
+      const startDate = new Date(term.startDate);
+      const diffInDays = Math.floor((today - startDate) / (1000 * 60 * 60 * 24));
+      currentWeek = Math.min(
+        Math.floor(diffInDays / 7) + 1,
+        term.weeks
+      );
+    }
+    const isPastWeek = currentWeek && weekNumber < currentWeek;
+
+    for (const student of students) { // Use 'students' array
       const studentName = getFullStudentName(student);
       const { className, classDisplayName } = resolveClassNames(student.class);
       const amountPerDay = getAmountPerDay(student, feeConfig);
