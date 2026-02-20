@@ -61,7 +61,7 @@ const feedingFeeRecordSchema = new mongoose.Schema(
         studentName: String, // Added for display purposes
         className: String,   // Added for display purposes
         classFeeAmount: Number, // The fee per day for this student's class
-        
+
         // Enhanced days tracking with fee calculation
         days: {
           M: {
@@ -110,6 +110,12 @@ const feedingFeeRecordSchema = new mongoose.Schema(
         daysPaid: {
           type: Number,
           default: 0,
+        },
+
+        // Track if this payment was a retroactive debt recovery
+        isRecoveredDebt: {
+          type: Boolean,
+          default: false
         },
 
         currency: {
@@ -176,7 +182,7 @@ feedingFeeRecordSchema.pre('save', function (next) {
     entry.perDayFee = perDayFee;
     entry.total = entryTotal;
     entry.daysPaid = daysPaid;
-    
+
     totalCollected += entryTotal;
   }
 
@@ -189,7 +195,7 @@ feedingFeeRecordSchema.pre('save', function (next) {
 // 🧩 Enhanced pre-update hook for findOneAndUpdate
 feedingFeeRecordSchema.pre('findOneAndUpdate', function (next) {
   const update = this.getUpdate();
-  
+
   // Handle breakdown updates
   if (update?.$set?.['breakdown']) {
     for (const entry of update.$set.breakdown) {

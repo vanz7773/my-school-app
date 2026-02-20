@@ -444,6 +444,31 @@ const markFeeding = async (req, res) => {
     record.amountCollected = record.totalCollected;
     record.lastUpdatedAt = new Date();
 
+    // 🚦 Debt recovery detection: Check if we are updating a PAST week
+    let isRecoveredDebt = false;
+    if (normalizedValue === "present") {
+      const today = new Date();
+      const currentTermInfo = await Term.findOne({
+        _id: termId,
+        school: schoolId,
+      }).lean();
+
+      if (currentTermInfo) {
+        const startDate = new Date(currentTermInfo.startDate);
+        const diffInDays = Math.floor((today - startDate) / (1000 * 60 * 60 * 24));
+        const currentWeek = Math.min(
+          Math.floor(diffInDays / 7) + 1,
+          currentTermInfo.weeks
+        );
+
+        // If the week they are marking is less than the current week of the school term
+        if (weekNumber < currentWeek) {
+          isRecoveredDebt = true;
+          breakdownEntry.isRecoveredDebt = true; // save permanently
+        }
+      }
+    }
+
     // 9️⃣ Save
     record.markModified("breakdown");
     await record.save({ session });
@@ -454,30 +479,6 @@ const markFeeding = async (req, res) => {
     if (normalizedValue === "present") {
       setImmediate(async () => {
         try {
-          // 🚦 Debt recovery detection: Check if we are updating a PAST week
-          const today = new Date();
-          const currentTermInfo = await Term.findOne({
-            _id: termId,
-            school: schoolId,
-          }).lean();
-
-          let isRecoveredDebt = false;
-          let currentWeek = null;
-
-          if (currentTermInfo) {
-            const startDate = new Date(currentTermInfo.startDate);
-            const diffInDays = Math.floor((today - startDate) / (1000 * 60 * 60 * 24));
-            currentWeek = Math.min(
-              Math.floor(diffInDays / 7) + 1,
-              currentTermInfo.weeks
-            );
-
-            // If the week they are marking is less than the current week of the school term
-            if (weekNumber < currentWeek) {
-              isRecoveredDebt = true;
-            }
-          }
-
           if (isRecoveredDebt) {
             // Send Alert to Admin
             await createFeedingFeeNotification({
@@ -600,24 +601,11 @@ const calculateFeedingFeeCollection = async (req, res) => {
             daysPaid: entry.daysPaid || 0,
             days: ensureDefaultDays(entry.days),
             storedAmount: entry.amount,
+            isRecoveredDebt: entry.isRecoveredDebt || false,
           });
         }
       }
     }
-
-    // Calculate current week for debt recovery check
-    const today = new Date();
-    let currentWeek = null;
-    const termDoc = await Term.findById(termId).lean();
-    if (termDoc) {
-      const startDate = new Date(termDoc.startDate);
-      const diffInDays = Math.floor((today - startDate) / (1000 * 60 * 60 * 24));
-      currentWeek = Math.min(
-        Math.floor(diffInDays / 7) + 1,
-        termDoc.weeks
-      );
-    }
-    const isPastWeek = currentWeek && weekNumber < currentWeek;
 
     let totalAmount = 0;
     const breakdown = [];
@@ -688,7 +676,7 @@ const calculateFeedingFeeCollection = async (req, res) => {
         amountPerDay,
         total: calculatedAmount,
         days: ensureDefaultDays(mergedDays),
-        isRecoveredDebt: isPastWeek && daysPaid > 0,
+        isRecoveredDebt: manual?.isRecoveredDebt || false,
       });
 
     }
@@ -1078,19 +1066,6 @@ const getFeedingFeeForStudent = async (req, res) => {
       return acc;
     }, {});
 
-    // Calculate current week for debt recovery check
-    const today = new Date();
-    let currentWeek = null;
-    if (term) { // Use 'term' object
-      const startDate = new Date(term.startDate);
-      const diffInDays = Math.floor((today - startDate) / (1000 * 60 * 60 * 24));
-      currentWeek = Math.min(
-        Math.floor(diffInDays / 7) + 1,
-        term.weeks
-      );
-    }
-    const isPastWeek = currentWeek && weekNumber < currentWeek;
-
     for (const student of students) { // Use 'students' array
       const studentName = getFullStudentName(student);
       const { className, classDisplayName } = resolveClassNames(student.class);
@@ -1260,13 +1235,16 @@ const getFeedingFeeSummary = async (req, res) => {
       }) || []
     ]);
 
-    // Map manual feeding daysPaid
+    // Map manual feeding data including isRecoveredDebt
     const manualByStudent = new Map();
     for (const record of manualFeedingRecords) {
       if (record.breakdown && Array.isArray(record.breakdown)) {
         for (const entry of record.breakdown) {
           if (entry.student) {
-            manualByStudent.set(String(entry.student), entry.daysPaid || 0);
+            manualByStudent.set(String(entry.student), {
+              daysPaid: entry.daysPaid || 0,
+              isRecoveredDebt: entry.isRecoveredDebt || false,
+            });
           }
         }
       }
@@ -1281,20 +1259,6 @@ const getFeedingFeeSummary = async (req, res) => {
       attendanceByStudent.set(sid, attendanceDaysPaid);
     }
 
-    // Calculate current week for debt recovery check
-    const today = new Date();
-    let currentWeek = null;
-    const termDoc = await Term.findById(termId).lean();
-    if (termDoc) {
-      const startDate = new Date(termDoc.startDate);
-      const diffInDays = Math.floor((today - startDate) / (1000 * 60 * 60 * 24));
-      currentWeek = Math.min(
-        Math.floor(diffInDays / 7) + 1,
-        termDoc.weeks
-      );
-    }
-    const isPastWeek = currentWeek && normalizedWeek && normalizedWeek < currentWeek;
-
     let totalAmount = 0;
     let studentCount = 0;
     const breakdown = [];
@@ -1303,7 +1267,8 @@ const getFeedingFeeSummary = async (req, res) => {
       const studentId = String(student._id);
 
       const attendanceDays = attendanceByStudent.get(studentId) || 0;
-      const manualDays = manualByStudent.get(studentId) || 0;
+      const manualData = manualByStudent.get(studentId) || { daysPaid: 0, isRecoveredDebt: false };
+      const manualDays = manualData.daysPaid;
 
       // Take max of attendance and manual
       const daysPaid = Math.max(attendanceDays, manualDays);
@@ -1326,7 +1291,7 @@ const getFeedingFeeSummary = async (req, res) => {
         daysPaid,
         amountPerDay,
         total: studentTotal,
-        isRecoveredDebt: isPastWeek && daysPaid > 0,
+        isRecoveredDebt: manualData.isRecoveredDebt
       });
 
     }
