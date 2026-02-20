@@ -33,49 +33,49 @@ const styles = StyleSheet.create({
   col2: { width: '60%', paddingLeft: 5 },
   col3: { width: '30%', textAlign: 'right', paddingRight: 5 },
   totalRow: { flexDirection: 'row', justifyContent: 'flex-end', paddingVertical: 8, paddingHorizontal: 5, fontWeight: 'bold', backgroundColor: '#f8f9fa', borderTopWidth: 1, borderTopColor: '#000' },
- signatureSection: { 
-  marginTop: 40, 
-  width: '100%', 
-  flexDirection: 'column', 
-  alignItems: 'flex-end' // This is the key change to right-align
-},
-signatureLine: { 
-  width: 200, 
-  borderTopWidth: 1, 
-  borderTopColor: '#000', 
-  borderTopStyle: 'solid', 
-  marginBottom: 5,
-  alignSelf: 'flex-end' // Aligns just this element to the right
-},
-signatureName: { 
-  fontWeight: 'bold', 
-  fontSize: 12, 
-  marginBottom: 3,
-  textAlign: 'right' // Right-align text
-},
-signatureTitle: { 
-  fontSize: 11, 
-  marginBottom: 3,
-  textAlign: 'right' // Right-align text
-}
+  signatureSection: {
+    marginTop: 40,
+    width: '100%',
+    flexDirection: 'column',
+    alignItems: 'flex-end' // This is the key change to right-align
+  },
+  signatureLine: {
+    width: 200,
+    borderTopWidth: 1,
+    borderTopColor: '#000',
+    borderTopStyle: 'solid',
+    marginBottom: 5,
+    alignSelf: 'flex-end' // Aligns just this element to the right
+  },
+  signatureName: {
+    fontWeight: 'bold',
+    fontSize: 12,
+    marginBottom: 3,
+    textAlign: 'right' // Right-align text
+  },
+  signatureTitle: {
+    fontSize: 11,
+    marginBottom: 3,
+    textAlign: 'right' // Right-align text
+  }
 });
 
 
 const FeeStatementPDF = React.memo(({ student: studentProp, bill, schoolInfo }) => {
   // All hooks called unconditionally at the top
   const student = useMemo(() => bill?.student || studentProp, [bill, studentProp]);
-  
+
   const studentName = useMemo(() => (
-    student?.user?.name || 
-    student?.name || 
-    `${student?.firstName || ''} ${student?.lastName || ''}`.trim() || 
+    student?.user?.name ||
+    student?.name ||
+    `${student?.firstName || ''} ${student?.lastName || ''}`.trim() ||
     'N/A'
   ), [student]);
 
   const className = useMemo(() => (
-    bill?.class?.name || 
-    student?.class?.name || 
-    student?.currentClass?.name || 
+    bill?.class?.name ||
+    student?.class?.name ||
+    student?.currentClass?.name ||
     'N/A'
   ), [bill, student]);
 
@@ -84,12 +84,12 @@ const FeeStatementPDF = React.memo(({ student: studentProp, bill, schoolInfo }) 
   ), [bill]);
 
   const dateIssued = useMemo(() => (
-    bill?.createdAt 
-      ? new Date(bill.createdAt).toLocaleDateString('en-GB', { 
-          day: '2-digit', 
-          month: 'short', 
-          year: 'numeric' 
-        }) 
+    bill?.createdAt
+      ? new Date(bill.createdAt).toLocaleDateString('en-GB', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric'
+      })
       : 'N/A'
   ), [bill?.createdAt]);
 
@@ -114,12 +114,12 @@ const FeeStatementPDF = React.memo(({ student: studentProp, bill, schoolInfo }) 
     if (sig.startsWith("http")) {
       return sig;
     }
-    
+
     // Check if it's already a data URI
     if (sig.startsWith("data:")) {
       return sig;
     }
-    
+
     return `data:image/png;base64,${sig}`;
   }, [schoolInfo?.headteacherSignature, schoolInfo?.headTeacherSignature]);
 
@@ -167,8 +167,13 @@ const FeeStatementPDF = React.memo(({ student: studentProp, bill, schoolInfo }) 
               {schoolInfo.name || schoolInfo.schoolName || 'School Name'}
             </Text>
             <Text>Address: {schoolInfo.address || 'N/A'}</Text>
-            <Text>Tel: {schoolInfo.phone || 'N/A'}</Text>
-            <Text>Email: {schoolInfo.email || 'N/A'}</Text>
+            <Text>TEL: {schoolInfo.phone || 'N/A'}</Text>
+            <Text>EMAIL: {schoolInfo.email || 'N/A'}</Text>
+            {schoolInfo.motto && (
+              <Text style={{ marginTop: 4 }}>
+                Motto: {schoolInfo.motto}
+              </Text>
+            )}
           </View>
           {logoSrc && <Image style={styles.logo} src={logoSrc} />}
         </View>
@@ -219,25 +224,25 @@ const FeeStatementPDF = React.memo(({ student: studentProp, bill, schoolInfo }) 
         </View>
 
         {/* Signature */}
-<View style={styles.signatureSection}>
-  {signatureSrc ? (
-    <Image 
-      style={{ 
-        width: 150, 
-        height: 50, 
-        marginBottom: 10,
-        alignSelf: 'flex-end' // Align image to the right
-      }} 
-      src={signatureSrc} 
-    />
-  ) : (
-    <View style={styles.signatureLine} />
-  )}
-  <Text style={styles.signatureName}>
-    {schoolInfo.headteacher || schoolInfo.headTeacherName || 'Headteacher Name'}
-  </Text>
-  <Text style={styles.signatureTitle}>Headteacher</Text>
-</View>
+        <View style={styles.signatureSection}>
+          {signatureSrc ? (
+            <Image
+              style={{
+                width: 150,
+                height: 50,
+                marginBottom: 10,
+                alignSelf: 'flex-end' // Align image to the right
+              }}
+              src={signatureSrc}
+            />
+          ) : (
+            <View style={styles.signatureLine} />
+          )}
+          <Text style={styles.signatureName}>
+            {schoolInfo.headteacher || schoolInfo.headTeacherName || 'Headteacher Name'}
+          </Text>
+          <Text style={styles.signatureTitle}>Headteacher</Text>
+        </View>
       </Page>
     </Document>
   );

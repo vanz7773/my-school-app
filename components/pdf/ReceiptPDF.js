@@ -16,9 +16,9 @@ const CEDI_SYMBOL = '₵';
 const formatCurrency = (amount) => `${CEDI_SYMBOL} ${Number(amount || 0).toFixed(2)}`;
 
 const styles = StyleSheet.create({
-  page: { 
-    padding: 40, 
-    fontSize: 12, 
+  page: {
+    padding: 40,
+    fontSize: 12,
     fontFamily: 'dejavu-sans',
     display: 'flex',
     flexDirection: 'column'
@@ -34,56 +34,56 @@ const styles = StyleSheet.create({
   },
   schoolInfo: { flexDirection: 'column', width: '70%' },
   logo: { width: 60, height: 60 },
-  title: { 
-    fontSize: 16, 
-    fontWeight: 'bold', 
-    textAlign: 'center', 
+  title: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    textAlign: 'center',
     marginVertical: 10,
-    textDecoration: 'underline' 
+    textDecoration: 'underline'
   },
-  paymentInfo: { 
+  paymentInfo: {
     marginBottom: 10,
     padding: 8
   },
   infoRow: { flexDirection: 'row', marginBottom: 4 },
   infoLabel: { width: 100, fontWeight: 'bold' },
   infoValue: { flex: 1 },
-  receiptTable: { 
-    width: '100%', 
-    marginTop: 8, 
-    borderWidth: 1, 
+  receiptTable: {
+    width: '100%',
+    marginTop: 8,
+    borderWidth: 1,
     borderColor: '#000'
   },
-  tableHeader: { 
-    flexDirection: 'row', 
-    backgroundColor: '#f0f0f0', 
-    fontWeight: 'bold', 
-    paddingVertical: 6, 
-    paddingHorizontal: 5, 
-    borderBottomWidth: 1, 
-    borderBottomColor: '#000' 
+  tableHeader: {
+    flexDirection: 'row',
+    backgroundColor: '#f0f0f0',
+    fontWeight: 'bold',
+    paddingVertical: 6,
+    paddingHorizontal: 5,
+    borderBottomWidth: 1,
+    borderBottomColor: '#000'
   },
-  tableRow: { 
-    flexDirection: 'row', 
-    paddingVertical: 4, 
-    paddingHorizontal: 5, 
-    borderBottomWidth: 1, 
-    borderBottomColor: '#ddd' 
+  tableRow: {
+    flexDirection: 'row',
+    paddingVertical: 4,
+    paddingHorizontal: 5,
+    borderBottomWidth: 1,
+    borderBottomColor: '#ddd'
   },
   colDesc: { width: '70%', paddingLeft: 5 },
   colAmount: { width: '30%', textAlign: 'right', paddingRight: 5 },
-  totalsSection: { 
-    marginTop: 12, 
-    padding: 8, 
-    backgroundColor: '#f8f9fa', 
-    borderWidth: 1, 
-    borderColor: '#ddd' 
+  totalsSection: {
+    marginTop: 12,
+    padding: 8,
+    backgroundColor: '#f8f9fa',
+    borderWidth: 1,
+    borderColor: '#ddd'
   },
   totalRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 4 },
   totalLabel: { fontWeight: 'bold' },
-  signatureSection: { 
-    marginTop: 30, 
-    flexDirection: 'column', 
+  signatureSection: {
+    marginTop: 30,
+    flexDirection: 'column',
     alignItems: 'flex-end'
   },
   signatureName: { fontWeight: 'bold', fontSize: 12, marginBottom: 3 },
@@ -128,12 +128,12 @@ const ReceiptPDF = ({ payment, schoolInfo, bill }) => {
     if (sig.startsWith("http")) {
       return sig;
     }
-    
+
     // Check if it's already a data URI
     if (sig.startsWith("data:")) {
       return sig;
     }
-    
+
     return `data:image/png;base64,${sig}`;
   }, [schoolInfo?.headteacherSignature, schoolInfo?.headTeacherSignature]);
 
@@ -149,11 +149,11 @@ const ReceiptPDF = ({ payment, schoolInfo, bill }) => {
 
   // Use bill prop as primary source, fallback to payment.bill
   const receiptBill = bill || payment.bill || {};
-  
+
   // Get student info from bill if available
   const student = receiptBill.student || payment.student || {};
   const studentName = student?.name || `${student?.firstName || ''} ${student?.lastName || ''}`.trim() || 'N/A';
-  
+
   // Get class info from bill if available
   const classInfo = receiptBill.class || student?.class || {};
   const className = classInfo?.name || 'N/A';
@@ -161,19 +161,19 @@ const ReceiptPDF = ({ payment, schoolInfo, bill }) => {
   // Get term and academic year
   const term = receiptBill.term || payment.term || 'N/A';
   const academicYear = receiptBill.academicYear || payment.academicYear || '';
-  
+
   // Format dates
-  const paymentDate = payment.date || payment.createdAt ? 
-    new Date(payment.date || payment.createdAt).toLocaleDateString('en-GB', { 
-      day: '2-digit', 
-      month: 'short', 
-      year: 'numeric' 
+  const paymentDate = payment.date || payment.createdAt ?
+    new Date(payment.date || payment.createdAt).toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
     }) : 'N/A';
-    
-  const issuedDate = new Date().toLocaleDateString('en-GB', { 
-    day: '2-digit', 
-    month: 'short', 
-    year: 'numeric' 
+
+  const issuedDate = new Date().toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric'
   });
 
   // Calculate amounts
@@ -204,8 +204,13 @@ const ReceiptPDF = ({ payment, schoolInfo, bill }) => {
               {schoolInfo.name || schoolInfo.schoolName || 'School Name'}
             </Text>
             <Text style={styles.compact}>{schoolInfo.address || 'N/A'}</Text>
-            <Text style={styles.compact}>Tel: {schoolInfo.phone || 'N/A'}</Text>
-            <Text style={styles.compact}>Email: {schoolInfo.email || 'N/A'}</Text>
+            <Text style={styles.compact}>TEL: {schoolInfo.phone || 'N/A'}</Text>
+            <Text style={styles.compact}>EMAIL: {schoolInfo.email || 'N/A'}</Text>
+            {schoolInfo.motto && (
+              <Text style={{ ...styles.compact, marginTop: 4 }}>
+                Motto: {schoolInfo.motto}
+              </Text>
+            )}
           </View>
           {logoSrc && <Image style={styles.logo} src={logoSrc} />}
         </View>
@@ -285,15 +290,15 @@ const ReceiptPDF = ({ payment, schoolInfo, bill }) => {
         {/* Signature */}
         <View style={styles.signatureSection}>
           {signatureSrc ? (
-            <Image 
-              style={{ width: 120, height: 40, marginBottom: 8 }} 
-              src={signatureSrc} 
+            <Image
+              style={{ width: 120, height: 40, marginBottom: 8 }}
+              src={signatureSrc}
             />
           ) : (
-            <View style={{ 
-              width: 120, 
-              height: 1, 
-              marginBottom: 25 
+            <View style={{
+              width: 120,
+              height: 1,
+              marginBottom: 25
             }} />
           )}
           <Text style={styles.signatureName}>
