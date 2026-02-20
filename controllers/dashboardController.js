@@ -404,6 +404,15 @@ exports.getWeeklyAttendance = async (req, res) => {
               TH: { $cond: [{ $eq: ['$days.TH', 'present'] }, 1, 0] },
               F: { $cond: [{ $eq: ['$days.F', 'present'] }, 1, 0] }
             }
+          },
+          absentDays: {
+            $push: {
+              M: { $cond: [{ $eq: ['$days.M', 'absent'] }, 1, 0] },
+              T: { $cond: [{ $eq: ['$days.T', 'absent'] }, 1, 0] },
+              W: { $cond: [{ $eq: ['$days.W', 'absent'] }, 1, 0] },
+              TH: { $cond: [{ $eq: ['$days.TH', 'absent'] }, 1, 0] },
+              F: { $cond: [{ $eq: ['$days.F', 'absent'] }, 1, 0] }
+            }
           }
         }
       },
@@ -412,36 +421,18 @@ exports.getWeeklyAttendance = async (req, res) => {
           week: '$_id.week',
           classId: '$_id.class',
           dailyPercentages: {
-            M: {
-              $multiply: [
-                { $divide: [{ $sum: '$presentDays.M' }, '$totalRecords'] },
-                100
-              ]
-            },
-            T: {
-              $multiply: [
-                { $divide: [{ $sum: '$presentDays.T' }, '$totalRecords'] },
-                100
-              ]
-            },
-            W: {
-              $multiply: [
-                { $divide: [{ $sum: '$presentDays.W' }, '$totalRecords'] },
-                100
-              ]
-            },
-            TH: {
-              $multiply: [
-                { $divide: [{ $sum: '$presentDays.TH' }, '$totalRecords'] },
-                100
-              ]
-            },
-            F: {
-              $multiply: [
-                { $divide: [{ $sum: '$presentDays.F' }, '$totalRecords'] },
-                100
-              ]
-            }
+            M: { $multiply: [{ $divide: [{ $sum: '$presentDays.M' }, '$totalRecords'] }, 100] },
+            T: { $multiply: [{ $divide: [{ $sum: '$presentDays.T' }, '$totalRecords'] }, 100] },
+            W: { $multiply: [{ $divide: [{ $sum: '$presentDays.W' }, '$totalRecords'] }, 100] },
+            TH: { $multiply: [{ $divide: [{ $sum: '$presentDays.TH' }, '$totalRecords'] }, 100] },
+            F: { $multiply: [{ $divide: [{ $sum: '$presentDays.F' }, '$totalRecords'] }, 100] }
+          },
+          absentPercentages: {
+            M: { $multiply: [{ $divide: [{ $sum: '$absentDays.M' }, '$totalRecords'] }, 100] },
+            T: { $multiply: [{ $divide: [{ $sum: '$absentDays.T' }, '$totalRecords'] }, 100] },
+            W: { $multiply: [{ $divide: [{ $sum: '$absentDays.W' }, '$totalRecords'] }, 100] },
+            TH: { $multiply: [{ $divide: [{ $sum: '$absentDays.TH' }, '$totalRecords'] }, 100] },
+            F: { $multiply: [{ $divide: [{ $sum: '$absentDays.F' }, '$totalRecords'] }, 100] }
           }
         }
       },
@@ -471,6 +462,13 @@ exports.getWeeklyAttendance = async (req, res) => {
                 W: { $round: '$dailyPercentages.W' },
                 TH: { $round: '$dailyPercentages.TH' },
                 F: { $round: '$dailyPercentages.F' }
+              },
+              absentDays: {
+                M: { $round: '$absentPercentages.M' },
+                T: { $round: '$absentPercentages.T' },
+                W: { $round: '$absentPercentages.W' },
+                TH: { $round: '$absentPercentages.TH' },
+                F: { $round: '$absentPercentages.F' }
               }
             }
           }
