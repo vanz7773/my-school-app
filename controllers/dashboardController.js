@@ -459,7 +459,12 @@ exports.getWeeklyAttendance = async (req, res) => {
           _id: '$week',
           classes: {
             $push: {
-              className: '$classInfo.name',
+              className: {
+                $ifNull: [
+                  "$classInfo.displayName",
+                  { $concat: ["$classInfo.name", { $cond: [{ $ifNull: ["$classInfo.stream", false] }, { $concat: [" ", "$classInfo.stream"] }, ""] }] }
+                ]
+              },
               days: {
                 M: { $round: '$dailyPercentages.M' },
                 T: { $round: '$dailyPercentages.T' },
