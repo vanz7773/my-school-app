@@ -378,13 +378,23 @@ exports.getWeeklyAttendance = async (req, res) => {
       {
         $match: {
           school: schoolId,
-          week: { $exists: true },
           ...(req.query.termId ? { termId: new mongoose.Types.ObjectId(req.query.termId) } : {})
         }
       },
       {
+        $addFields: {
+          normalizedWeek: {
+            $cond: [
+              { $and: [{ $ne: ['$week', ''] }, { $ne: [{ $type: '$week' }, 'missing'] }, { $ne: ['$week', null] }] },
+              '$week',
+              { $concat: ['Week ', { $toString: '$weekNumber' }] }
+            ]
+          }
+        }
+      },
+      {
         $group: {
-          _id: { week: '$week', class: '$class' },
+          _id: { week: '$normalizedWeek', class: '$class' },
           totalRecords: { $sum: 1 },
           presentDays: {
             $push: {
