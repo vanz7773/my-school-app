@@ -1517,7 +1517,7 @@ module.exports = {
   calculateFeedingFeeCollection,
   getFeedingFeeConfig,
   setFeedingFeeConfig,
-  getFeedingFeeForStudent,
+  getClassesWithFeeBands,
   getFeedingFeeForStudent,
   getFeedingFeeSummary,
   getAbsenteesForWeek,
