@@ -157,16 +157,19 @@ async function createFeedingFeeNotification({
       marked: "Feeding Status Changed"
     };
 
+    const isRecovered = title === "💰 Recovered Feeding Fee Debt";
+    const notificationTitle = isRecovered ? title : `${actionMap[action]}: ${studentName}`;
+
     // 1️⃣ Create in-app notification
     const notif = await Notification.create({
-      title: `${actionMap[action]}: ${studentName}`,
+      title: notificationTitle,
       sender,
       school,
       message: `Feeding fee ${action} for ${studentName}`,
       type: "feedingfee",
-      audience: "parent",
+      audience: isRecovered ? "all" : "parent",
       studentId,
-      recipientRoles: ["parent"]
+      recipientRoles: isRecovered ? ["admin", "parent"] : ["parent"]
     });
 
     // 2️⃣ Find all parent user IDs
@@ -183,11 +186,19 @@ async function createFeedingFeeNotification({
 
     parentUsers = [...new Set(parentUsers)];
 
-    // 3️⃣ SEND PUSH TO ALL PARENTS
-    if (parentUsers.length > 0) {
+    // 3️⃣ SEND PUSH TO ALL PARENTS (and ADMINS if recovered)
+    const pushTargets = [...parentUsers];
+
+    if (isRecovered) {
+      const User = mongoose.model('User');
+      const adminUsers = await User.find({ school, role: 'admin' }).select('_id').lean();
+      pushTargets.push(...adminUsers.map(a => String(a._id)));
+    }
+
+    if (pushTargets.length > 0) {
       await sendPush(
-        parentUsers,
-        `${actionMap[action]}: ${studentName}`,
+        pushTargets,
+        notificationTitle,
         `Feeding fee ${action} for ${studentName}`,
         { type: "feedingfee", studentId }
       );
@@ -443,6 +454,43 @@ const markFeeding = async (req, res) => {
     if (normalizedValue === "present") {
       setImmediate(async () => {
         try {
+          // 🚦 Debt recovery detection: Check if we are updating a PAST week
+          const today = new Date();
+          const currentTermInfo = await Term.findOne({
+            _id: termId,
+            school: schoolId,
+          }).lean();
+
+          let isRecoveredDebt = false;
+          let currentWeek = null;
+
+          if (currentTermInfo) {
+            const startDate = new Date(currentTermInfo.startDate);
+            const diffInDays = Math.floor((today - startDate) / (1000 * 60 * 60 * 24));
+            currentWeek = Math.min(
+              Math.floor(diffInDays / 7) + 1,
+              currentTermInfo.weeks
+            );
+
+            // If the week they are marking is less than the current week of the school term
+            if (weekNumber < currentWeek) {
+              isRecoveredDebt = true;
+            }
+          }
+
+          if (isRecoveredDebt) {
+            // Send Alert to Admin
+            await createFeedingFeeNotification({
+              title: "💰 Recovered Feeding Fee Debt",
+              sender: req.user._id,
+              school: schoolId,
+              studentId: student,
+              studentName: getFullStudentName(studentDoc),
+              action: `recovered for Week ${weekNumber} (${day})`,
+            });
+          }
+
+          // Send Standard Parent Update (Optional, keeping existing logic)
           await createFeedingFeeNotification({
             title: "Feeding Fee Updated",
             sender: req.user._id,
