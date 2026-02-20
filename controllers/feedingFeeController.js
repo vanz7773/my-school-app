@@ -1403,23 +1403,21 @@ const getAbsenteesForWeek = async (req, res) => {
 };
 
 // --------------------------------------------------------------------
-// 🔍 Get Debtors for School/Week
+// 🔍 Get Debtors for School/Term
 // --------------------------------------------------------------------
 const getDebtorsForWeek = async (req, res) => {
   try {
-    const { termId, week } = req.query;
-    if (!termId || !week) {
-      return res.status(400).json({ success: false, message: "Missing termId or week" });
+    const { termId } = req.query;
+    if (!termId) {
+      return res.status(400).json({ success: false, message: "Missing termId" });
     }
 
     const schoolId = req.user.school;
-    const weekNumber = normalizeWeekNumber(week);
 
-    // Find all feeding records for this school/term/week
+    // Find all feeding records for this school/term
     const records = await FeedingFeeRecord.find({
       school: schoolId,
-      termId,
-      week: weekNumber
+      termId
     }).lean();
 
     const debtors = [];
@@ -1443,6 +1441,7 @@ const getDebtorsForWeek = async (req, res) => {
             studentName: entry.studentName,
             classId: record.classId,
             className: entry.className,
+            week: record.week,
             debtorDays // ['M', 'T'] etc.
           });
         }
@@ -1451,7 +1450,6 @@ const getDebtorsForWeek = async (req, res) => {
 
     return res.json({
       success: true,
-      week: weekNumber,
       count: debtors.length,
       debtors
     });
