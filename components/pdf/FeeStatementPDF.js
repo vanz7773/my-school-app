@@ -167,8 +167,8 @@ const FeeStatementPDF = React.memo(({ student: studentProp, bill, schoolInfo }) 
               {schoolInfo.name || schoolInfo.schoolName || 'School Name'}
             </Text>
             <Text>Address: {schoolInfo.address || 'N/A'}</Text>
-            <Text>TEL: {schoolInfo.phone || 'N/A'}</Text>
-            <Text>EMAIL: {schoolInfo.email || 'N/A'}</Text>
+            <Text>Tel: {schoolInfo.phone || 'N/A'}</Text>
+            <Text>Email: {schoolInfo.email || 'N/A'}</Text>
             {schoolInfo.motto && (
               <Text style={{ marginTop: 4 }}>
                 Motto: {schoolInfo.motto}

@@ -204,8 +204,8 @@ const ReceiptPDF = ({ payment, schoolInfo, bill }) => {
               {schoolInfo.name || schoolInfo.schoolName || 'School Name'}
             </Text>
             <Text style={styles.compact}>{schoolInfo.address || 'N/A'}</Text>
-            <Text style={styles.compact}>TEL: {schoolInfo.phone || 'N/A'}</Text>
-            <Text style={styles.compact}>EMAIL: {schoolInfo.email || 'N/A'}</Text>
+            <Text style={styles.compact}>Tel: {schoolInfo.phone || 'N/A'}</Text>
+            <Text style={styles.compact}>Email: {schoolInfo.email || 'N/A'}</Text>
             {schoolInfo.motto && (
               <Text style={{ ...styles.compact, marginTop: 4 }}>
                 Motto: {schoolInfo.motto}
