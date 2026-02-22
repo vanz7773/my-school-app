@@ -323,7 +323,7 @@ exports.getMyNotifications = async (req, res) => {
 
     const or = [];
     if (MODEL_HAS.recipient) or.push({ recipient: userId });
-    if (MODEL_HAS.recipientUsers) or.push({ recipientUsers: userId });
+    if (MODEL_HAS.recipientUsers) or.push({ recipientUsers: { $in: [userId, new mongoose.Types.ObjectId(userId)] } });
     if (MODEL_HAS.recipientRoles) or.push({ recipientRoles: role });
     if (MODEL_HAS.audience) or.push({ audience: role });
     or.push({ audience: 'all' });
@@ -334,7 +334,7 @@ exports.getMyNotifications = async (req, res) => {
       : {};
 
     const recipientOverride = [
-      ...(MODEL_HAS.recipientUsers ? [{ recipientUsers: userId }] : []),
+      ...(MODEL_HAS.recipientUsers ? [{ recipientUsers: { $in: [userId, new mongoose.Types.ObjectId(userId)] } }] : []),
       ...(MODEL_HAS.recipient ? [{ recipient: userId }] : [])
     ];
 
@@ -400,7 +400,7 @@ exports.markAllAsRead = async (req, res) => {
 
     const or = [];
     if (MODEL_HAS.recipient) or.push({ recipient: userId });
-    if (MODEL_HAS.recipientUsers) or.push({ recipientUsers: userId });
+    if (MODEL_HAS.recipientUsers) or.push({ recipientUsers: { $in: [userId, new mongoose.Types.ObjectId(userId)] } });
     if (MODEL_HAS.recipientRoles) or.push({ recipientRoles: role });
     if (MODEL_HAS.audience) or.push({ audience: role });
     or.push({ audience: 'all' });
@@ -413,7 +413,7 @@ exports.markAllAsRead = async (req, res) => {
     const classFilter = MODEL_HAS.class ? { $or: [{ class: null }, { class: userClass }] } : {};
 
     const recipientOverride = [
-      ...(MODEL_HAS.recipientUsers ? [{ recipientUsers: userId }] : []),
+      ...(MODEL_HAS.recipientUsers ? [{ recipientUsers: { $in: [userId, new mongoose.Types.ObjectId(userId)] } }] : []),
       ...(MODEL_HAS.recipient ? [{ recipient: userId }] : [])
     ];
 
@@ -495,7 +495,7 @@ exports.markTypesAsRead = async (req, res) => {
 
     const or = [
       { recipient: userId },
-      { recipientUsers: userId },
+      { recipientUsers: { $in: [userId, new mongoose.Types.ObjectId(userId)] } },
       { recipientRoles: role },
       { audience: role },
       { audience: 'all' },
@@ -516,7 +516,7 @@ exports.markTypesAsRead = async (req, res) => {
         delete filter.$or;
         filter.$or = [
           { $and: [{ $or: or }, { $or: [{ class: null }, { class: userClass }] }] },
-          ...(MODEL_HAS.recipientUsers ? [{ recipientUsers: userId }] : []),
+          ...(MODEL_HAS.recipientUsers ? [{ recipientUsers: { $in: [userId, new mongoose.Types.ObjectId(userId)] } }] : []),
           ...(MODEL_HAS.recipient ? [{ recipient: userId }] : [])
         ];
       }
