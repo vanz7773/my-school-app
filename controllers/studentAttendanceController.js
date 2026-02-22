@@ -85,12 +85,12 @@ class SimpleCache {
   get(key) {
     const item = this.cache.get(key);
     if (!item) return null;
-    
+
     if (Date.now() > item.expires) {
       this.cache.delete(key);
       return null;
     }
-    
+
     return item.value;
   }
 
@@ -130,16 +130,16 @@ const DEFAULT_DAYS = { M: 'notmarked', T: 'notmarked', W: 'notmarked', TH: 'notm
 // 🎯 DATABASE OPTIMIZATIONS - Lean queries & proper indexing
 const normalizeWeek = (week) => {
   if (week === undefined || week === null) return null;
-  
+
   if (typeof week === 'number' && !isNaN(week)) return Number(week);
-  
+
   if (typeof week === 'string') {
     const numMatch = week.match(/\d+/);
     if (numMatch) return parseInt(numMatch[0], 10);
     const n = Number(week);
     if (!Number.isNaN(n)) return n;
   }
-  
+
   return null;
 };
 
@@ -171,7 +171,7 @@ const fetchCriticalData = async (schoolId, classId, termId, userId) => {
       }
       return classDoc;
     })(),
-    
+
     // 🎯 CACHED TERM QUERY
     (async () => {
       const cacheKey = CACHE_KEYS.TERM(termId, schoolId);
@@ -182,7 +182,7 @@ const fetchCriticalData = async (schoolId, classId, termId, userId) => {
       }
       return term;
     })(),
-    
+
     // 🎯 CACHED FEE CONFIG QUERY
     (async () => {
       const cacheKey = CACHE_KEYS.FEE_CONFIG(schoolId);
@@ -193,7 +193,7 @@ const fetchCriticalData = async (schoolId, classId, termId, userId) => {
       }
       return feeConfig;
     })(),
-    
+
     // 🎯 CACHED STUDENTS QUERY WITH LEAN & PROJECTION
     (async () => {
       const cacheKey = CACHE_KEYS.STUDENTS_BY_CLASS(classId, schoolId);
@@ -222,11 +222,11 @@ const sendNotificationsInBackground = async (changedStudents, schoolId, classId,
       const changed = Array.from(changedStudents);
 
       const affectedStudents = await Student.aggregate([
-        { 
-          $match: { 
+        {
+          $match: {
             _id: { $in: changed.map(id => new mongoose.Types.ObjectId(id)) },
             school: new mongoose.Types.ObjectId(schoolId)
-          } 
+          }
         },
         {
           $lookup: {
@@ -272,8 +272,8 @@ const sendNotificationsInBackground = async (changedStudents, schoolId, classId,
                 title: "Attendance Updated",
                 message: `Attendance has been updated for ${stu.user?.name || "your child"}.`,
                 type: "attendance",
-                audience: "parent",
-                recipientRoles: ["parent"],
+                audience: "specific",
+                recipientRoles: [],
                 recipientUsers: userList,
                 class: classId,
                 studentId: stu._id,
@@ -300,8 +300,8 @@ const sendNotificationsInBackground = async (changedStudents, schoolId, classId,
                 title: "Attendance Updated",
                 message: `Your attendance for week ${weekNumber} has been updated.`,
                 type: "attendance",
-                audience: "student",
-                recipientRoles: ["student"],
+                audience: "specific",
+                recipientRoles: [],
                 recipientUsers: [sid],
                 class: classId,
                 studentId: stu._id,
@@ -374,8 +374,8 @@ const markAttendance = async (req, res) => {
     const weekString = String(weekParam ?? week ?? weekNumber);
     const weekStartDate = getWeekStartDate(term, weekNumber);
     const category =
-  classDoc.category ||
-  inferCategoryFromClassName(getClassDisplayName(classDoc));
+      classDoc.category ||
+      inferCategoryFromClassName(getClassDisplayName(classDoc));
 
 
     // 🎯 TRANSACTION SAFETY - MongoDB session for critical operations
@@ -478,19 +478,19 @@ const markAttendance = async (req, res) => {
 
           bulkAttendanceOps.push({
             updateOne: {
-              filter: { 
-                student: studentId, 
-                class: classId, 
-                weekNumber, 
-                termId: termId, 
-                school: schoolId 
+              filter: {
+                student: studentId,
+                class: classId,
+                weekNumber,
+                termId: termId,
+                school: schoolId
               },
-              update: { 
-                $set: { 
-                  ...attendanceData, 
+              update: {
+                $set: {
+                  ...attendanceData,
                   school: schoolId,
                   class: classId
-                } 
+                }
               },
               upsert: true
             }
@@ -571,10 +571,10 @@ const markAttendance = async (req, res) => {
     }
   } catch (error) {
     console.error('⚠️ Attendance Error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Attendance processing failed', 
-      error: error.message 
+    res.status(500).json({
+      success: false,
+      message: 'Attendance processing failed',
+      error: error.message
     });
   }
 };
@@ -582,7 +582,7 @@ const markAttendance = async (req, res) => {
 // -------------------- getDailyBreakdown - OPTIMIZED --------------------
 const getDailyBreakdown = async (req, res) => {
   const { classId, week, weekNumber: weekParam, termId } = req.query;
-  
+
   if (!classId || (!week && !weekParam) || !termId) {
     return res.status(400).json({ message: 'Missing required query params' });
   }
@@ -656,9 +656,9 @@ const getDailyBreakdown = async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('❌ getDailyBreakdown error:', error);
-    res.status(500).json({ 
-      message: 'Failed to fetch daily breakdown', 
-      error: error.message 
+    res.status(500).json({
+      message: 'Failed to fetch daily breakdown',
+      error: error.message
     });
   }
 };
@@ -666,7 +666,7 @@ const getDailyBreakdown = async (req, res) => {
 // -------------------- getWeeklySummary - OPTIMIZED --------------------
 const getWeeklySummary = async (req, res) => {
   const { week, weekNumber: weekParam, termId, classId } = req.query;
-  
+
   try {
     if (!termId) return res.status(400).json({ message: 'Missing termId' });
 
@@ -687,14 +687,14 @@ const getWeeklySummary = async (req, res) => {
       termId: termId,
       weekNumber
     })
-    .select('student days totalPresent weekNumber')
-    .populate('student', 'name')
-    .lean();
+      .select('student days totalPresent weekNumber')
+      .populate('student', 'name')
+      .lean();
 
-    const result = { 
-      week: String(weekParam ?? week ?? weekNumber), 
-      weekNumber, 
-      summary 
+    const result = {
+      week: String(weekParam ?? week ?? weekNumber),
+      weekNumber,
+      summary
     };
 
     // 🎯 CACHE LAYER - Store result
@@ -703,9 +703,9 @@ const getWeeklySummary = async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('❌ getWeeklySummary error:', error);
-    res.status(500).json({ 
-      message: 'Failed to fetch weekly summary', 
-      error: error.message 
+    res.status(500).json({
+      message: 'Failed to fetch weekly summary',
+      error: error.message
     });
   }
 };
@@ -713,7 +713,7 @@ const getWeeklySummary = async (req, res) => {
 // -------------------- getStudentTermAttendance - OPTIMIZED --------------------
 const getStudentTermAttendance = async (req, res) => {
   const { studentId, termId } = req.query;
-  
+
   try {
     if (!termId) return res.status(400).json({ message: 'Missing termId' });
     if (!studentId) return res.status(400).json({ message: 'Missing studentId' });
@@ -724,15 +724,15 @@ const getStudentTermAttendance = async (req, res) => {
       termId: termId,
       school: req.user.school
     })
-    .select('weekNumber days totalPresent weekStartDate')
-    .lean();
+      .select('weekNumber days totalPresent weekStartDate')
+      .lean();
 
     res.json(records);
   } catch (error) {
     console.error('❌ getStudentTermAttendance error:', error);
-    res.status(500).json({ 
-      message: 'Failed to fetch student term attendance', 
-      error: error.message 
+    res.status(500).json({
+      message: 'Failed to fetch student term attendance',
+      error: error.message
     });
   }
 };
@@ -831,7 +831,7 @@ const initializeWeek = async (req, res) => {
     const students = await Student.find({ class: classId, school: schoolId })
       .select('_id class')
       .lean();
-      
+
     if (!students.length) return res.status(400).json({ message: 'No students found for this class' });
 
     const weekStartDate = getWeekStartDate(term, weekNumber);
@@ -858,45 +858,45 @@ const initializeWeek = async (req, res) => {
     // 🎯 CACHE INVALIDATION
     cache.del(CACHE_KEYS.STUDENTS_BY_CLASS(classId, schoolId));
 
-// 🎯 BACKGROUND PROCESSING - Non-blocking notification
-setImmediate(async () => {
-  try {
-    // Notify only teachers in that school
-    const teacherUsers = await Class.findById(classId)
-      .populate("teachers", "user")
-      .lean();
+    // 🎯 BACKGROUND PROCESSING - Non-blocking notification
+    setImmediate(async () => {
+      try {
+        // Notify only teachers in that school
+        const teacherUsers = await Class.findById(classId)
+          .populate("teachers", "user")
+          .lean();
 
-    const teacherUserIds = [];
+        const teacherUserIds = [];
 
-    if (teacherUsers?.teachers) {
-      teacherUsers.teachers.forEach(t => {
-        if (t.user?._id) teacherUserIds.push(String(t.user._id));
-      });
-    }
+        if (teacherUsers?.teachers) {
+          teacherUsers.teachers.forEach(t => {
+            if (t.user?._id) teacherUserIds.push(String(t.user._id));
+          });
+        }
 
-    await Notification.create({
-      sender: req.user._id,
-      school: req.user.school,
-      title: "Attendance Week Initialized",
-      message: `Attendance week ${weekNumber} initialized for ${getClassDisplayName(classDoc)}`,
-      type: "attendance",
-      audience: "teacher",
-      class: classId,
-      recipientRoles: ["teacher"],
-      recipientUsers: teacherUserIds
+        await Notification.create({
+          sender: req.user._id,
+          school: req.user.school,
+          title: "Attendance Week Initialized",
+          message: `Attendance week ${weekNumber} initialized for ${getClassDisplayName(classDoc)}`,
+          type: "attendance",
+          audience: "teacher",
+          class: classId,
+          recipientRoles: ["teacher"],
+          recipientUsers: teacherUserIds
+        });
+
+        // SEND PUSH
+        await sendPush(
+          teacherUserIds,
+          "Attendance Week Initialized",
+          `Week ${weekNumber} has been set up for ${getClassDisplayName(classDoc)}.`
+        );
+
+      } catch (error) {
+        console.error('⚠️ Background notification error:', error);
+      }
     });
-
-    // SEND PUSH
-    await sendPush(
-      teacherUserIds,
-      "Attendance Week Initialized",
-    `Week ${weekNumber} has been set up for ${getClassDisplayName(classDoc)}.`
-    );
-
-  } catch (error) {
-    console.error('⚠️ Background notification error:', error);
-  }
-});
 
 
     res.status(200).json({
@@ -920,7 +920,7 @@ setImmediate(async () => {
 const getWeeklyAttendance = async (req, res) => {
   const { classId } = req.params;
   const { termId, week, weekNumber: weekParam } = req.query;
-  
+
   if (!classId || !termId || (!week && !weekParam)) {
     return res.status(400).json({ message: 'Missing required parameters' });
   }
@@ -936,19 +936,19 @@ const getWeeklyAttendance = async (req, res) => {
       weekNumber,
       termId
     })
-    .populate('student', 'name user')
-    .lean();
+      .populate('student', 'name user')
+      .lean();
 
-    res.json({ 
-      week: String(weekParam ?? week ?? weekNumber), 
-      weekNumber, 
-      records 
+    res.json({
+      week: String(weekParam ?? week ?? weekNumber),
+      weekNumber,
+      records
     });
   } catch (err) {
     console.error('❌ Failed to fetch weekly attendance:', err);
-    res.status(500).json({ 
-      message: 'Failed to fetch weekly attendance', 
-      error: err.message 
+    res.status(500).json({
+      message: 'Failed to fetch weekly attendance',
+      error: err.message
     });
   }
 };
@@ -1035,9 +1035,9 @@ const getMyAttendance = async (req, res) => {
       termId,
       school: schoolId,
     })
-    .select('week weekNumber weekStartDate days totalPresent')
-    .sort({ weekNumber: 1 })
-    .lean();
+      .select('week weekNumber weekStartDate days totalPresent')
+      .sort({ weekNumber: 1 })
+      .lean();
 
     // Create default record if none exists
     if (!records || records.length === 0) {

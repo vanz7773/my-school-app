@@ -2170,7 +2170,7 @@ exports.uploadReportSheetPDF = [
             title: "New Report Card Available",
             message: `Your Term ${termDoc.term || 'Unknown'} report card has been uploaded.`,
             category: "report",
-            audience: "student",
+            audience: "specific",
             class: classId,
             studentId: student._id,
             termId: termKey, // Store the termKey (ObjectId string)

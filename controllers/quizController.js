@@ -849,7 +849,7 @@ const publishQuiz = async (req, res) => {
               title: "New Quiz Published 📝",
               message: `"${quiz.title}" is now available for you to take.`,
               type: "online-quiz",
-              audience: "student",
+              audience: "specific",
               recipientUsers: [student.user],
               studentId: student._id,
               quizId: quiz._id,

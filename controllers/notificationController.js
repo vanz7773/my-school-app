@@ -333,8 +333,19 @@ exports.getMyNotifications = async (req, res) => {
       ? { $or: [{ class: null }, { class: userClass }] }
       : {};
 
+    const recipientOverride = [
+      ...(MODEL_HAS.recipientUsers ? [{ recipientUsers: userId }] : []),
+      ...(MODEL_HAS.recipient ? [{ recipient: userId }] : [])
+    ];
+
     const query = MODEL_HAS.class
-      ? { school: schoolId, $and: [{ $or: or }, classFilter] }
+      ? {
+        school: schoolId,
+        $or: [
+          { $and: [{ $or: or }, classFilter] },
+          ...recipientOverride
+        ]
+      }
       : { school: schoolId, $or: or };
 
     const docs = await Notification.find(query)
@@ -401,9 +412,20 @@ exports.markAllAsRead = async (req, res) => {
 
     const classFilter = MODEL_HAS.class ? { $or: [{ class: null }, { class: userClass }] } : {};
 
+    const recipientOverride = [
+      ...(MODEL_HAS.recipientUsers ? [{ recipientUsers: userId }] : []),
+      ...(MODEL_HAS.recipient ? [{ recipient: userId }] : [])
+    ];
+
     const result = await Notification.updateMany(
       MODEL_HAS.class
-        ? { school: schoolId, $and: [{ $or: or }, classFilter] }
+        ? {
+          school: schoolId,
+          $or: [
+            { $and: [{ $or: or }, classFilter] },
+            ...recipientOverride
+          ]
+        }
         : { school: schoolId, $or: or },
       update
     );
@@ -491,7 +513,12 @@ exports.markTypesAsRead = async (req, res) => {
     } else {
       const userClass = await resolveUserClass(req, userId);
       if (MODEL_HAS.class) {
-        filter.$and = [{ $or: [{ class: null }, { class: userClass }] }];
+        delete filter.$or;
+        filter.$or = [
+          { $and: [{ $or: or }, { $or: [{ class: null }, { class: userClass }] }] },
+          ...(MODEL_HAS.recipientUsers ? [{ recipientUsers: userId }] : []),
+          ...(MODEL_HAS.recipient ? [{ recipient: userId }] : [])
+        ];
       }
     }
 
