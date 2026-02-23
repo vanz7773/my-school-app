@@ -1121,6 +1121,8 @@ const getClassTermAttendance = async (req, res) => {
         _id: studentId,
         admissionNumber: student.admissionNumber || '',
         name: student.user?.name || student.name || 'Unknown',
+        gender: student.gender || 'Unknown',
+        dateOfBirth: student.dateOfBirth || null,
         attendance: stAttendance.map(a => ({
           week: a.week,
           weekNumber: a.weekNumber,
