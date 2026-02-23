@@ -52,12 +52,12 @@ async function sendPush(userIds, title, body) {
 function resolveClassNames(cls) {
   if (!cls) {
     return {
-      className: "Unassigned",
-      classDisplayName: null,
+      className: "School-wide",
+      classDisplayName: "School-wide",
     };
   }
 
-  const className = cls.name || "Unassigned";
+  const className = cls.name || "School-wide";
 
   const classDisplayName =
     cls.displayName ||
@@ -642,6 +642,14 @@ exports.getAnnouncementsForSchool = async (req, res) => {
     ]);
 
     // ----------------------------------------------------------
+    // 🧩 CLASS NAME NORMALIZATION
+    // ----------------------------------------------------------
+    const normalizedData = announcements.map(a => {
+      const { className, classDisplayName } = resolveClassNames(a.class);
+      return { ...a, className, classDisplayName };
+    });
+
+    // ----------------------------------------------------------
     // ✅ RESPONSE
     // ----------------------------------------------------------
     return res.json({
@@ -651,7 +659,7 @@ exports.getAnnouncementsForSchool = async (req, res) => {
         limit: limitNum,
         pages: Math.ceil(total / limitNum)
       },
-      data: announcements
+      data: normalizedData
     });
 
   } catch (err) {
@@ -699,7 +707,8 @@ exports.getAnnouncementById = async (req, res) => {
     // 🔐 ADMIN — FULL ACCESS
     // ----------------------------------------------------------
     if (user.role === "admin") {
-      return res.json(announcement);
+      const normalizedAnnouncement = { ...announcement, ...resolveClassNames(announcement.class) };
+      return res.json(normalizedAnnouncement);
     }
 
     // ----------------------------------------------------------
@@ -732,7 +741,7 @@ exports.getAnnouncementById = async (req, res) => {
         teacherClasses.includes(String(announcement.class._id));
 
       const createdByMe =
-        String(announcement.sentBy._id) === String(user._id);
+        String(announcement.sentBy?._id || announcement.sentBy) === String(user._id);
 
       if (!targetsTeacher && !classIsOurs && !createdByMe) {
         return res.status(403).json({
@@ -740,7 +749,8 @@ exports.getAnnouncementById = async (req, res) => {
         });
       }
 
-      return res.json(announcement);
+      const normalizedAnnouncement = { ...announcement, ...resolveClassNames(announcement.class) };
+      return res.json(normalizedAnnouncement);
     }
 
     // ----------------------------------------------------------
@@ -756,21 +766,24 @@ exports.getAnnouncementById = async (req, res) => {
         return res.status(404).json({ message: "Student record not found." });
       }
 
-      const isForTheirClass =
-        announcement.class &&
-        String(announcement.class._id) === String(student.class);
-
       const targetsStudent =
         Array.isArray(announcement.targetRoles) &&
         announcement.targetRoles.includes("student");
 
-      if (!isForTheirClass || !targetsStudent) {
+      // STRICTER CHECK: If class is NOT null, it must be their class. 
+      // If class IS null, targetRoles must include student.
+      const isAuthorized =
+        (announcement.class && String(announcement.class._id) === String(student.class)) ||
+        (!announcement.class && targetsStudent);
+
+      if (!isAuthorized) {
         return res.status(403).json({
           message: "You are not allowed to view this announcement."
         });
       }
 
-      return res.json(announcement);
+      const normalizedAnnouncement = { ...announcement, ...resolveClassNames(announcement.class) };
+      return res.json(normalizedAnnouncement);
     }
 
     // ----------------------------------------------------------
@@ -801,21 +814,18 @@ exports.getAnnouncementById = async (req, res) => {
         });
       }
 
-      const isForTheirClass =
-        announcement.class &&
-        String(announcement.class._id) === String(student.class);
+      const isAuthorized =
+        (announcement.class && String(announcement.class._id) === String(student.class)) ||
+        (!announcement.class && Array.isArray(announcement.targetRoles) && announcement.targetRoles.includes("parent"));
 
-      const targetsParent =
-        Array.isArray(announcement.targetRoles) &&
-        announcement.targetRoles.includes("parent");
-
-      if (!isForTheirClass || !targetsParent) {
+      if (!isAuthorized) {
         return res.status(403).json({
           message: "You are not allowed to view this announcement."
         });
       }
 
-      return res.json(announcement);
+      const normalizedAnnouncement = { ...announcement, ...resolveClassNames(announcement.class) };
+      return res.json(normalizedAnnouncement);
     }
 
     // ----------------------------------------------------------
@@ -833,6 +843,7 @@ exports.getAnnouncementById = async (req, res) => {
     });
   }
 };
+
 
 
 /**
@@ -949,23 +960,23 @@ exports.updateAnnouncement = async (req, res) => {
     // --------------------------------------------------
     if (recipientUsers.length > 0) {
       const audience =
-        classId
+        announcement.class
           ? "class"
           : resolvedRoles.length === 1
             ? resolvedRoles[0]   // "teacher" | "student" | "parent"
             : "all";             // true school-wide only
 
       await Notification.create({
-        title: classId ? "New Class Announcement" : "New School Announcement",
-        sender: creator._id,
-        school: schoolId,
-        message: `Announcement: ${title || "New announcement"}`,
+        title: announcement.class ? "New Class Announcement" : "New School Announcement",
+        sender: user._id,
+        school: user.school,
+        message: `Announcement: ${announcement.title || "New announcement"}`,
         type: "announcement",
-        audience,                // ✅ FIX HERE
-        class: classId || null,
+        audience,
+        class: announcement.class || null,
         recipientUsers,
         recipientRoles: resolvedRoles,
-        announcementId: newAnnouncement._id,
+        announcementId: announcement._id,
       });
     }
 
