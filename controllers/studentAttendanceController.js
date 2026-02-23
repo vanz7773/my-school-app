@@ -1126,6 +1126,7 @@ const getClassTermAttendance = async (req, res) => {
         attendance: stAttendance.map(a => ({
           week: a.week,
           weekNumber: a.weekNumber,
+          weekStartDate: a.weekStartDate,
           days: a.days,
           totalPresent: a.totalPresent
         }))
