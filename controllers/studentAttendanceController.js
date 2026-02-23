@@ -1091,6 +1091,52 @@ const getMyAttendance = async (req, res) => {
   }
 };
 
+// -------------------- getClassTermAttendance --------------------
+const getClassTermAttendance = async (req, res) => {
+  const { classId, termId } = req.query;
+  const schoolId = req.user.school;
+
+  if (!classId || !termId) {
+    return res.status(400).json({ message: 'Missing classId or termId' });
+  }
+
+  try {
+    const students = await Student.find({ class: classId, school: schoolId }).populate('user', 'name').lean();
+    if (!students || students.length === 0) {
+      return res.json([]);
+    }
+
+    const attendanceRecords = await StudentAttendance.find({
+      school: schoolId,
+      class: classId,
+      termId: termId
+    }).lean();
+
+    // Group attendance by student
+    const result = students.map(student => {
+      const studentId = student._id.toString();
+      const stAttendance = attendanceRecords.filter(a => String(a.student) === studentId);
+
+      return {
+        _id: studentId,
+        admissionNumber: student.admissionNumber || '',
+        name: student.user?.name || student.name || 'Unknown',
+        attendance: stAttendance.map(a => ({
+          week: a.week,
+          weekNumber: a.weekNumber,
+          days: a.days,
+          totalPresent: a.totalPresent
+        }))
+      };
+    });
+
+    res.json(result);
+  } catch (err) {
+    console.error('❌ getClassTermAttendance error:', err);
+    res.status(500).json({ message: 'Failed to fetch class term attendance', error: err.message });
+  }
+};
+
 // -------------------- Exports --------------------
 module.exports = {
   markAttendance,
@@ -1100,5 +1146,6 @@ module.exports = {
   getStudentTermTotalAttendance,
   initializeWeek,
   getWeeklyAttendance,
-  getMyAttendance
+  getMyAttendance,
+  getClassTermAttendance
 };
