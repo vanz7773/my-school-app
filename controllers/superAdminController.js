@@ -2,6 +2,7 @@ const School = require("../models/School");
 const User = require("../models/User");
 const Student = require("../models/Student");
 const SchoolTransaction = require("../models/SchoolTransaction");
+const SchoolInfo = require("../models/SchoolInfo");
 
 // Helper error sender
 const sendError = (res, code, message) =>
@@ -90,7 +91,8 @@ exports.getSchoolTransactions = async (req, res) => {
     try {
         const { schoolId } = req.params;
         const transactions = await SchoolTransaction.find({ school: schoolId }).sort({ createdAt: -1 });
-        return res.json({ success: true, transactions });
+        const schoolInfo = await SchoolInfo.findOne({ school: schoolId }).lean();
+        return res.json({ success: true, transactions, schoolInfo });
     } catch (err) {
         console.error("Error in getSchoolTransactions:", err);
         return sendError(res, 500, "Server error fetching transactions");
