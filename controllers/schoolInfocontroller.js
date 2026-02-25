@@ -1,6 +1,7 @@
 const SchoolInfo = require('../models/SchoolInfo');
 const { uploadFile } = require('../utils/firebaseStorage'); // New Firebase helper
 const School = require('../models/School');
+const SchoolTransaction = require('../models/SchoolTransaction');
 // GET school info
 exports.getSchoolInfo = async (req, res) => {
   try {
@@ -20,6 +21,22 @@ exports.getSchoolInfo = async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
+
+// GET my transactions
+exports.getMyTransactions = async (req, res) => {
+  try {
+    const schoolId = req.user.school;
+    if (!schoolId) return res.status(400).json({ message: 'No school found for this user' });
+
+    const transactions = await SchoolTransaction.find({ school: schoolId }).sort({ createdAt: -1 });
+    const schoolInfo = await SchoolInfo.findOne({ school: schoolId }).lean();
+
+    return res.json({ success: true, transactions, schoolInfo });
+  } catch (err) {
+    console.error("Error in getMyTransactions:", err);
+    return res.status(500).json({ message: 'Server error fetching transactions' });
   }
 };
 

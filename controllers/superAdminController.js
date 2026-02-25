@@ -3,6 +3,8 @@ const User = require("../models/User");
 const Student = require("../models/Student");
 const SchoolTransaction = require("../models/SchoolTransaction");
 const SchoolInfo = require("../models/SchoolInfo");
+const Notification = require("../models/Notification");
+const { broadcastNotification } = require("./notificationController");
 
 // Helper error sender
 const sendError = (res, code, message) =>
@@ -120,6 +122,27 @@ exports.createSchoolTransaction = async (req, res) => {
 
         await transaction.save();
 
+        // 🎉 Notify the school admins about the new transaction
+        try {
+            const docTitle = type === 'invoice' ? 'New Invoice' : 'Payment Receipt';
+            const actionText = type === 'invoice' ? 'generated' : 'recorded';
+
+            const notification = await Notification.create({
+                title: `${docTitle} ${actionText.charAt(0).toUpperCase() + actionText.slice(1)}`,
+                message: `A new ${type} of ₵${amount} has been ${actionText} for your school.`,
+                type: 'transaction',
+                audience: 'admin',
+                school: schoolId,
+                sender: req.user ? req.user._id : null
+            });
+            // Mock a simple req object with available globals if `req` is missing socket data
+            const mockReq = { app: req.app, user: req.user };
+            await broadcastNotification(mockReq, notification);
+        } catch (notifErr) {
+            console.error("Failed to send transaction notification:", notifErr);
+            // Don't fail the transaction creation if notification fails
+        }
+
         return res.status(201).json({ success: true, transaction });
     } catch (err) {
         console.error("Error in createSchoolTransaction:", err);
@@ -143,6 +166,34 @@ exports.updateTransactionStatus = async (req, res) => {
         );
 
         if (!transaction) return sendError(res, 404, "Transaction not found");
+
+        try {
+            // 🎉 Notify the school admins about the new status update
+            const docTitle = transaction.type === 'invoice' ? 'Invoice' : 'Payment Receipt';
+            let titleMsg = `${docTitle} Status Updated`;
+            let msg = `Your ${docTitle} of ₵${transaction.amount} has been updated to ${status}.`;
+            if (status === 'paid') {
+                titleMsg = `Payment Confirmed`;
+                msg = `Thank you! Your ${transaction.type} of ₵${transaction.amount} has been successfully marked as PAID. A receipt is attached in your billing dashboard.`;
+            } else if (status === 'cancelled') {
+                titleMsg = `${docTitle} Cancelled`;
+                msg = `Your ${transaction.type} of ₵${transaction.amount} has been cancelled.`;
+            }
+
+            const notification = await Notification.create({
+                title: titleMsg,
+                message: msg,
+                type: 'transaction',
+                audience: 'admin',
+                school: transaction.school,
+                sender: req.user ? req.user._id : null
+            });
+            // Mock a simple req object with available globals if `req` is missing socket data
+            const mockReq = { app: req.app, user: req.user };
+            await broadcastNotification(mockReq, notification);
+        } catch (notifErr) {
+            console.error("Failed to send transaction update notification:", notifErr);
+        }
 
         return res.json({ success: true, transaction });
     } catch (err) {

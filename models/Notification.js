@@ -16,6 +16,7 @@ const VALID_TYPES = [
   'online-quiz',
   'exam-report',
   'report-card',
+  'transaction',
 ];
 
 const VALID_AUDIENCES = ['admin', 'teacher', 'student', 'parent', 'all', 'class'];
