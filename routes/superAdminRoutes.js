@@ -11,4 +11,9 @@ router.use(restrictTo('superadmin'));
 router.get('/schools', superAdminController.getAllSchools);
 router.put('/schools/:id/status', superAdminController.updateSchoolStatus);
 
+// 💰 School Transactions (Invoices & Payments)
+router.get('/schools/:schoolId/transactions', superAdminController.getSchoolTransactions);
+router.post('/schools/:schoolId/transactions', superAdminController.createSchoolTransaction);
+router.put('/transactions/:id/status', superAdminController.updateTransactionStatus);
+
 module.exports = router;

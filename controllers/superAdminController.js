@@ -1,6 +1,7 @@
 const School = require("../models/School");
 const User = require("../models/User");
 const Student = require("../models/Student");
+const SchoolTransaction = require("../models/SchoolTransaction");
 
 // Helper error sender
 const sendError = (res, code, message) =>
@@ -84,3 +85,67 @@ exports.updateSchoolStatus = async (req, res) => {
         return sendError(res, 500, "Server error updating status");
     }
 };
+
+exports.getSchoolTransactions = async (req, res) => {
+    try {
+        const { schoolId } = req.params;
+        const transactions = await SchoolTransaction.find({ school: schoolId }).sort({ createdAt: -1 });
+        return res.json({ success: true, transactions });
+    } catch (err) {
+        console.error("Error in getSchoolTransactions:", err);
+        return sendError(res, 500, "Server error fetching transactions");
+    }
+};
+
+exports.createSchoolTransaction = async (req, res) => {
+    try {
+        const { schoolId } = req.params;
+        const { type, amount, description, reference, dueDate, status } = req.body;
+
+        if (!['invoice', 'payment'].includes(type)) {
+            return sendError(res, 400, "Invalid transaction type");
+        }
+
+        const transaction = new SchoolTransaction({
+            school: schoolId,
+            type,
+            amount,
+            description,
+            reference,
+            dueDate,
+            status: status || (type === 'payment' ? 'paid' : 'pending')
+        });
+
+        await transaction.save();
+
+        return res.status(201).json({ success: true, transaction });
+    } catch (err) {
+        console.error("Error in createSchoolTransaction:", err);
+        return sendError(res, 500, "Server error creating transaction");
+    }
+};
+
+exports.updateTransactionStatus = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+
+        if (!['pending', 'paid', 'cancelled'].includes(status)) {
+            return sendError(res, 400, "Invalid status");
+        }
+
+        const transaction = await SchoolTransaction.findByIdAndUpdate(
+            id,
+            { status },
+            { new: true }
+        );
+
+        if (!transaction) return sendError(res, 404, "Transaction not found");
+
+        return res.json({ success: true, transaction });
+    } catch (err) {
+        console.error("Error in updateTransactionStatus:", err);
+        return sendError(res, 500, "Server error updating transaction");
+    }
+};
+
