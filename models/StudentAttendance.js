@@ -97,6 +97,9 @@ studentAttendanceSchema.index(
   { unique: true }
 );
 
+// ⚡ Optimize queries that fetch all attendance for a specific student
+studentAttendanceSchema.index({ school: 1, student: 1, termId: 1 });
+
 /**
  * 🧹 Pre-save hook to clean up old/legacy indexes.
  * Ensures migration from older versions doesn’t break inserts.

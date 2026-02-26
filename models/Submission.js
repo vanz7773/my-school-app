@@ -25,4 +25,9 @@ const submissionSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
+// ⚡ Optimize querying submissions for an assignment or by a student
+submissionSchema.index({ school: 1, assignment: 1 });
+submissionSchema.index({ school: 1, student: 1 });
+submissionSchema.index({ assignment: 1, student: 1 });
+
 module.exports = mongoose.model('Submission', submissionSchema);

@@ -143,6 +143,9 @@ feedingFeeRecordSchema.index(
   { unique: true }
 );
 
+// ⚡ Optimize queries that look for a specific student's fee record
+feedingFeeRecordSchema.index({ school: 1, "breakdown.student": 1 });
+
 // 🧩 Enhanced pre-save hook to calculate fees based on class-based system
 feedingFeeRecordSchema.pre('save', function (next) {
   this.lastUpdatedAt = Date.now();

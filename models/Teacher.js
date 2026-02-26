@@ -28,4 +28,16 @@ teacherSchema.pre('save', function (next) {
   next();
 });
 
+// --------------------------------------------------------------------
+// ⚡ PERFORMANCE INDEXES
+// --------------------------------------------------------------------
+// Optimize fetching a specific teacher's profile via their User ID
+teacherSchema.index({ user: 1 });
+
+// Optimize Admin dashboard fetching all teachers for a school
+teacherSchema.index({ school: 1 });
+
+// Optimize finding teachers assigned to a specific class (e.g., timetable or class pages)
+teacherSchema.index({ school: 1, assignedClasses: 1 });
+
 module.exports = mongoose.model('Teacher', teacherSchema);

@@ -208,6 +208,7 @@ const QuizSessionSchema = new mongoose.Schema({
 // INDEXES
 // ============================================================================
 QuizSessionSchema.index({ school: 1, class: 1 });
+QuizSessionSchema.index({ school: 1, teacher: 1 }); // ⚡ Optimize Teacher dashboard loading their quizzes
 QuizSessionSchema.index({ school: 1, isPublished: 1, startTime: 1, dueDate: 1 });
 QuizSessionSchema.index({ 'sections.type': 1 });
 

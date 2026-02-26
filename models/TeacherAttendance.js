@@ -110,6 +110,12 @@ teacherAttendanceSchema.pre('save', function (next) {
   next();
 });
 
+// ⚡ Optimize querying attendance across the whole school on a specific date (e.g. daily attendance report)
+teacherAttendanceSchema.index({ school: 1, date: -1 });
+
+// ⚡ Optimize querying a specific teacher's attendance for the entire term
+teacherAttendanceSchema.index({ school: 1, teacher: 1, term: 1 });
+
 module.exports = mongoose.model(
   'TeacherAttendance',
   teacherAttendanceSchema

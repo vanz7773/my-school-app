@@ -126,6 +126,8 @@ QuizAttemptSchema.index({ quizId: 1, studentId: 1, attemptNumber: 1 });
 // ⚡ PERFORMANCE
 // ============================================================================
 QuizAttemptSchema.index({ status: 1, expiresAt: 1 });
+QuizAttemptSchema.index({ school: 1, studentId: 1 }); // ⚡ Optimize fetching a student's attempt history
+QuizAttemptSchema.index({ school: 1, quizId: 1 });    // ⚡ Optimize fetching all attempts for a specific quiz
 
 // ============================================================================
 // 🧠 INSTANCE HELPERS (STRONGLY RECOMMENDED)
