@@ -94,6 +94,9 @@ const userSchema = new mongoose.Schema(
     },
 
     dateOfBirth: { type: Date, default: null },
+
+    // 🔥 Added to guarantee Welcome Card only shows once globally
+    hasSeenWelcome: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

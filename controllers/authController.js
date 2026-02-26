@@ -151,6 +151,7 @@ exports.login = async (req, res) => {
           location: user.school.location || null,
         }
         : null,
+      hasSeenWelcome: user.hasSeenWelcome || false,
     };
 
     if (user.role === "parent" && Array.isArray(user.childIds) && user.childIds.length) {

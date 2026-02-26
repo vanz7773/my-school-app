@@ -11,6 +11,9 @@ const upload = multer({ storage });
 // 🟢 Get current profile
 router.get('/', protect, profileController.getProfile);
 
+// 🟢 Mark welcome as seen
+router.post('/welcome-seen', protect, profileController.markWelcomeSeen);
+
 // 🟢 Upload/update profile picture
 router.post('/picture', protect, upload.single('profilePicture'), profileController.updateProfilePicture);
 

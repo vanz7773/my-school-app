@@ -126,7 +126,7 @@ exports.getProfile = async (req, res) => {
 
     // Cache miss - fetch from database
     const user = await User.findById(userId)
-      .select("name email profilePicture role school")
+      .select("name email profilePicture role school hasSeenWelcome")
       .populate("school", "name schoolType")
       .lean()
       .exec();
@@ -418,3 +418,28 @@ setInterval(() => {
     console.log(`🧹 Cleaned ${cleanedCount} expired cache entries`);
   }
 }, 60 * 60 * 1000); // 1 hour
+
+// ------------------------------
+// MARK WELCOME SEEN
+// ------------------------------
+exports.markWelcomeSeen = async (req, res) => {
+  const userId = req.user.id;
+
+  try {
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    user.hasSeenWelcome = true;
+    await user.save();
+
+    // Invalidate profile cache so the new flag is picked up immediately
+    invalidateProfileCache(userId);
+
+    res.json({ success: true, message: "Welcome marked as seen" });
+  } catch (err) {
+    console.error("❌ Error marking welcome as seen:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
