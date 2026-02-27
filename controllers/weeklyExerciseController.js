@@ -465,16 +465,18 @@ exports.getExerciseSummary = async (req, res) => {
     console.log("📘 [getExerciseSummary] Starting summary fetch...");
     const { classId, termId, week, page = 1, limit = 10, finalized } = req.query;
 
-    if (!classId || !termId) {
+    if (!termId) {
       return res
         .status(400)
-        .json({ message: "classId and termId are required" });
+        .json({ message: "termId is required" });
     }
 
     // Ensure termId is a string, handle potential object if passed incorrectly
     const termIdValue = typeof termId === 'object' ? termId.toString() : termId;
 
-    const query = { class: classId, term: termIdValue };
+    const query = { term: termIdValue };
+    if (classId) query.class = classId;
+    if (req.user && req.user.school) query.school = req.user.school;
     if (week) query.week = parseInt(week);
     if (finalized !== undefined && finalized !== "") {
       query.finalized = finalized === "true";
