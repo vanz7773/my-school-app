@@ -12,13 +12,13 @@ const Subject = require("../models/Subject");
  */
 exports.addOrUpdateExercise = async (req, res) => {
   try {
-    const { classId, week, count, termId } = req.body;
+    const { classId, week, count, termId, subjectCounts } = req.body;
 
     // Validate input
     const missing = [];
     if (!classId) missing.push('classId');
     if (week === undefined) missing.push('week');
-    if (count === undefined) missing.push('count');
+    if (count === undefined && !Array.isArray(subjectCounts)) missing.push('count or subjectCounts');
     if (!termId) missing.push('termId');
 
     if (missing.length > 0) {
@@ -43,7 +43,14 @@ exports.addOrUpdateExercise = async (req, res) => {
       });
     }
 
-    if (typeof count !== 'number' || count < 0 || !Number.isInteger(count)) {
+    let computedCount = 0;
+    if (subjectCounts && Array.isArray(subjectCounts)) {
+        computedCount = subjectCounts.reduce((acc, curr) => acc + (Number(curr.count) || 0), 0);
+    } else {
+        computedCount = count !== undefined ? Number(count) : 0;
+    }
+
+    if (typeof computedCount !== 'number' || computedCount < 0 || !Number.isInteger(computedCount)) {
       return res.status(400).json({
         success: false,
         message: 'Count must be a non-negative integer'
@@ -130,7 +137,8 @@ exports.addOrUpdateExercise = async (req, res) => {
     // Create or update
     let result;
     if (existing) {
-      existing.totalExercises = count;
+      existing.totalExercises = computedCount;
+      if (Array.isArray(subjectCounts)) existing.subjectCounts = subjectCounts;
       result = await existing.save();
     } else {
       result = await WeeklyExercise.create({
@@ -138,7 +146,8 @@ exports.addOrUpdateExercise = async (req, res) => {
         class: classId,
         week: weekNum,
         term: termId,
-        totalExercises: count,
+        totalExercises: computedCount,
+        subjectCounts: Array.isArray(subjectCounts) ? subjectCounts : [],
         school: req.user.school,
         finalized: currentWeek > 0 && weekNum < currentWeek
       });
@@ -190,7 +199,7 @@ exports.addOrUpdateExercise = async (req, res) => {
 exports.updateExercise = async (req, res) => {
   try {
     const { exerciseId } = req.params;
-    const { count } = req.body;
+    const { count, subjectCounts } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(exerciseId)) {
       return res.status(400).json({
@@ -199,7 +208,14 @@ exports.updateExercise = async (req, res) => {
       });
     }
 
-    if (typeof count !== "number" || count < 0 || !Number.isInteger(count)) {
+    let computedCount = 0;
+    if (subjectCounts && Array.isArray(subjectCounts)) {
+        computedCount = subjectCounts.reduce((acc, curr) => acc + (Number(curr.count) || 0), 0);
+    } else {
+        computedCount = count !== undefined ? Number(count) : 0;
+    }
+
+    if (typeof computedCount !== "number" || computedCount < 0 || !Number.isInteger(computedCount)) {
       return res.status(400).json({
         success: false,
         message: "Count must be a non-negative integer"
@@ -238,7 +254,8 @@ exports.updateExercise = async (req, res) => {
       });
     }
 
-    existing.totalExercises = count;
+    existing.totalExercises = computedCount;
+    if (Array.isArray(subjectCounts)) existing.subjectCounts = subjectCounts;
     const updatedExercise = await existing.save();
 
     res.json({
@@ -474,6 +491,7 @@ exports.getExerciseSummary = async (req, res) => {
       })
       .populate("class", "name level")
       .populate("term", "term academicYear")
+      .populate("subjectCounts.subject", "name shortName")
       .sort({ updatedAt: -1 })
       .skip((page - 1) * limit)
       .limit(parseInt(limit))
@@ -502,6 +520,7 @@ exports.getExerciseSummary = async (req, res) => {
           name: teacher.user?.name || "Unknown Teacher",
           subjects
         },
+        subjectCounts: Array.isArray(ex.subjectCounts) ? ex.subjectCounts : [],
         totalExercises: ex.totalExercises || 0,
         week: ex.week,
         finalized: ex.finalized,

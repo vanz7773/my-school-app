@@ -7,6 +7,10 @@ const weeklyExerciseSchema = new mongoose.Schema({
   term: { type: mongoose.Schema.Types.ObjectId, ref: 'Term', required: true },
   week: { type: Number, required: true },
   totalExercises: { type: Number, default: 0 },
+  subjectCounts: [{
+    subject: { type: mongoose.Schema.Types.ObjectId, ref: 'Subject' },
+    count: { type: Number, default: 0 }
+  }],
   finalized: { type: Boolean, default: false },
   school: { type: mongoose.Schema.Types.ObjectId, ref: 'School', required: true }
 }, {
