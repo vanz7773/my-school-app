@@ -155,14 +155,22 @@ exports.login = async (req, res) => {
     };
 
     if (user.role === "parent" && Array.isArray(user.childIds) && user.childIds.length) {
-      const children = await Student.find({
+      const rawChildren = await Student.find({
         _id: { $in: user.childIds },
         school: user.school ? user.school._id || user.school : undefined,
       })
-        .select("name admissionNumber class school gender")
+        .select("user admissionNumber class school gender")
+        .populate("user", "name email profilePicture")
         .populate("class", "name")
         .populate("school", "name")
         .lean();
+
+      const children = rawChildren.map(c => ({
+        ...c,
+        name: c.user?.name || "Unknown Student",
+        email: c.user?.email || "",
+        profilePicture: c.user?.profilePicture || null
+      }));
 
       userResponse.children = children;
       userResponse.childrenCount = children.length;

@@ -188,10 +188,17 @@ exports.getMyChildren = async (req, res) => {
       return res.status(404).json({ message: 'Parent not found' });
     }
 
-    const children = await Student.find({ _id: { $in: parent.childIds }, school: schoolId })
-      .populate('user', 'name email')
+    const rawChildren = await Student.find({ _id: { $in: parent.childIds }, school: schoolId })
+      .populate('user', 'name email profilePicture')
       .populate('school', 'name schoolType')
       .lean();
+
+    const children = rawChildren.map(c => ({
+      ...c,
+      name: c.user?.name || "Unknown Student",
+      email: c.user?.email || "",
+      profilePicture: c.user?.profilePicture || null
+    }));
 
     return res.json(children);
   } catch (err) {
@@ -436,14 +443,22 @@ exports.getChildrenByParentId = async (req, res) => {
       return res.status(404).json({ message: 'Parent not found or invalid role' });
     }
 
-    const children = await Student.find({
+    const rawChildren = await Student.find({
       _id: { $in: parent.childIds },
       school: parent.school
     })
+      .select('user admissionNumber class school academicYear gender')
+      .populate('user', 'name email profilePicture')
       .populate('class', 'name')
       .populate('school', 'name schoolType')
-      .select('name admissionNumber class school academicYear gender')
       .lean();
+
+    const children = rawChildren.map(c => ({
+      ...c,
+      name: c.user?.name || "Unknown Student",
+      email: c.user?.email || "",
+      profilePicture: c.user?.profilePicture || null
+    }));
 
     return res.json({ children });
   } catch (err) {
