@@ -57,22 +57,53 @@ router.post("/register-token", protect, async (req, res) => {
       });
     }
 
-    const record = await PushToken.findOneAndUpdate(
-      { userId, token },            // FIXED QUERY
-      {
-        userId,
-        school,                     // ← CRITICAL FIX
-        token,
-        deviceInfo,
-        disabled: false,
-        lastSeen: new Date(),
-      },
-      {
-        new: true,
-        upsert: true,
-        setDefaultsOnInsert: true,
+    // --- ROBUST REGISTRATION LOGIC ---
+    let record = await PushToken.findOne({ token });
+
+    if (record) {
+      // Reassign or update existing token
+      record.userId = userId;
+      record.school = school;
+      record.deviceInfo = deviceInfo || record.deviceInfo;
+      record.disabled = false;
+      record.lastSeen = new Date();
+      await record.save();
+      console.log("✅ Push token reassigned/updated:", record._id);
+    } else {
+      // Create new token record
+      const platform = (deviceInfo?.os || "").toLowerCase().includes("ios") ? "ios" : "android";
+
+      try {
+        record = await PushToken.create({
+          userId,
+          school,
+          token,
+          platform,
+          deviceInfo: deviceInfo || {},
+          disabled: false,
+          lastSeen: new Date(),
+        });
+        console.log("✅ New push token created:", record._id);
+      } catch (createErr) {
+        // Handle race condition: token might have been created just now by another request
+        if (createErr.code === 11000) {
+          console.log("⚠️ Race condition hit, retrying with update...");
+          record = await PushToken.findOneAndUpdate(
+            { token },
+            {
+              userId,
+              school,
+              deviceInfo,
+              disabled: false,
+              lastSeen: new Date(),
+            },
+            { new: true }
+          );
+        } else {
+          throw createErr;
+        }
       }
-    );
+    }
 
     console.log("✅ Push token saved:", record);
 
