@@ -58,15 +58,11 @@ router.post("/register-token", protect, async (req, res) => {
       });
     }
 
-    // --- ROBUST REGISTRATION LOGIC WITH DIAGNOSTICS ---
-    console.log(`🔍 [DEBUG] [PUSH] Registering token: "${token}" for user: ${userId}`);
-    console.log(`🔍 [DEBUG] [PUSH] Collection name: ${PushToken.collection.name}`);
-
+    // --- ROBUST REGISTRATION LOGIC ---
     let record = await PushToken.findOne({ token });
     const platform = (deviceInfo?.os || "").toLowerCase().includes("ios") ? "ios" : "android";
 
     if (record) {
-      console.log(`📖 [DEBUG] [PUSH] Found record: ${record._id}, current user: ${record.userId}`);
       // Reassign or update existing token
       record.userId = userId;
       record.school = school;
@@ -74,11 +70,8 @@ router.post("/register-token", protect, async (req, res) => {
       record.platform = platform; // Sync platform to avoid validation error
       record.disabled = false;
       record.lastSeen = new Date();
-      console.log(`💾 [DEBUG] [PUSH] Saving record: ${record._id}`);
       await record.save();
-      console.log("✅ [DEBUG] [PUSH] Token reassigned/updated successfully");
     } else {
-      console.log(`🆕 [DEBUG] [PUSH] No record found. Creating new one...`);
       // Create new token record
       try {
         record = await PushToken.create({
@@ -93,8 +86,6 @@ router.post("/register-token", protect, async (req, res) => {
         console.log(`✅ [DEBUG] [PUSH] New record created: ${record._id}`);
       } catch (createErr) {
         if (createErr.code === 11000) {
-          console.warn(`🚨 [DEBUG] [PUSH] E11000 during create. Falling back to findOneAndUpdate...`);
-          console.warn(`🚨 [DEBUG] [PUSH] Err details: ${JSON.stringify(createErr.keyValue)}`);
           record = await PushToken.findOneAndUpdate(
             { token },
             {
@@ -107,9 +98,7 @@ router.post("/register-token", protect, async (req, res) => {
             },
             { new: true, runValidators: true }
           );
-          console.log(`✅ [DEBUG] [PUSH] Recovered from race condition via findOneAndUpdate. Record ID: ${record?._id}`);
         } else {
-          console.error(`❌ [DEBUG] [PUSH] Fatal error during create:`, createErr);
           throw createErr;
         }
       }
