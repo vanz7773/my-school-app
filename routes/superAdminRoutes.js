@@ -10,6 +10,7 @@ router.use(restrictTo('superadmin'));
 // 🏫 School Management
 router.get('/schools', superAdminController.getAllSchools);
 router.put('/schools/:id/status', superAdminController.updateSchoolStatus);
+router.post('/schools/:id/alert-owing', superAdminController.alertOwingSchool);
 
 // 💰 School Transactions (Invoices & Payments)
 router.get('/schools/:schoolId/transactions', superAdminController.getSchoolTransactions);

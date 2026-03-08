@@ -35,12 +35,36 @@ exports.getAllSchools = async (req, res) => {
                 const teacherCount = await User.countDocuments({ school: school._id, role: "teacher" });
                 const adminCount = await User.countDocuments({ school: school._id, role: "admin" });
 
+                // Calculate owing subscription status
+                const pendingInvoices = await SchoolTransaction.find({
+                    school: school._id,
+                    type: 'invoice',
+                    status: 'pending'
+                }).sort({ dueDate: 1 }); // Sort by due date ascending (oldest first)
+
+                let owingBalance = 0;
+                let nextDueDate = null;
+
+                if (pendingInvoices.length > 0) {
+                    owingBalance = pendingInvoices.reduce((sum, inv) => sum + (inv.amount || 0), 0);
+                    // Find the first valid due date
+                    const invoiceWithDate = pendingInvoices.find(inv => inv.dueDate);
+                    if (invoiceWithDate) {
+                        nextDueDate = invoiceWithDate.dueDate;
+                    }
+                }
+
                 return {
                     ...school,
                     stats: {
                         students: studentCount,
                         teachers: teacherCount,
                         admins: adminCount
+                    },
+                    subscription: {
+                        isOwing: owingBalance > 0,
+                        owingBalance,
+                        nextDueDate
                     }
                 };
             })
@@ -56,6 +80,65 @@ exports.getAllSchools = async (req, res) => {
     } catch (err) {
         console.error("Values error in getAllSchools:", err);
         return sendError(res, 500, "Server error fetching schools");
+    }
+};
+
+exports.alertOwingSchool = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const school = await School.findById(id);
+        if (!school) {
+            return sendError(res, 404, "School not found");
+        }
+
+        // Calculate owing status to include in the notification
+        const pendingInvoices = await SchoolTransaction.find({
+            school: id,
+            type: 'invoice',
+            status: 'pending'
+        }).sort({ dueDate: 1 });
+
+        let owingBalance = 0;
+        let nextDueDate = null;
+
+        if (pendingInvoices.length > 0) {
+            owingBalance = pendingInvoices.reduce((sum, inv) => sum + (inv.amount || 0), 0);
+            const invoiceWithDate = pendingInvoices.find(inv => inv.dueDate);
+            if (invoiceWithDate) nextDueDate = invoiceWithDate.dueDate;
+        }
+
+        if (owingBalance <= 0) {
+            return res.status(400).json({ success: false, message: "This school is not currently owing." });
+        }
+
+        let message = `URGENT: Your school has an outstanding subscription balance of ₵${owingBalance}.`;
+        if (nextDueDate) {
+            const formattedDate = new Date(nextDueDate).toLocaleDateString();
+            message += ` The payment was due by ${formattedDate}.`;
+        }
+        message += ` Please arrange for payment to avoid service interruption.`;
+
+        // Send Notification to school admins
+        const notification = await Notification.create({
+            title: "Outstanding Subscription Access Fee",
+            message: message,
+            type: "system", // Or a new type like "billing_alert"
+            audience: "admin",
+            school: id,
+            sender: req.user ? req.user._id : null
+        });
+
+        const mockReq = { app: req.app, user: req.user };
+        await broadcastNotification(mockReq, notification);
+
+        return res.json({
+            success: true,
+            message: "Alert notification sent to school admins successfully."
+        });
+    } catch (err) {
+        console.error("Error in alertOwingSchool:", err);
+        return sendError(res, 500, "Server error alerting school");
     }
 };
 

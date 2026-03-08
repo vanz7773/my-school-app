@@ -1,10 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const upload = require('../utils/upload'); // the memory-storage version
-const { saveSchoolInfo, getSchoolInfo, getFileById, getMyTransactions } = require('../controllers/schoolInfocontroller');
+const { saveSchoolInfo, getSchoolInfo, getFileById, getMyTransactions, getSubscriptionStatus } = require('../controllers/schoolInfocontroller');
 const { protect } = require('../middlewares/authMiddleware');
 
 router.get('/my-transactions', protect, getMyTransactions);
+
+router.get('/subscription-status', protect, getSubscriptionStatus);
 
 router.get('/', protect, getSchoolInfo);
 

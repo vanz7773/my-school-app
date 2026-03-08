@@ -40,6 +40,41 @@ exports.getMyTransactions = async (req, res) => {
   }
 };
 
+// GET subscription status
+exports.getSubscriptionStatus = async (req, res) => {
+  try {
+    const schoolId = req.user.school;
+    if (!schoolId) return res.status(400).json({ message: 'No school found for this user' });
+
+    const pendingInvoices = await SchoolTransaction.find({
+      school: schoolId,
+      type: 'invoice',
+      status: 'pending'
+    }).sort({ dueDate: 1 });
+
+    let owingBalance = 0;
+    let nextDueDate = null;
+
+    if (pendingInvoices.length > 0) {
+      owingBalance = pendingInvoices.reduce((sum, inv) => sum + (inv.amount || 0), 0);
+      const invoiceWithDate = pendingInvoices.find(inv => inv.dueDate);
+      if (invoiceWithDate) {
+        nextDueDate = invoiceWithDate.dueDate;
+      }
+    }
+
+    return res.json({
+      success: true,
+      isOwing: owingBalance > 0,
+      amountOwed: owingBalance,
+      dueDate: nextDueDate
+    });
+  } catch (err) {
+    console.error("Error in getSubscriptionStatus:", err);
+    return res.status(500).json({ message: 'Server error fetching subscription status' });
+  }
+};
+
 // SAVE / UPDATE school info
 exports.saveSchoolInfo = async (req, res) => {
   console.log("---- saveSchoolInfo called ----");

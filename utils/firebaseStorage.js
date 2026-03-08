@@ -2,17 +2,27 @@ const admin = require("firebase-admin");
 
 // Initialize Firebase Admin using environment variables
 if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      project_id: process.env.FIREBASE_PROJECT_ID,
-      client_email: process.env.FIREBASE_CLIENT_EMAIL,
-      private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
-    }),
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-  });
+  try {
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        project_id: process.env.FIREBASE_PROJECT_ID,
+        client_email: process.env.FIREBASE_CLIENT_EMAIL,
+        private_key: (process.env.FIREBASE_PRIVATE_KEY || "").replace(/\\n/g, "\n"),
+      }),
+      storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+    });
+  } catch (error) {
+    console.error("Firebase Initialization Error (Likely missing env vars):", error.message);
+  }
 }
 
-const bucket = admin.storage().bucket();
+let bucket;
+try {
+  bucket = admin.storage().bucket();
+} catch (error) {
+  console.warn("Storage mock fallback because Firebase is not initialized");
+  bucket = { file: () => ({ createWriteStream: () => ({ on: () => { }, end: () => { } }), makePublic: async () => { } }) };
+}
 
 /**
  * Uploads a file to Firebase Storage into a virtual folder.
