@@ -63,11 +63,21 @@ exports.getSubscriptionStatus = async (req, res) => {
       }
     }
 
+    const lastPaid = await SchoolTransaction.findOne({
+      school: schoolId,
+      status: 'paid'
+    }).sort({ updatedAt: -1 });
+
     return res.json({
       success: true,
       isOwing: owingBalance > 0,
       amountOwed: owingBalance,
-      dueDate: nextDueDate
+      dueDate: nextDueDate,
+      lastPaid: lastPaid ? {
+        amount: lastPaid.amount,
+        date: lastPaid.updatedAt,
+        id: lastPaid._id
+      } : null
     });
   } catch (err) {
     console.error("Error in getSubscriptionStatus:", err);
