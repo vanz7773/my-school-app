@@ -123,7 +123,7 @@ exports.alertOwingSchool = async (req, res) => {
         const notification = await Notification.create({
             title: "Outstanding Subscription Access Fee",
             message: message,
-            type: "system", // Or a new type like "billing_alert"
+            type: "general", // "system" is not a valid enum type in Notification.js
             audience: "admin",
             school: id,
             sender: req.user ? req.user._id : null
