@@ -7,7 +7,7 @@ const timeToMinutes = (str) => {
   const match = str.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
   if (!match) return NaN;
 
-  let [ , h, m, period ] = match;
+  let [, h, m, period] = match;
   h = Number(h);
   m = Number(m);
   period = period.toUpperCase();
@@ -70,6 +70,12 @@ const movementSchema = new mongoose.Schema(
       ref: 'Teacher',
       required: true,
       index: true // ⚡ Fast teacher lookups
+    },
+    school: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'School',
+      required: true,
+      index: true // ⚡ Fast school-scoped lookups
     }
   },
   {
@@ -129,5 +135,6 @@ movementSchema.pre('validate', function (next) {
 movementSchema.index({ teacher: 1, createdAt: -1 }); // Perfect for rate-limiting + dashboard
 movementSchema.index({ date: -1 });                  // Sort fast by date
 movementSchema.index({ teacher: 1 });                // Common lookup
+movementSchema.index({ school: 1, date: -1 });       // ⚡ Admin dashboard lookup
 
 module.exports = mongoose.model('Movement', movementSchema);

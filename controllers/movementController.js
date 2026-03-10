@@ -1,5 +1,7 @@
 const Movement = require('../models/movement');
 const Teacher = require('../models/Teacher');
+const Notification = require('../models/Notification');
+const { broadcastNotification } = require('./notificationController');
 const mongoose = require('mongoose');
 
 // -------------------------------------------------------------------
@@ -21,7 +23,7 @@ const createMovement = async (req, res) => {
     // -------------------------------------------------------------------
     // 1️⃣ Fetch teacher once (lean = fast)
     // -------------------------------------------------------------------
-    const teacher = await Teacher.findOne({ user: userId }).select('_id movements').lean();
+    const teacher = await Teacher.findOne({ user: userId }).select('_id movements school').lean();
 
     if (!teacher) {
       return res.status(404).json({ error: 'Teacher profile not found' });
@@ -83,7 +85,8 @@ const createMovement = async (req, res) => {
       purpose,
       departureTime,
       arrivalTime,
-      teacher: teacherId
+      teacher: teacherId,
+      school: teacher.school
     }], { session });
 
     await Teacher.updateOne(
@@ -96,8 +99,32 @@ const createMovement = async (req, res) => {
     session.endSession();
 
     // -------------------------------------------------------------------
-    // 5️⃣ Success response
+    // 6️⃣ Send Notification to Admins (Fire and forget, don't block response)
     // -------------------------------------------------------------------
+    (async () => {
+      try {
+        const notif = await Notification.create({
+          title: 'New Teacher Movement',
+          message: `${name} has recorded a new movement to ${destination}.`,
+          type: 'teacher-attendance',
+          audience: 'admin',
+          school: teacher.school,
+          sender: userId,
+          relatedResource: movement[0]._id,
+          resourceModel: 'Movement' // Note: Ensure this is in the enum if strictly validated
+        });
+
+        // Mock req for broadcastNotification
+        const mockReq = {
+          app: req.app,
+          user: req.user
+        };
+        await broadcastNotification(mockReq, notif);
+      } catch (nErr) {
+        console.error('Movement notification failed:', nErr);
+      }
+    })();
+
     return res.status(201).json({
       message: 'Movement recorded successfully.',
       movement: {
@@ -146,12 +173,28 @@ const getTeacherMovements = async (req, res) => {
 // -------------------------------------------------------------------
 const getAllMovements = async (req, res) => {
   try {
-    const movements = await Movement.find()
-      .populate('teacher', 'name')
+    const schoolId = req.user?.school;
+
+    if (!schoolId) {
+      return res.status(400).json({ error: 'School context missing' });
+    }
+
+    const movements = await Movement.find({ school: schoolId })
+      .populate({
+        path: 'teacher',
+        select: 'user',
+        populate: { path: 'user', select: 'name' }
+      })
       .sort({ createdAt: -1 })
       .lean();
 
-    return res.status(200).json({ movements });
+    // Map to flatten teacher name for easy frontend use
+    const formattedMovements = movements.map(m => ({
+      ...m,
+      teacherName: m.teacher?.user?.name || 'Unknown Teacher'
+    }));
+
+    return res.status(200).json({ movements: formattedMovements });
 
   } catch (error) {
     console.error('Fetch all movements failed:', error);
