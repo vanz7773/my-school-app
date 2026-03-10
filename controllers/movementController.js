@@ -179,7 +179,17 @@ const getAllMovements = async (req, res) => {
       return res.status(400).json({ error: 'School context missing' });
     }
 
-    const movements = await Movement.find({ school: schoolId })
+    // 1️⃣ Fetch all teacher IDs for this school (to include legacy movements without school field)
+    const teachersList = await Teacher.find({ school: schoolId }).select('_id').lean();
+    const teacherIds = teachersList.map(t => t._id);
+
+    // 2️⃣ Query movements belonging to this school or these teachers
+    const movements = await Movement.find({
+      $or: [
+        { school: schoolId },
+        { teacher: { $in: teacherIds } }
+      ]
+    })
       .populate({
         path: 'teacher',
         select: 'user',
