@@ -175,7 +175,7 @@ exports.updateSchoolStatus = async (req, res) => {
 exports.getSchoolTransactions = async (req, res) => {
     try {
         const { schoolId } = req.params;
-        const transactions = await SchoolTransaction.find({ school: schoolId }).sort({ createdAt: -1 });
+        const transactions = await SchoolTransaction.find({ school: schoolId }).sort({ createdAt: -1 }).lean();
         const schoolInfo = await SchoolInfo.findOne({ school: schoolId }).lean();
         return res.json({ success: true, transactions, schoolInfo });
     } catch (err) {
