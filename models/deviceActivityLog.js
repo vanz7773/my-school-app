@@ -33,6 +33,10 @@ const deviceActivityLogSchema = new mongoose.Schema({
   stationaryState: {
     type: Boolean,
     default: false
+  },
+  location: {
+    latitude: { type: Number },
+    longitude: { type: Number }
   }
 }, { timestamps: true });
 
