@@ -27,8 +27,18 @@ const studentSchema = new mongoose.Schema({
 
   dateOfBirth: { type: Date },
   address: { type: String },
+  religion: { type: String },
+  hometown: { type: String },
+  languageSpoken: { type: String },
+  
+  // Guardian/Parent Details
   guardianName: { type: String },
   guardianPhone: { type: String },
+  guardianOccupation: { type: String },
+  fatherName: { type: String },
+  fatherOccupation: { type: String },
+  motherName: { type: String },
+  motherOccupation: { type: String },
 
   parent: {
     type: mongoose.Schema.Types.ObjectId,

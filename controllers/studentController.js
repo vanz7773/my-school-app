@@ -14,10 +14,17 @@ exports.createStudent = async (req, res) => {
       password,
       gender,
       dob,
-      guardianName,
       guardianPhone,
+      guardianOccupation,
       classId,
-      academicYear
+      academicYear,
+      religion,
+      hometown,
+      languageSpoken,
+      fatherName,
+      fatherOccupation,
+      motherName,
+      motherOccupation
     } = req.body;
 
     console.log('📥 Creating student with data:', req.body);
@@ -66,9 +73,16 @@ exports.createStudent = async (req, res) => {
       admissionNumber,
       gender: formattedGender,
       dateOfBirth: dob,
-      guardianName,
       guardianPhone,
+      guardianOccupation,
       academicYear,
+      religion,
+      hometown,
+      languageSpoken,
+      fatherName,
+      fatherOccupation,
+      motherName,
+      motherOccupation,
       school: req.user.school
     };
 
@@ -149,12 +163,19 @@ exports.updateStudent = async (req, res) => {
   const {
     name,
     email,
-    guardianName,
     guardianPhone,
+    guardianOccupation,
     gender,
     dob,
     classId,
-    academicYear
+    academicYear,
+    religion,
+    hometown,
+    languageSpoken,
+    fatherName,
+    fatherOccupation,
+    motherName,
+    motherOccupation
   } = req.body;
 
   try {
@@ -163,9 +184,16 @@ exports.updateStudent = async (req, res) => {
 
     student.gender = gender;
     student.dateOfBirth = dob;
-    student.guardianName = guardianName;
     student.guardianPhone = guardianPhone;
+    student.guardianOccupation = guardianOccupation;
     student.academicYear = academicYear;
+    student.religion = religion;
+    student.hometown = hometown;
+    student.languageSpoken = languageSpoken;
+    student.fatherName = fatherName;
+    student.fatherOccupation = fatherOccupation;
+    student.motherName = motherName;
+    student.motherOccupation = motherOccupation;
 
     if (classId) {
       const selectedClass = await Class.findById(classId);
@@ -334,8 +362,15 @@ exports.getStudentById = async (req, res) => {
       school: student.school?.name || "",
       academicYear: student.academicYear,
       gender: student.gender,
-      guardianName: student.guardianName,
       guardianPhone: student.guardianPhone,
+      guardianOccupation: student.guardianOccupation,
+      religion: student.religion,
+      hometown: student.hometown,
+      languageSpoken: student.languageSpoken,
+      fatherName: student.fatherName,
+      fatherOccupation: student.fatherOccupation,
+      motherName: student.motherName,
+      motherOccupation: student.motherOccupation,
     };
 
     res.json(formatted);
