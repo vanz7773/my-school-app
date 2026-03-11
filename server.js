@@ -176,13 +176,12 @@ const webPushRoutes = require('./routes/webPushRoutes');
 app.use('/api/web-push', webPushRoutes);
 app.use('/api/school-records', schoolRecordsRoutes);
 
+// Device Activity Monitoring System (Teacher)
+const deviceActivityRoutes = require('./routes/deviceActivityRoutes');
+app.use('/api/device-activity', deviceActivityRoutes);
 
-
-
-
-
-
-// Default root route
+const deviceMonitoringJob = require('./jobs/deviceMonitoringJob');
+deviceMonitoringJob.start();// Default root route
 app.get('/', (req, res) => res.send('🎓 School Management API Running with Realtime Notifications'));
 
 // Start server with Socket.IO support
