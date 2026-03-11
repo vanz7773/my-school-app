@@ -187,7 +187,7 @@ exports.getSchoolTransactions = async (req, res) => {
 exports.createSchoolTransaction = async (req, res) => {
     try {
         const { schoolId } = req.params;
-        const { type, amount, description, reference, dueDate, status } = req.body;
+        const { type, amount, description, reference, dueDate, status, items } = req.body;
 
         if (!['invoice', 'payment'].includes(type)) {
             return sendError(res, 400, "Invalid transaction type");
@@ -200,7 +200,8 @@ exports.createSchoolTransaction = async (req, res) => {
             description,
             reference,
             dueDate,
-            status: status || (type === 'payment' ? 'paid' : 'pending')
+            status: status || (type === 'payment' ? 'paid' : 'pending'),
+            items
         });
 
         await transaction.save();

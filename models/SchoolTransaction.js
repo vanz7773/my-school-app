@@ -33,7 +33,11 @@ const schoolTransactionSchema = new mongoose.Schema({
     },
     reference: {
         type: String
-    }
+    },
+    items: [{
+        description: String,
+        amount: Number
+    }]
 }, { timestamps: true });
 
 schoolTransactionSchema.index({ school: 1, date: -1 });  // Typical dashboard view
