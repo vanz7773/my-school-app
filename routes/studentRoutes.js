@@ -12,10 +12,12 @@ const {
   getStudentsByClassId,
   getStudentByUserId,
   getStudentById, // ✅ newly added import
+  bulkCreateStudents,
 } = studentController;
 
 // 🧭 Admin-only: Admit student
 router.post('/', protect, restrictTo('admin'), createStudent);
+router.post('/bulk', protect, restrictTo('admin'), bulkCreateStudents);
 
 // 🧭 Admin-only: View, update, delete students
 router.get('/', protect, restrictTo('admin'), getAllStudents);

@@ -383,3 +383,148 @@ exports.getStudentById = async (req, res) => {
   }
 };
 
+// ✅ BULK Admit/enroll students
+exports.bulkCreateStudents = async (req, res) => {
+  try {
+    const { students: studentList } = req.body;
+    if (!Array.isArray(studentList) || studentList.length === 0) {
+      return res.status(400).json({ message: 'No students provided for bulk enrollment' });
+    }
+
+    console.log(`📥 Bulk creating ${studentList.length} students`);
+
+    const results = {
+      success: [],
+      errors: []
+    };
+
+    // Helper to format gender
+    const formatGender = (g) => {
+      if (!g || typeof g !== 'string') return 'Male';
+      const lower = g.toLowerCase().trim();
+      if (lower === 'female' || lower === 'girl' || lower === 'f') return 'Female';
+      return 'Male';
+    };
+
+    // 1. Get starting admission number
+    const existingStudents = await Student.find({ school: req.user.school }).select('admissionNumber');
+    const numericAdmNos = existingStudents
+      .map(s => parseInt(s.admissionNumber, 10))
+      .filter(n => !isNaN(n));
+    
+    let nextNum = numericAdmNos.length > 0 ? Math.max(...numericAdmNos) + 1 : 1;
+
+    // 2. Process each student
+    for (const data of studentList) {
+      const { 
+        name, email, password, gender, dob, classId, academicYear, 
+        guardianPhone, guardianOccupation, religion, hometown, 
+        languageSpoken, fatherName, fatherOccupation, motherName, motherOccupation 
+      } = data;
+
+      try {
+        // Validation basic
+        if (!name || !email) {
+          throw new Error(`Missing required fields for student: ${name || 'Unknown'}`);
+        }
+
+        const existingUser = await User.findOne({ email });
+        if (existingUser) {
+          throw new Error(`Email already exists: ${email}`);
+        }
+
+        const formattedGender = formatGender(gender);
+
+        // Create User
+        const user = new User({
+          name,
+          email,
+          password: password || 'Student123!', // Default password if none provided
+          gender: formattedGender,
+          role: 'student',
+          school: req.user.school
+        });
+        await user.save();
+
+        // Assign Admission Number
+        const admissionNumber = String(nextNum).padStart(3, '0');
+        nextNum++;
+
+        // Create Student
+        const studentData = {
+          user: user._id,
+          admissionNumber,
+          gender: formattedGender,
+          dateOfBirth: dob,
+          guardianPhone,
+          guardianOccupation,
+          academicYear,
+          religion,
+          hometown,
+          languageSpoken,
+          fatherName,
+          fatherOccupation,
+          motherName,
+          motherOccupation,
+          school: req.user.school
+        };
+
+        if (classId) {
+          studentData.class = classId;
+        }
+
+        const student = new Student(studentData);
+        await student.save();
+
+        results.success.push({ name, email, admissionNumber });
+
+        // Optional: Single notifications for student (async non-blocking)
+        Notification.create({
+          sender: req.user._id,
+          recipientUsers: [user._id],
+          message: `🎉 Welcome ${name}! Your student account has been created.`,
+          school: req.user.school
+        }).catch(err => console.warn('Individual student notification failed', err.message));
+
+      } catch (err) {
+        results.errors.push({ name: data.name || 'Unknown', email: data.email || 'N/A', message: err.message });
+      }
+    }
+
+    // 3. Batch notification for Admin
+    if (results.success.length > 0) {
+      try {
+        const admins = await User.find({ role: 'admin', school: req.user.school }).select('_id');
+        const adminIds = admins.map(admin => admin._id);
+        
+        await Notification.create({
+          sender: req.user._id,
+          recipientUsers: adminIds,
+          message: `📢 Bulk Enrollment Complete: ${results.success.length} students added.`,
+          school: req.user.school
+        });
+
+        if (enrollmentController.clearEnrollmentCache) {
+          enrollmentController.clearEnrollmentCache(req.user.school);
+        }
+      } catch (postProcessErr) {
+        console.warn('Post-bulk creation processing failed:', postProcessErr.message);
+      }
+    }
+
+    res.status(201).json({
+      message: `Processed ${studentList.length} students`,
+      summary: {
+        total: studentList.length,
+        successCount: results.success.length,
+        errorCount: results.errors.length
+      },
+      results
+    });
+
+  } catch (err) {
+    console.error('❌ Error in bulkCreateStudents:', err);
+    res.status(500).json({ message: 'Error in bulk student creation', error: err.message });
+  }
+};
+
