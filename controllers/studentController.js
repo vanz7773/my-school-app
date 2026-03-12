@@ -414,10 +414,25 @@ exports.bulkCreateStudents = async (req, res) => {
     
     let nextNum = numericAdmNos.length > 0 ? Math.max(...numericAdmNos) + 1 : 1;
 
+    // 1.5. Prepare Class mapping (Name -> ID) for easier lookup
+    const allClasses = await Class.find({ school: req.user.school }).select('name _id displayName stream');
+    const classMap = {};
+    allClasses.forEach(c => {
+      // Map both name (e.g. "BASIC 1") and displayName (e.g. "BASIC 1A")
+      if (c.name) classMap[c.name.toLowerCase().trim()] = c._id;
+      if (c.displayName) classMap[c.displayName.toLowerCase().trim()] = c._id;
+      
+      // Also handle "Name Stream" combinations if relevant
+      if (c.name && c.stream) {
+        const full = `${c.name} ${c.stream}`.toLowerCase().trim();
+        classMap[full] = c._id;
+      }
+    });
+
     // 2. Process each student
     for (const data of studentList) {
       const { 
-        name, email, password, gender, dob, classId, academicYear, 
+        name, email, password, gender, dob, classId, className, academicYear, 
         guardianPhone, guardianOccupation, religion, hometown, 
         languageSpoken, fatherName, fatherOccupation, motherName, motherOccupation 
       } = data;
@@ -471,6 +486,14 @@ exports.bulkCreateStudents = async (req, res) => {
 
         if (classId) {
           studentData.class = classId;
+        } else if (className) {
+          const lookupName = String(className).toLowerCase().trim();
+          if (classMap[lookupName]) {
+            studentData.class = classMap[lookupName];
+          } else {
+            console.warn(`⚠️ Bulk Creation: Class name "${className}" not found for student ${name}`);
+            // We still proceed, but the student won't have a class assigned
+          }
         }
 
         const student = new Student(studentData);
