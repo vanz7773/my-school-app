@@ -24,7 +24,8 @@ exports.createStudent = async (req, res) => {
       fatherName,
       fatherOccupation,
       motherName,
-      motherOccupation
+      motherOccupation,
+      admissionNumber: manualAdmissionNumber
     } = req.body;
 
     console.log('📥 Creating student with data:', req.body);
@@ -56,17 +57,28 @@ exports.createStudent = async (req, res) => {
     await user.save();
     console.log('✅ Created user:', user._id);
 
-    // Generate sequential admission number
-    const existingStudents = await Student.find({ school: req.user.school }).select('admissionNumber');
-    const numericAdmNos = existingStudents
-      .map(s => parseInt(s.admissionNumber, 10))
-      .filter(n => !isNaN(n));
+    let admissionNumber;
 
-    let nextNum = 1;
-    if (numericAdmNos.length > 0) {
-      nextNum = Math.max(...numericAdmNos) + 1;
+    if (manualAdmissionNumber) {
+      // Check for uniqueness
+      const existing = await Student.findOne({ school: req.user.school, admissionNumber: String(manualAdmissionNumber).trim() });
+      if (existing) {
+        return res.status(400).json({ message: `Admission number ${manualAdmissionNumber} is already in use.` });
+      }
+      admissionNumber = String(manualAdmissionNumber).trim();
+    } else {
+      // Generate sequential admission number
+      const existingStudents = await Student.find({ school: req.user.school }).select('admissionNumber');
+      const numericAdmNos = existingStudents
+        .map(s => parseInt(s.admissionNumber, 10))
+        .filter(n => !isNaN(n));
+
+      let nextNum = 1;
+      if (numericAdmNos.length > 0) {
+        nextNum = Math.max(...numericAdmNos) + 1;
+      }
+      admissionNumber = String(nextNum).padStart(3, '0');
     }
-    const admissionNumber = String(nextNum).padStart(3, '0');
 
     const studentData = {
       user: user._id,
@@ -448,6 +460,26 @@ exports.bulkCreateStudents = async (req, res) => {
           throw new Error(`Email already exists: ${email}`);
         }
 
+        // Admission Number Handling
+        let studentAdmissionNumber;
+        if (data.admissionNumber) {
+          const trimmedNo = String(data.admissionNumber).trim();
+          const existingNo = await Student.findOne({ school: req.user.school, admissionNumber: trimmedNo });
+          if (existingNo) {
+            throw new Error(`Admission number ${trimmedNo} is already in use.`);
+          }
+          studentAdmissionNumber = trimmedNo;
+
+          // If manual number is numeric, update starting point for next auto-generated one
+          const numericVal = parseInt(trimmedNo, 10);
+          if (!isNaN(numericVal) && numericVal >= nextNum) {
+            nextNum = numericVal + 1;
+          }
+        } else {
+          studentAdmissionNumber = String(nextNum).padStart(3, '0');
+          nextNum++;
+        }
+
         const formattedGender = formatGender(gender);
 
         // Create User
@@ -468,7 +500,7 @@ exports.bulkCreateStudents = async (req, res) => {
         // Create Student
         const studentData = {
           user: user._id,
-          admissionNumber,
+          admissionNumber: studentAdmissionNumber,
           gender: formattedGender,
           dateOfBirth: dob,
           guardianPhone,
