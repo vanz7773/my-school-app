@@ -450,6 +450,16 @@ exports.bulkCreateStudents = async (req, res) => {
       } = data;
 
       try {
+        
+        // Parse DD/MM/YYYY or DD-MM-YYYY dates
+        let parsedDob = dob;
+        if (parsedDob && typeof parsedDob === 'string') {
+          const parts = parsedDob.split(/[-\/]/); 
+          if (parts.length === 3 && parts[2].length === 4) {
+               // Assuming DD/MM/YYYY
+               parsedDob = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
+          }
+        }
         // Validation basic
         if (!name || !email) {
           throw new Error(`Missing required fields for student: ${name || 'Unknown'}`);
@@ -502,7 +512,7 @@ exports.bulkCreateStudents = async (req, res) => {
           user: user._id,
           admissionNumber: studentAdmissionNumber,
           gender: formattedGender,
-          dateOfBirth: dob,
+          dateOfBirth: parsedDob,
           guardianPhone,
           guardianOccupation,
           academicYear,
