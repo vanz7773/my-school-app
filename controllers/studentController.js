@@ -7,6 +7,7 @@ const FeedingFeeRecord = require('../models/FeedingFeeRecord');
 const enrollmentController = require('./enrollmentController'); // Ensure cache clearing support
 // ✅ Admin-only: Admit/enroll student (multi-school aware)
 exports.createStudent = async (req, res) => {
+  let createdUserId = null;
   try {
     const {
       name,
@@ -55,6 +56,7 @@ exports.createStudent = async (req, res) => {
       school: req.user.school
     });
     await user.save();
+    createdUserId = user._id;
     console.log('✅ Created user:', user._id);
 
     let admissionNumber;
@@ -143,6 +145,9 @@ exports.createStudent = async (req, res) => {
     res.status(201).json({ message: 'Student created successfully', student });
 
   } catch (err) {
+    if (createdUserId) {
+      await User.findByIdAndDelete(createdUserId).catch(e => console.error("Rollback failed for single student:", e));
+    }
     console.error('❌ Error creating student:', err);
     res.status(500).json({ message: 'Error creating student', error: err.message });
   }
@@ -449,6 +454,8 @@ exports.bulkCreateStudents = async (req, res) => {
         languageSpoken, fatherName, fatherOccupation, motherName, motherOccupation 
       } = data;
 
+      let createdUserId = null;
+
       try {
         
         // Parse DD/MM/YYYY or DD-MM-YYYY dates
@@ -502,6 +509,7 @@ exports.bulkCreateStudents = async (req, res) => {
           school: req.user.school
         });
         await user.save();
+        createdUserId = user._id;
 
         // Assign Admission Number
         const admissionNumber = String(nextNum).padStart(3, '0');
@@ -552,6 +560,9 @@ exports.bulkCreateStudents = async (req, res) => {
         }).catch(err => console.warn('Individual student notification failed', err.message));
 
       } catch (err) {
+        if (createdUserId) {
+          await User.findByIdAndDelete(createdUserId).catch(e => console.error("Rollback failed:", e));
+        }
         results.errors.push({ name: data.name || 'Unknown', email: data.email || 'N/A', message: err.message });
       }
     }
