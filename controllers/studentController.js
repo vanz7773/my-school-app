@@ -515,13 +515,19 @@ exports.bulkCreateStudents = async (req, res) => {
         const admissionNumber = String(nextNum).padStart(3, '0');
         nextNum++;
 
+        // Phone number formatting (Excel strips leading zeros from 10-digit numbers making them 9 digits)
+        let formattedPhone = guardianPhone;
+        if (formattedPhone && String(formattedPhone).trim().length === 9) {
+            formattedPhone = '0' + String(formattedPhone).trim();
+        }
+
         // Create Student
         const studentData = {
           user: user._id,
           admissionNumber: studentAdmissionNumber,
           gender: formattedGender,
           dateOfBirth: parsedDob,
-          guardianPhone,
+          guardianPhone: formattedPhone,
           guardianOccupation,
           academicYear,
           religion,

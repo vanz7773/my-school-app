@@ -63,7 +63,19 @@ exports.getClassEnrollmentSummary = async (req, res) => {
                 gender: 1,
                 dateOfBirth: 1,
                 admissionNumber: 1,
-                'userName': '$userInfo.name'
+                guardianPhone: 1,
+                guardianName: 1,
+                guardianOccupation: 1,
+                fatherName: 1,
+                fatherOccupation: 1,
+                motherName: 1,
+                motherOccupation: 1,
+                religion: 1,
+                hometown: 1,
+                languageSpoken: 1,
+                academicYear: 1,
+                'userName': '$userInfo.name',
+                'userEmail': '$userInfo.email'
               }
             }
           ],
@@ -126,9 +138,23 @@ exports.getClassEnrollmentSummary = async (req, res) => {
               input: '$students',
               as: 'student',
               in: {
+                _id: '$$student._id',
                 name: { $ifNull: ['$$student.userName', 'Unnamed'] },
+                email: { $ifNull: ['$$student.userEmail', null] },
                 dateOfBirth: '$$student.dateOfBirth',
-                admissionNumber: '$$student.admissionNumber'
+                admissionNumber: '$$student.admissionNumber',
+                gender: '$$student.gender',
+                academicYear: '$$student.academicYear',
+                guardianPhone: '$$student.guardianPhone',
+                guardianName: '$$student.guardianName',
+                guardianOccupation: '$$student.guardianOccupation',
+                fatherName: '$$student.fatherName',
+                fatherOccupation: '$$student.fatherOccupation',
+                motherName: '$$student.motherName',
+                motherOccupation: '$$student.motherOccupation',
+                religion: '$$student.religion',
+                hometown: '$$student.hometown',
+                languageSpoken: '$$student.languageSpoken'
               }
             }
           }
