@@ -278,9 +278,18 @@ exports.updateTeacher = async (req, res) => {
       'district', 'region'
     ];
 
+    const dateFields = [
+      'datePromotedToPresentRank', 'dateOfFirstAppointment', 'dateOfBirth',
+      'datePostedToPresentStation', 'expectedDateOfRetirement'
+    ];
+
     govFields.forEach(field => {
       if (req.body[field] !== undefined) {
-        teacher[field] = req.body[field];
+        let val = req.body[field];
+        if (dateFields.includes(field) && val === "") {
+          val = null;
+        }
+        teacher[field] = val;
       }
     });
 
@@ -386,9 +395,19 @@ exports.updateMyProfile = async (req, res) => {
       'district', 'region'
     ];
 
+    const dateFields = [
+      'datePromotedToPresentRank', 'dateOfFirstAppointment', 'dateOfBirth',
+      'datePostedToPresentStation', 'expectedDateOfRetirement'
+    ];
+
     allowedFields.forEach(field => {
       if (req.body[field] !== undefined) {
-        teacher[field] = req.body[field];
+        let val = req.body[field];
+        // 🛡️ Prevent Mongoose Date casting error for empty strings
+        if (dateFields.includes(field) && val === "") {
+          val = null;
+        }
+        teacher[field] = val;
       }
     });
 
@@ -404,7 +423,7 @@ exports.updateMyProfile = async (req, res) => {
     console.error("Profile update error:", err);
     res.status(500).json({
       success: false,
-      message: "Error updating profile",
+      message: err.message || "Error updating profile",
       error: err.message
     });
   }
