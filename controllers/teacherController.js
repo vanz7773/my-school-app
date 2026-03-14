@@ -264,6 +264,26 @@ exports.updateTeacher = async (req, res) => {
     if (phone) teacher.phone = phone;
     if (bio) teacher.bio = bio;
 
+    // Update government particulars
+    const govFields = [
+      'staffId', 'regNo', 'academicQualification', 'professional',
+      'classTaught', 'presentRank', 'datePromotedToPresentRank',
+      'dateOfFirstAppointment', 'yearOfCertification', 'dateOfBirth',
+      'sex', 'placeOfBirth', 'nationality', 'residentialAddress',
+      'institutionAttended', 'teachingExperience', 'previousSchoolTaught',
+      'bank', 'bankAccount', 'datePostedToPresentStation',
+      'expectedDateOfRetirement', 'telNo', 'religiousDenomination',
+      'maritalStatus', 'languageSpoken', 'nextOfKin', 'rank',
+      'ssnitNumber', 'tinNumber', 'digitalAddress', 'hometown',
+      'district', 'region'
+    ];
+
+    govFields.forEach(field => {
+      if (req.body[field] !== undefined) {
+        teacher[field] = req.body[field];
+      }
+    });
+
     // Update subjects
     if (subjects) {
       teacher.subjects = Array.isArray(subjects) ? subjects : [subjects];
@@ -329,6 +349,62 @@ exports.updateTeacher = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error updating teacher",
+      error: err.message
+    });
+  }
+};
+
+
+
+// ====================================================================================
+//  UPDATE LOGGED-IN TEACHER'S PROFILE
+// ====================================================================================
+exports.updateMyProfile = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const currentSchool = req.user.school;
+
+    const teacher = await Teacher.findOne({ user: userId, school: currentSchool });
+    if (!teacher) {
+      return res.status(404).json({
+        success: false,
+        message: "Teacher profile not found"
+      });
+    }
+
+    // List of fields teachers are allowed to update themselves
+    const allowedFields = [
+      'phone', 'bio', 'staffId', 'regNo', 'academicQualification', 'professional',
+      'classTaught', 'presentRank', 'datePromotedToPresentRank',
+      'dateOfFirstAppointment', 'yearOfCertification', 'dateOfBirth',
+      'sex', 'placeOfBirth', 'nationality', 'residentialAddress',
+      'institutionAttended', 'teachingExperience', 'previousSchoolTaught',
+      'bank', 'bankAccount', 'datePostedToPresentStation',
+      'expectedDateOfRetirement', 'telNo', 'religiousDenomination',
+      'maritalStatus', 'languageSpoken', 'nextOfKin', 'rank',
+      'ssnitNumber', 'tinNumber', 'digitalAddress', 'hometown',
+      'district', 'region'
+    ];
+
+    allowedFields.forEach(field => {
+      if (req.body[field] !== undefined) {
+        teacher[field] = req.body[field];
+      }
+    });
+
+    await teacher.save();
+
+    res.json({
+      success: true,
+      message: "Profile updated successfully",
+      teacher
+    });
+
+  } catch (err) {
+    console.error("Profile update error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Error updating profile",
       error: err.message
     });
   }

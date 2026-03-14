@@ -9,11 +9,15 @@ const {
   deleteTeacher,
   getMyStudents,
   getTeacherByUser,
-  getTeacherClasses
+  getTeacherClasses,
+  updateMyProfile
 } = require('../controllers/teacherController');
 
 // Admin creates teacher
 router.post('/', protect, restrictTo('admin'), createTeacher);
+
+// Teacher-specific routes (must be before :id routes)
+router.put('/me/profile', protect, restrictTo('teacher'), updateMyProfile);
 
 // Admin views all teachers
 router.get('/', protect, restrictTo('admin'), getAllTeachers);
