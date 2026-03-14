@@ -493,6 +493,41 @@ exports.getMyStudents = async (req, res) => {
 
 
 // ====================================================================================
+//  GET LOGGED-IN TEACHER'S PROFILE
+// ====================================================================================
+exports.getMyProfile = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const currentSchool = req.user.school;
+
+    const teacher = await Teacher.findOne({ user: userId, school: currentSchool })
+      .populate("assignedClasses", "name")
+      .populate("subjects", "name shortName")
+      .populate("school", "name schoolType")
+      .populate("user", "name email role gender");
+
+    if (!teacher) {
+      return res.status(404).json({
+        success: false,
+        message: "Teacher profile not found"
+      });
+    }
+
+    res.json({ success: true, teacher });
+
+  } catch (err) {
+    console.error("Error fetching my profile:", err);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching my profile",
+      error: err.message
+    });
+  }
+};
+
+
+
+// ====================================================================================
 //  GET TEACHER BY USER ID
 // ====================================================================================
 exports.getTeacherByUser = async (req, res) => {
