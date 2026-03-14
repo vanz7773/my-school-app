@@ -11,7 +11,8 @@ const teacherSchema = new mongoose.Schema({
   subjects: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Subject' }],
 
   phone: { type: String },
-  bio: { type: String },
+  ghanaCard: { type: String },
+  ntcNumber: { type: String },
 
   // --- GOVERNMENT SCHOOL PARTICULARS ---
   staffId: { type: String },

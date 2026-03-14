@@ -262,7 +262,8 @@ exports.updateTeacher = async (req, res) => {
 
     // Update teacher fields
     if (phone) teacher.phone = phone;
-    if (bio) teacher.bio = bio;
+    if (ghanaCard) teacher.ghanaCard = ghanaCard;
+    if (ntcNumber) teacher.ntcNumber = ntcNumber;
 
     // Update government particulars
     const govFields = [
@@ -275,7 +276,7 @@ exports.updateTeacher = async (req, res) => {
       'expectedDateOfRetirement', 'telNo', 'religiousDenomination',
       'maritalStatus', 'languageSpoken', 'nextOfKin', 'rank',
       'ssnitNumber', 'tinNumber', 'digitalAddress', 'hometown',
-      'district', 'region'
+      'district', 'region', 'ghanaCard', 'ntcNumber'
     ];
 
     const dateFields = [
@@ -392,7 +393,7 @@ exports.updateMyProfile = async (req, res) => {
 
     // List of fields teachers are allowed to update themselves
     const allowedFields = [
-      'phone', 'bio', 'staffId', 'regNo', 'academicQualification', 'professional',
+      'phone', 'ghanaCard', 'ntcNumber', 'staffId', 'regNo', 'academicQualification', 'professional',
       'classTaught', 'presentRank', 'datePromotedToPresentRank',
       'dateOfFirstAppointment', 'yearOfCertification', 'dateOfBirth',
       'sex', 'placeOfBirth', 'nationality', 'residentialAddress',
@@ -401,7 +402,7 @@ exports.updateMyProfile = async (req, res) => {
       'expectedDateOfRetirement', 'telNo', 'religiousDenomination',
       'maritalStatus', 'languageSpoken', 'nextOfKin', 'rank',
       'ssnitNumber', 'tinNumber', 'digitalAddress', 'hometown',
-      'district', 'region'
+      'district', 'region', 'ghanaCard', 'ntcNumber'
     ];
 
     const dateFields = [
