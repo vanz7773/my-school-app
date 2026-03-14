@@ -16,6 +16,7 @@ exports.createStudent = async (req, res) => {
       gender,
       dob,
       guardianPhone,
+      guardianPhone2,
       guardianOccupation,
       classId,
       academicYear,
@@ -88,6 +89,7 @@ exports.createStudent = async (req, res) => {
       gender: formattedGender,
       dateOfBirth: dob,
       guardianPhone,
+      guardianPhone2,
       guardianOccupation,
       academicYear,
       religion,
@@ -181,6 +183,7 @@ exports.updateStudent = async (req, res) => {
     name,
     email,
     guardianPhone,
+    guardianPhone2,
     guardianOccupation,
     gender,
     dob,
@@ -202,6 +205,7 @@ exports.updateStudent = async (req, res) => {
     student.gender = gender;
     student.dateOfBirth = dob;
     student.guardianPhone = guardianPhone;
+    student.guardianPhone2 = guardianPhone2;
     student.guardianOccupation = guardianOccupation;
     student.academicYear = academicYear;
     student.religion = religion;
@@ -450,7 +454,7 @@ exports.bulkCreateStudents = async (req, res) => {
     for (const data of studentList) {
       const { 
         name, email, password, gender, dob, classId, className, academicYear, 
-        guardianPhone, guardianOccupation, religion, hometown, 
+        guardianPhone, guardianPhone2, guardianOccupation, religion, hometown, 
         languageSpoken, fatherName, fatherOccupation, motherName, motherOccupation 
       } = data;
 
@@ -520,6 +524,10 @@ exports.bulkCreateStudents = async (req, res) => {
         if (formattedPhone && String(formattedPhone).trim().length === 9) {
             formattedPhone = '0' + String(formattedPhone).trim();
         }
+        let formattedPhone2 = guardianPhone2;
+        if (formattedPhone2 && String(formattedPhone2).trim().length === 9) {
+            formattedPhone2 = '0' + String(formattedPhone2).trim();
+        }
 
         // Create Student
         const studentData = {
@@ -528,6 +536,7 @@ exports.bulkCreateStudents = async (req, res) => {
           gender: formattedGender,
           dateOfBirth: parsedDob,
           guardianPhone: formattedPhone,
+          guardianPhone2: formattedPhone2,
           guardianOccupation,
           academicYear,
           religion,

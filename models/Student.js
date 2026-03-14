@@ -34,6 +34,7 @@ const studentSchema = new mongoose.Schema({
   // Guardian/Parent Details
   guardianName: { type: String },
   guardianPhone: { type: String },
+  guardianPhone2: { type: String },
   guardianOccupation: { type: String },
   fatherName: { type: String },
   fatherOccupation: { type: String },
