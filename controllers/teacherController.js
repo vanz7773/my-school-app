@@ -355,9 +355,18 @@ exports.updateTeacher = async (req, res) => {
 
   } catch (err) {
     console.error("Teacher update error:", err);
-    res.status(500).json({
+    let message = "Error updating teacher";
+
+    // 🛡️ Format Mongoose Validation/Cast Errors
+    if (err.name === 'ValidationError') {
+      message = Object.values(err.errors).map(val => val.message).join(', ');
+    } else if (err.name === 'CastError') {
+      message = `Invalid value for ${err.path}`;
+    }
+
+    res.status(400).json({
       success: false,
-      message: "Error updating teacher",
+      message,
       error: err.message
     });
   }
@@ -421,9 +430,18 @@ exports.updateMyProfile = async (req, res) => {
 
   } catch (err) {
     console.error("Profile update error:", err);
-    res.status(500).json({
+    let message = "Error updating profile";
+
+    // 🛡️ Format Mongoose Validation/Cast Errors
+    if (err.name === 'ValidationError') {
+      message = Object.values(err.errors).map(val => val.message).join(', ');
+    } else if (err.name === 'CastError') {
+      message = `Invalid value for ${err.path}`;
+    }
+
+    res.status(400).json({
       success: false,
-      message: err.message || "Error updating profile",
+      message: message || err.message,
       error: err.message
     });
   }
