@@ -166,6 +166,10 @@ exports.createAnnouncement = async (req, res) => {
           s.parentIds.forEach(pid => recipientUsers.push(String(pid)));
         }
       });
+
+      // Also notify school admins
+      const admins = await User.find({ school: schoolId, role: "admin" }).select("_id").lean();
+      admins.forEach(admin => recipientUsers.push(String(admin._id)));
     }
 
     // -------- ADMIN → STRICT ROLE USERS --------
