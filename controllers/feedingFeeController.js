@@ -10,6 +10,7 @@ const Notification = require('../models/Notification');
 const PushToken = require("../models/PushToken");
 const { Expo } = require("expo-server-sdk");
 const expo = new Expo();
+const { broadcastNotification } = require('./notificationController');
 
 
 // 🔔 Reusable Push Sender (same as announcements)
@@ -142,7 +143,7 @@ async function getStudentWithCache(studentId, schoolId, userId = null) {
 // --------------------------------------------------------------------
 // 🔧 Create feeding fee notification + PUSH SUPPORT
 // --------------------------------------------------------------------
-async function createFeedingFeeNotification({
+async function createFeedingFeeNotification(req, {
   title,
   sender,
   school,
@@ -169,27 +170,31 @@ async function createFeedingFeeNotification({
       type: "feedingfee",
       audience: isRecovered ? "all" : "parent",
       studentId,
-      recipientRoles: isRecovered ? ["admin", "parent"] : ["parent"]
+      recipientRoles: isRecovered ? ["admin", "parent", "student"] : ["parent"]
     });
 
-    // 2️⃣ Find all parent user IDs
-    const student = await Student.findById(studentId)
-      .select("parent parentIds")
+    // 2️⃣ Find all parent user IDs, and optionally the student user ID
+    const studentDoc = await Student.findById(studentId)
+      .select("parent parentIds user")
       .lean();
 
     let parentUsers = [];
-
-    if (student?.parent) parentUsers.push(String(student.parent));
-    if (Array.isArray(student?.parentIds)) {
-      parentUsers.push(...student.parentIds.map(p => String(p)));
+    if (studentDoc?.parent) parentUsers.push(String(studentDoc.parent));
+    if (Array.isArray(studentDoc?.parentIds)) {
+      parentUsers.push(...studentDoc.parentIds.map(p => String(p)));
     }
-
     parentUsers = [...new Set(parentUsers)];
 
-    // 3️⃣ SEND PUSH TO ALL PARENTS (and ADMINS if recovered)
+    // 3️⃣ SEND PUSH TO ALL PARENTS (and ADMINS + STUDENT if recovered)
     const pushTargets = [...parentUsers];
 
     if (isRecovered) {
+      // Add student's user ID so student gets notified
+      if (studentDoc?.user) {
+        pushTargets.push(String(studentDoc.user));
+      }
+
+      // Add all school admins so admins get notified
       const User = mongoose.model('User');
       const adminUsers = await User.find({ school, role: 'admin' }).select('_id').lean();
       pushTargets.push(...adminUsers.map(a => String(a._id)));
@@ -197,11 +202,16 @@ async function createFeedingFeeNotification({
 
     if (pushTargets.length > 0) {
       await sendPush(
-        pushTargets,
+        [...new Set(pushTargets)], // Deduplicate targets just in case
         notificationTitle,
         `Feeding fee ${action} for ${studentName}`,
         { type: "feedingfee", studentId }
       );
+    }
+
+    // 4️⃣ Emit socket event & web-push via broadcastNotification
+    if (req) {
+      await broadcastNotification(req, notif);
     }
 
     return notif;
@@ -480,8 +490,8 @@ const markFeeding = async (req, res) => {
       setImmediate(async () => {
         try {
           if (isRecoveredDebt) {
-            // Send Alert to Admin
-            await createFeedingFeeNotification({
+            // Send Alert to Admin & Parent & Student
+            await createFeedingFeeNotification(req, {
               title: "💰 Recovered Feeding Fee Debt",
               sender: req.user._id,
               school: schoolId,
@@ -492,7 +502,7 @@ const markFeeding = async (req, res) => {
           }
 
           // Send Standard Parent Update (Optional, keeping existing logic)
-          await createFeedingFeeNotification({
+          await createFeedingFeeNotification(req, {
             title: "Feeding Fee Updated",
             sender: req.user._id,
             school: schoolId,
