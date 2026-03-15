@@ -645,26 +645,14 @@ const calculateFeedingFeeCollection = async (req, res) => {
         }
       }
 
-      // Manual overrides
+      // Manual overrides - ALWAYS take priority over attendance
       const manual = feedingMap.get(studentId);
       if (manual?.days) {
-        const manualValues = Object.values(manual.days);
-        const hasPresent = manualValues.includes("present");
-        const hasAbsent = manualValues.includes("absent");
-        const isLikelyAutoSync = hasPresent && hasAbsent;
-
         for (const dayKey of ["M", "T", "W", "TH", "F"]) {
           const manualVal = manual.days[dayKey];
-          const currentVal = mergedDays[dayKey];
-
-          if (isLikelyAutoSync) {
-            if (manualVal === "present") mergedDays[dayKey] = "present";
-            else if (manualVal === "absent" && (attendance?.days?.[dayKey] === "absent" || attendance?.days?.[dayKey] === "present")) {
-              mergedDays[dayKey] = "absent";
-            }
-          } else {
-            if (manualVal === "present") mergedDays[dayKey] = "present";
-            else if (manualVal === "absent" && currentVal !== "present") mergedDays[dayKey] = "absent";
+          // Manual feeding marks always override attendance data
+          if (manualVal === "present" || manualVal === "absent" || manualVal === "notmarked") {
+            mergedDays[dayKey] = manualVal;
           }
         }
       }
