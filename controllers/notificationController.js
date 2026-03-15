@@ -273,7 +273,19 @@ exports.broadcastNotification = async function (req, notification) {
 
     if (uniquePushRecipients.length > 0) {
       // Send Push Notifications Background Task
-      sendPushNotifications(uniquePushRecipients, notification.title, notification.message, { notificationId: notification._id });
+      let iconUrl = undefined;
+      try {
+        const School = require('../models/School');
+        if (notification.school) {
+          const schoolDoc = await School.findById(notification.school).select('logo').lean();
+          if (schoolDoc && schoolDoc.logo) {
+            iconUrl = schoolDoc.logo;
+          }
+        }
+      } catch (e) {
+        console.warn('Could not fetch school logo for push notification:', e);
+      }
+      sendPushNotifications(uniquePushRecipients, notification.title, notification.message, { notificationId: notification._id, icon: iconUrl });
     }
 
   } catch (err) {
