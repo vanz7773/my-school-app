@@ -170,7 +170,8 @@ async function createFeedingFeeNotification(req, {
       type: "feedingfee",
       audience: isRecovered ? "all" : "parent",
       studentId,
-      recipientRoles: isRecovered ? ["admin", "parent", "student"] : ["parent"]
+      recipientRoles: isRecovered ? ["admin", "parent", "student"] : ["parent"],
+      recipientUsers: [] // Will be populated below with resolved user IDs
     });
 
     // 2️⃣ Find all parent user IDs, and optionally the student user ID
@@ -200,9 +201,19 @@ async function createFeedingFeeNotification(req, {
       pushTargets.push(...adminUsers.map(a => String(a._id)));
     }
 
-    if (pushTargets.length > 0) {
+    // Deduplicate targets
+    const dedupedTargets = [...new Set(pushTargets)];
+
+    // Update notification with resolved recipientUsers so broadcastNotification
+    // can deliver socket events and web push to all targets (even offline admins)
+    if (dedupedTargets.length > 0) {
+      notif.recipientUsers = dedupedTargets;
+      await notif.save();
+    }
+
+    if (dedupedTargets.length > 0) {
       await sendPush(
-        [...new Set(pushTargets)], // Deduplicate targets just in case
+        dedupedTargets,
         notificationTitle,
         `Feeding fee ${action} for ${studentName}`,
         { type: "feedingfee", studentId }
