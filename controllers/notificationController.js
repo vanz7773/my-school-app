@@ -275,11 +275,11 @@ exports.broadcastNotification = async function (req, notification) {
       // Send Push Notifications Background Task
       let iconUrl = undefined;
       try {
-        const School = require('../models/School');
+        const SchoolInfo = require('../models/SchoolInfo');
         if (notification.school) {
-          const schoolDoc = await School.findById(notification.school).select('logo').lean();
-          if (schoolDoc && schoolDoc.logo) {
-            iconUrl = schoolDoc.logo;
+          const schoolInfoDoc = await SchoolInfo.findOne({ school: notification.school }).select('logo').lean();
+          if (schoolInfoDoc && schoolInfoDoc.logo) {
+            iconUrl = schoolInfoDoc.logo;
           }
         }
       } catch (e) {
