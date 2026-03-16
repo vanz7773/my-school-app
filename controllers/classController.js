@@ -64,6 +64,7 @@ exports.createClass = async (req, res) => {
     const populatedClass = await Class.findById(newClass._id)
       .populate('teachers', 'name email')
       .populate('classTeacher', 'name email')
+      .populate('coClassTeacher', 'name email')
       .populate('students', 'name email');
 
     res.status(201).json({
@@ -90,6 +91,7 @@ exports.getAllClasses = async (req, res) => {
     const classes = await Class.find({ school: schoolId })
       .populate('teachers', 'name email')
       .populate('classTeacher', 'name email')
+      .populate('coClassTeacher', 'name email')
       .populate('students', 'name email')
       .sort({ name: 1, stream: 1 });
 
@@ -139,10 +141,11 @@ exports.getTeacherClasses = async (req, res) => {
       school: schoolId,
       $or: [
         { teachers: userId },
-        { classTeacher: userId }
+        { classTeacher: userId },
+        { coClassTeacher: userId }
       ]
     })
-      .select('_id name stream displayName classTeacher')
+      .select('_id name stream displayName classTeacher coClassTeacher')
       .sort({ name: 1, stream: 1 })
       .lean();
 
@@ -243,6 +246,7 @@ exports.updateClass = async (req, res) => {
     const updatedClass = await Class.findById(id)
       .populate('teachers', 'name email')
       .populate('classTeacher', 'name email')
+      .populate('coClassTeacher', 'name email')
       .populate('students', 'name email');
 
     res.status(200).json({
@@ -282,7 +286,7 @@ exports.deleteClass = async (req, res) => {
 exports.assignClassTeacher = async (req, res) => {
   try {
     const { classId } = req.params;
-    const { teacherId } = req.body;
+    const { teacherId, isCoTeacher } = req.body; // isCoTeacher is a boolean flag
     const schoolId = req.user.school;
 
     const classDoc = await Class.findOne({ _id: classId, school: schoolId });
@@ -300,31 +304,61 @@ exports.assignClassTeacher = async (req, res) => {
       return res.status(400).json({ message: 'Teacher not found in your school' });
     }
 
-    // 🔥 AUTO-REMOVE teacher from previous class
-    const previousClass = await Class.findOne({
-      school: schoolId,
-      classTeacher: teacherId,
-      _id: { $ne: classId }
-    });
+    let previousClassMessage = null;
 
-    if (previousClass) {
-      previousClass.classTeacher = null;
-      await previousClass.save();
+    if (isCoTeacher) {
+      // Teacher cannot be both Primary and Co-Teacher in the SAME class
+      if (String(classDoc.classTeacher) === String(teacherId)) {
+        classDoc.classTeacher = null; // Removing from primary role
+      }
+
+      // 🔥 AUTO-REMOVE teacher from previous Co-Teacher class
+      const previousClass = await Class.findOne({
+        school: schoolId,
+        coClassTeacher: teacherId,
+        _id: { $ne: classId }
+      });
+
+      if (previousClass) {
+        previousClass.coClassTeacher = null;
+        await previousClass.save();
+        previousClassMessage = `Teacher moved from ${previousClass.displayName || previousClass.name} to ${classDoc.displayName || classDoc.name} as Co-Class Teacher`;
+      }
+
+      classDoc.coClassTeacher = teacherId;
+    } else {
+      // Teacher cannot be both Primary and Co-Teacher in the SAME class
+      if (String(classDoc.coClassTeacher) === String(teacherId)) {
+        classDoc.coClassTeacher = null; // Removing from co-teacher role
+      }
+
+      // 🔥 AUTO-REMOVE teacher from previous Primary class
+      const previousClass = await Class.findOne({
+        school: schoolId,
+        classTeacher: teacherId,
+        _id: { $ne: classId }
+      });
+
+      if (previousClass) {
+        previousClass.classTeacher = null;
+        await previousClass.save();
+        previousClassMessage = `Teacher moved from ${previousClass.displayName || previousClass.name} to ${classDoc.displayName || classDoc.name} as Primary Class Teacher`;
+      }
+
+      classDoc.classTeacher = teacherId;
     }
 
-    classDoc.classTeacher = teacherId;
     await classDoc.save();
 
     const updatedClass = await Class.findById(classDoc._id)
       .populate('teachers', 'name email')
       .populate('classTeacher', 'name email')
+      .populate('coClassTeacher', 'name email')
       .populate('students', 'name email');
 
     res.status(200).json({
       success: true,
-      message: previousClass
-        ? `Teacher moved from ${previousClass.displayName || previousClass.name} to ${classDoc.displayName || classDoc.name}`
-        : 'Class teacher assigned successfully',
+      message: previousClassMessage || (isCoTeacher ? 'Co-Class Teacher assigned successfully' : 'Primary Class Teacher assigned successfully'),
       class: updatedClass
     });
   } catch (err) {

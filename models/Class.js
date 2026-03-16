@@ -32,7 +32,13 @@ const classSchema = new mongoose.Schema(
 
     classTeacher: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User", // Single class teacher
+      ref: "User", // Primary class teacher
+      default: null,
+    },
+
+    coClassTeacher: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User", // Co-class teacher / Assistant class teacher
       default: null,
     },
 
