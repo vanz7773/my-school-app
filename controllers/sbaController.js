@@ -528,7 +528,12 @@ exports.downloadClassTemplate = async (req, res) => {
       queryClassId: req.query.classId
     });
 
-    const classDocByTeacher = await Class.findOne({ classTeacher: userId }).lean();
+    const classDocByTeacher = await Class.findOne({
+      $or: [
+        { classTeacher: userId },
+        { coClassTeacher: userId }
+      ]
+    }).lean();
     const isClassTeacher = !!classDocByTeacher;
 
     log("👨‍🏫 Class-teacher check", {
@@ -591,6 +596,7 @@ exports.downloadClassTemplate = async (req, res) => {
     });
 
     let subject = null;
+    let subjectShortName = null;
 
     // --------------------------------------------------
     // 2️⃣ Resolve subject (SUBJECT TEACHERS ONLY)
@@ -639,7 +645,7 @@ exports.downloadClassTemplate = async (req, res) => {
       }
 
       const subjectName = subjectDoc.name?.trim();
-      const subjectShort = subjectDoc.shortName?.trim();
+      subjectShortName = subjectDoc.shortName?.trim() || null;
 
       subject = subjectName;
 
@@ -647,6 +653,7 @@ exports.downloadClassTemplate = async (req, res) => {
       log("✅ Subject resolved successfully", {
         subjectId: subjectDoc._id,
         subject,
+        subjectShortName,
         classId: classDocFinal._id
       });
     }
@@ -1134,6 +1141,28 @@ exports.downloadClassTemplate = async (req, res) => {
       log("🔪 Pruning sheets for subject teacher");
       const allSheets = xpWorkbook.sheets();
       const normalizedSubject = (subject || "").trim().toUpperCase();
+      const normalizedShortName = (subjectShortName || "").trim().toUpperCase();
+
+      log("🔍 Subject matching info", {
+        normalizedSubject,
+        normalizedShortName,
+        availableSheets: allSheets.map(s => s.name())
+      });
+
+      // Helper: check if a sheet name matches the teacher's subject
+      const isSubjectMatch = (sheetName) => {
+        const upper = sheetName.trim().toUpperCase();
+        // Exact match on full name or short name
+        if (upper === normalizedSubject) return true;
+        if (normalizedShortName && upper === normalizedShortName) return true;
+        // Fuzzy: sheet name contains subject or vice versa
+        if (normalizedSubject && upper.includes(normalizedSubject)) return true;
+        if (normalizedSubject && normalizedSubject.includes(upper)) return true;
+        // Fuzzy: sheet name contains short name or vice versa
+        if (normalizedShortName && upper.includes(normalizedShortName)) return true;
+        if (normalizedShortName && normalizedShortName.includes(upper)) return true;
+        return false;
+      };
 
       // Build keep list
       const keepList = allSheets
@@ -1143,7 +1172,7 @@ exports.downloadClassTemplate = async (req, res) => {
             sheetName === "NAMES" ||
             sheetName === "HOME" ||
             sheetName === "HOME2" ||
-            sheetName === normalizedSubject
+            isSubjectMatch(s.name())
           );
         })
         .map((s) => s.name());
@@ -1182,8 +1211,9 @@ exports.downloadClassTemplate = async (req, res) => {
       });
 
       // Handle missing subject sheet
-      if (!xpWorkbook.sheet(subject)) {
-        log(`⚠️ Subject sheet "${subject}" not found in template`);
+      const subjectSheetFound = allSheets.some(s => isSubjectMatch(s.name()));
+      if (!subjectSheetFound) {
+        log(`⚠️ Subject sheet "${subject}" (short: "${subjectShortName}") not found in template. Available sheets were: ${allSheets.map(s => s.name()).join(', ')}`);
       }
 
       log("✅ Sheet pruning completed");
