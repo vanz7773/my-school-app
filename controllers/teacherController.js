@@ -262,8 +262,6 @@ exports.updateTeacher = async (req, res) => {
 
     // Update teacher fields
     if (phone) teacher.phone = phone;
-    if (ghanaCard) teacher.ghanaCard = ghanaCard;
-    if (ntcNumber) teacher.ntcNumber = ntcNumber;
 
     // Update government particulars
     const govFields = [
