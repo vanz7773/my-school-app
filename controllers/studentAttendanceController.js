@@ -364,7 +364,10 @@ const markAttendance = async (req, res) => {
     if (!classDoc) return res.status(404).json({ message: 'Class not found' });
     if (!term) return res.status(404).json({ message: 'Term not found' });
 
-    if (userRole === 'teacher' && String(classDoc.classTeacher) !== String(userId)) {
+    const isPrimaryTeacher = String(classDoc.classTeacher) === String(userId);
+    const isCoTeacher = classDoc.coClassTeacher ? String(classDoc.coClassTeacher) === String(userId) : false;
+
+    if (userRole === 'teacher' && !isPrimaryTeacher && !isCoTeacher) {
       return res.status(403).json({ message: 'Only the assigned class teacher can mark attendance' });
     }
 
@@ -802,7 +805,10 @@ const initializeWeek = async (req, res) => {
     const classDoc = await Class.findById(classId);
     if (!classDoc) return res.status(404).json({ message: 'Class not found' });
 
-    if (userRole === 'teacher' && String(classDoc.classTeacher) !== String(userId)) {
+    const isPrimaryTeacherBulk = String(classDoc.classTeacher) === String(userId);
+    const isCoTeacherBulk = classDoc.coClassTeacher ? String(classDoc.coClassTeacher) === String(userId) : false;
+
+    if (userRole === 'teacher' && !isPrimaryTeacherBulk && !isCoTeacherBulk) {
       return res.status(403).json({ message: 'Only the assigned class teacher can initialize this class week' });
     }
 

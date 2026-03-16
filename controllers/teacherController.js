@@ -619,8 +619,11 @@ exports.getTeacherClasses = async (req, res) => {
     }
 
     const assigned = await Class.find({
-      classTeacher: teacher.user._id
-    }).select("name");
+      $or: [
+        { classTeacher: teacher.user._id },
+        { coClassTeacher: teacher.user._id }
+      ]
+    }).select("name classTeacher coClassTeacher classDisplayName displayName stream");
 
     res.json({
       success: true,
