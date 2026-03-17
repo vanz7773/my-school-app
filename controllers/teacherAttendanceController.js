@@ -108,10 +108,14 @@ const markAbsenteesForTodayIfNeeded = async () => {
   cutoff.setHours(SCHOOL_END_HOUR, SCHOOL_END_MINUTE, 0, 0);
 
   // ⛔ Only run after school hours
-  if (now < cutoff) return;
+  if (now < cutoff) {
+    console.log(`[ABSENTEE] Skipping: too early (${now.toLocaleTimeString()} < ${cutoff.toLocaleTimeString()})`);
+    return;
+  }
 
   const todayStart = startOfDay(now);
   const todayEnd = endOfDay(now);
+  console.log(`[ABSENTEE] Running for range: ${todayStart.toISOString()} - ${todayEnd.toISOString()}`);
 
   // ⛔ Skip weekends
   const day = todayStart.getDay();
@@ -171,7 +175,9 @@ const markAbsenteesForTodayIfNeeded = async () => {
 
   // 3️⃣ Execute once
   if (bulkOps.length > 0) {
-    await Attendance.bulkWrite(bulkOps, { ordered: false });
+    console.log(`[ABSENTEE] Executing bulkWrite with ${bulkOps.length} ops`);
+    const result = await Attendance.bulkWrite(bulkOps, { ordered: false });
+    console.log(`[ABSENTEE] Success: upserted=${result.upsertedCount}, modified=${result.modifiedCount}`);
   }
 
   console.log(`✅ Absentees processed: ${bulkOps.length}`);
@@ -989,14 +995,14 @@ const getTodayAttendance = async (req, res) => {
     const todayStart = startOfDay(now);
     const todayEnd = endOfDay(now);
 
-    console.log('Today date range:', { todayStart, todayEnd });
+    console.log(`[TODAY] Querying attendance for teacher ${teacher._id} on range:`, { todayStart, todayEnd });
 
     const attendance = await Attendance.findOne({
       teacher: teacher._id,
       date: { $gte: todayStart, $lte: todayEnd }
     });
 
-    console.log('Today attendance:', attendance);
+    console.log('[TODAY] Attendance found:', attendance ? { id: attendance._id, status: attendance.status, date: attendance.date } : 'NONE');
 
     // 🔐 AUTHORITATIVE PERMISSIONS (NO GUESSING)
     // Block clock-in/out when the status is Holiday or Absent (manual admin entry)
@@ -1097,12 +1103,13 @@ const getTeacherAttendanceHistory = async (req, res) => {
       });
     }
 
+    console.log(`[HISTORY] Fetching records for teacher ${teacher._id}`);
     const history = await Attendance.find({ teacher: teacher._id })
       .sort({ date: -1 })
       .select('date signInTime signOutTime status location')
       .limit(30);
 
-    console.log('History records found:', history.length);
+    console.log(`[HISTORY] Found ${history.length} records. Latest status: ${history[0]?.status} on ${history[0]?.date}`);
 
     res.status(200).json({
       status: 'success',
@@ -1177,6 +1184,7 @@ const markManualAttendance = async (req, res) => {
     }
 
     const attendanceDate = startOfDay(new Date(date));
+    console.log(`[MANUAL] Marking ${status} for date: ${attendanceDate.toISOString()} (input: ${date})`);
 
     // Find the active term for this date and school
     const term = await Term.findOne({
