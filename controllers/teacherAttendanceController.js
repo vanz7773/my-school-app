@@ -995,14 +995,19 @@ const getTodayAttendance = async (req, res) => {
     const todayStart = startOfDay(now);
     const todayEnd = endOfDay(now);
 
-    console.log(`[TODAY] Querying attendance for teacher ${teacher._id} on range:`, { todayStart, todayEnd });
-
-    const attendance = await Attendance.findOne({
+    const allToday = await Attendance.find({
       teacher: teacher._id,
       date: { $gte: todayStart, $lte: todayEnd }
     });
 
-    console.log('[TODAY] Attendance found:', attendance ? { id: attendance._id, status: attendance.status, date: attendance.date } : 'NONE');
+    console.log('[TODAY] All records found count:', allToday.length);
+    if (allToday.length > 0) {
+      console.log('[TODAY] Records detail:', allToday.map(r => ({ id: r._id, status: r.status, date: r.date, createdAt: r.createdAt })));
+    }
+
+    const attendance = allToday[0]; // Picking first for now like before
+
+    console.log('[TODAY] Attendance picked for response:', attendance ? { id: attendance._id, status: attendance.status, date: attendance.date } : 'NONE');
 
     // 🔐 AUTHORITATIVE PERMISSIONS (NO GUESSING)
     // Block clock-in/out when the status is Holiday or Absent (manual admin entry)
@@ -1175,6 +1180,8 @@ const getAdminAttendanceHistory = async (req, res) => {
 // ADMIN MARK MANUAL ATTENDANCE (E.g. Holiday, Absent)
 // ─────────────────────────────────────────────────────────────
 const markManualAttendance = async (req, res) => {
+  console.log('=== MARK MANUAL ATTENDANCE STARTED ===');
+  console.log('Request body:', req.body);
   try {
     const { date, teacherId, status } = req.body;
     const schoolId = req.user.school;
@@ -1183,8 +1190,11 @@ const markManualAttendance = async (req, res) => {
       return res.status(400).json({ status: 'fail', message: 'Date and status are required.' });
     }
 
-    const attendanceDate = startOfDay(new Date(date));
-    console.log(`[MANUAL] Marking ${status} for date: ${attendanceDate.toISOString()} (input: ${date})`);
+    // parseISO-style local date construction to avoid UTC shift
+    const [year, month, day] = date.split('-').map(Number);
+    const attendanceDate = new Date(year, month - 1, day);
+    attendanceDate.setHours(0, 0, 0, 0);
+    console.log(`[MANUAL] Marking ${status} for teacher ${teacherId || 'all'} on date: ${attendanceDate.toISOString()} (input: ${date})`);
 
     // Find the active term for this date and school
     const term = await Term.findOne({
