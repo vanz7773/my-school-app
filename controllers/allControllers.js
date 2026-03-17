@@ -52,7 +52,7 @@ const transformBill = (bill) => {
 
   // 🟦 STEP 2 — FINAL (feeding-fee-style)
   const { className, classDisplayName } = resolveClassNames(
-    bill.student?.class
+    bill.class || bill.student?.class
   );
 
   return {
@@ -802,8 +802,13 @@ module.exports = {
       })
       .populate({
         path: 'student',
-        match: { class: classObjectId }
+        match: { class: classObjectId },
+        populate: [
+          { path: 'user', select: 'name' },
+          { path: 'class', select: 'name stream displayName' }
+        ]
       })
+      .populate('class', 'name stream displayName')
       .populate('template', 'name description items')
       .populate('payments')
       .lean();
