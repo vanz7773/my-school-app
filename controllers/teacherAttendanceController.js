@@ -111,6 +111,7 @@ const markAbsenteesForTodayIfNeeded = async () => {
   if (now < cutoff) return;
 
   const todayStart = startOfDay(now);
+  const todayEnd = endOfDay(now);
 
   // ⛔ Skip weekends
   const day = todayStart.getDay();
@@ -144,7 +145,7 @@ const markAbsenteesForTodayIfNeeded = async () => {
         updateOne: {
           filter: {
             teacher: teacher._id,
-            date: todayStart
+            date: { $gte: todayStart, $lte: todayEnd }
           },
           update: {
             $setOnInsert: {
@@ -265,7 +266,7 @@ const clockAttendance = async (req, res) => {
           teacher: teacher._id,
           school: teacher.school._id,
           term: term._id,
-          date: attendanceDate
+          date: dayStart
         });
       }
 
@@ -715,8 +716,7 @@ const getTeacherWeeklySummary = async (req, res) => {
       teacher: teacher._id,
       date: {
         $gte: termStart,
-        $lte: termEnd,
-        $type: 'date'
+        $lte: termEnd
       }
     };
 
@@ -904,6 +904,11 @@ const getAdminMonthlySummary = async (req, res) => {
           late: {
             $sum: {
               $cond: [{ $eq: ['$status', 'Late'] }, 1, 0]
+            }
+          },
+          holiday: {
+            $sum: {
+              $cond: [{ $eq: ['$status', 'Holiday'] }, 1, 0]
             }
           }
         }
@@ -1171,10 +1176,7 @@ const markManualAttendance = async (req, res) => {
       return res.status(400).json({ status: 'fail', message: 'Date and status are required.' });
     }
 
-    // parseISO-style local date construction to avoid UTC shift
-    const [year, month, day] = date.split('-').map(Number);
-    const attendanceDate = new Date(year, month - 1, day);
-    attendanceDate.setHours(0, 0, 0, 0);
+    const attendanceDate = startOfDay(new Date(date));
 
     // Find the active term for this date and school
     const term = await Term.findOne({
