@@ -1171,7 +1171,10 @@ const markManualAttendance = async (req, res) => {
       return res.status(400).json({ status: 'fail', message: 'Date and status are required.' });
     }
 
-    const attendanceDate = startOfDay(new Date(date));
+    // parseISO-style local date construction to avoid UTC shift
+    const [year, month, day] = date.split('-').map(Number);
+    const attendanceDate = new Date(year, month - 1, day);
+    attendanceDate.setHours(0, 0, 0, 0);
 
     // Find the active term for this date and school
     const term = await Term.findOne({
