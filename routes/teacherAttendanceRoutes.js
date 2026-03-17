@@ -23,6 +23,7 @@ const {
   getAdminMonthlySummary,
   getTeacherAttendanceHistory,
   getAdminAttendanceHistory,
+  markManualAttendance,
 } = require('../controllers/teacherAttendanceController');
 
 const { protect, restrictTo } = require('../middlewares/authMiddleware');
@@ -62,6 +63,9 @@ router.get('/admin/daily-records', protect, restrictTo('admin'), getAdminDailyRe
 router.get('/admin/weekly-summary', protect, restrictTo('admin'), getAdminWeeklySummary);
 router.get('/admin/monthly-summary', protect, restrictTo('admin'), getAdminMonthlySummary);
 router.get('/admin/history', protect, restrictTo('admin'), getAdminAttendanceHistory);
+
+// ✅ Admin manual attendance override (including Holidays)
+router.post('/admin/manual-attendance', protect, restrictTo('admin'), markManualAttendance);
 
 // ─────────────────────────────────────────────────────────────
 // EXPORT

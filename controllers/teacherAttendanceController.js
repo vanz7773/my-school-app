@@ -1144,6 +1144,88 @@ const getAdminAttendanceHistory = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────────────────────
+// ADMIN MARK MANUAL ATTENDANCE (E.g. Holiday, Absent)
+// ─────────────────────────────────────────────────────────────
+const markManualAttendance = async (req, res) => {
+  try {
+    const { date, teacherId, status } = req.body;
+    const schoolId = req.user.school;
+
+    if (!date || !status) {
+      return res.status(400).json({ status: 'fail', message: 'Date and status are required.' });
+    }
+
+    const attendanceDate = startOfDay(new Date(date));
+
+    // Find the active term for this date and school
+    const term = await Term.findOne({
+      school: schoolId,
+      startDate: { $lte: attendanceDate },
+      endDate: { $gte: attendanceDate }
+    });
+
+    if (!term) {
+      return res.status(400).json({ status: 'fail', message: 'No active term found for the selected date.' });
+    }
+
+    let teachersToUpdate = [];
+
+    if (teacherId && teacherId !== 'all') {
+      const teacher = await Teacher.findOne({ _id: teacherId, school: schoolId });
+      if (!teacher) {
+        return res.status(404).json({ status: 'fail', message: 'Teacher not found.' });
+      }
+      teachersToUpdate.push(teacher._id);
+    } else {
+      const allTeachers = await Teacher.find({ school: schoolId }, { _id: 1 }).lean();
+      teachersToUpdate = allTeachers.map(t => t._id);
+    }
+
+    if (teachersToUpdate.length === 0) {
+      return res.status(404).json({ status: 'fail', message: 'No teachers found to update.' });
+    }
+
+    const bulkOps = teachersToUpdate.map(tId => {
+      const updateData = {
+        $set: {
+          teacher: tId,
+          school: schoolId,
+          term: term._id,
+          date: attendanceDate,
+          status: status
+        }
+      };
+
+      // If Holiday or Absent, explicitly clear sign-in times and location
+      if (status === 'Holiday' || status === 'Absent') {
+        updateData.$set.signInTime = null;
+        updateData.$set.signOutTime = null;
+        updateData.$unset = { location: "" };
+      }
+
+      return {
+        updateOne: {
+          filter: { teacher: tId, date: attendanceDate },
+          update: updateData,
+          upsert: true
+        }
+      };
+    });
+
+    await Attendance.bulkWrite(bulkOps, { ordered: false });
+
+    res.status(200).json({
+      status: 'success',
+      message: `Successfully marked ${status} for ${teachersToUpdate.length} teacher(s).`
+    });
+
+  } catch (err) {
+    console.error('Mark manual attendance error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to mark manual attendance.' });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────
 // EXPORTS (UPDATE TO USE THE VALIDATED VERSION)
 // ─────────────────────────────────────────────────────────────
 module.exports = {
@@ -1159,4 +1241,5 @@ module.exports = {
   getMissedClockouts,
   getTeacherAttendanceHistory,
   getAdminAttendanceHistory,
+  markManualAttendance,
 };

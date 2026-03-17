@@ -48,7 +48,7 @@ const teacherAttendanceSchema = new mongoose.Schema(
     // Explicit attendance state
     status: {
       type: String,
-      enum: ['Absent', 'On Time', 'Late'],
+      enum: ['Absent', 'On Time', 'Late', 'Holiday'],
       default: 'Absent',
       index: true,
     },
