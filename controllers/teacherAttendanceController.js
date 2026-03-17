@@ -588,7 +588,8 @@ const getAdminWeeklySummary = async (req, res) => {
           },
           total: { $sum: 1 },
           present: { $sum: { $cond: [{ $in: ["$status", ["On Time", "Late"]] }, 1, 0] } },
-          late: { $sum: { $cond: [{ $eq: ["$status", "Late"] }, 1, 0] } }
+          late: { $sum: { $cond: [{ $eq: ["$status", "Late"] }, 1, 0] } },
+          holiday: { $sum: { $cond: [{ $eq: ["$status", "Holiday"] }, 1, 0] } }
         }
       },
       {
@@ -617,7 +618,8 @@ const getAdminWeeklySummary = async (req, res) => {
           teacherName: '$user.name',
           total: 1,
           present: 1,
-          late: 1
+          late: 1,
+          holiday: 1
         }
       },
       { $sort: { weekStart: -1 } }
@@ -744,7 +746,8 @@ const getTeacherWeeklySummary = async (req, res) => {
           year: recordDate.getFullYear(),
           total: 0,
           present: 0,
-          late: 0
+          late: 0,
+          holiday: 0
         };
       }
 
@@ -756,6 +759,10 @@ const getTeacherWeeklySummary = async (req, res) => {
 
       if (record.status === 'Late') {
         weeklySummary[boundedWeek].late++;
+      }
+
+      if (record.status === 'Holiday') {
+        weeklySummary[boundedWeek].holiday++;
       }
     });
 
@@ -821,6 +828,11 @@ const getTeacherMonthlySummary = async (req, res) => {
           late: {
             $sum: {
               $cond: [{ $eq: ['$status', 'Late'] }, 1, 0]
+            }
+          },
+          holiday: {
+            $sum: {
+              $cond: [{ $eq: ['$status', 'Holiday'] }, 1, 0]
             }
           }
         }
@@ -922,7 +934,8 @@ const getAdminMonthlySummary = async (req, res) => {
           teacherName: '$user.name',
           total: 1,
           present: 1,
-          late: 1
+          late: 1,
+          holiday: 1
         }
       },
       { $sort: { year: -1, month: -1 } }
