@@ -994,11 +994,14 @@ const getTodayAttendance = async (req, res) => {
     console.log('Today attendance:', attendance);
 
     // 🔐 AUTHORITATIVE PERMISSIONS (NO GUESSING)
+    // Block clock-in/out when the status is Holiday or Absent (manual admin entry)
+    const isManualStatus = attendance?.status === 'Holiday' || attendance?.status === 'Absent';
+
     const canClockIn =
-      !attendance || !attendance.signInTime;
+      !isManualStatus && (!attendance || !attendance.signInTime);
 
     const canClockOut =
-      !!attendance?.signInTime && !attendance?.signOutTime;
+      !isManualStatus && !!attendance?.signInTime && !attendance?.signOutTime;
 
     res.status(200).json({
       status: 'success',
