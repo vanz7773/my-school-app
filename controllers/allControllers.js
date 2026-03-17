@@ -784,42 +784,45 @@ module.exports = {
 
       const classObjectId = new mongoose.Types.ObjectId(classId);
 
-      const termBills = await TermBill.find({
+      // 1. Fetch ALL active students in this class
+      const students = await Student.find({
+        class: classObjectId,
+        school: req.user.school,
+        status: 'active'
+      })
+      .populate({ path: 'user', select: 'name' })
+      .populate({ path: 'class', select: 'name stream displayName' })
+      .lean();
+
+      // 2. Fetch existing bills for this class, term, and year
+      const existingBills = await TermBill.find({
+        school: req.user.school,
         term: cleanTerm,
         academicYear: cleanAcademicYear
       })
-        .populate({
-          path: 'student',
-          match: {
-            class: classObjectId
-          },
-          populate: [
-            {
-              path: 'user',
-              select: 'name'
-            },
-            // 🟦 STEP 1 — UPDATED: Added stream and displayName
-            {
-              path: 'class',
-              select: 'name stream displayName'
-            }
-          ],
-          select: 'user class'
-        })
-        .populate({
-          path: 'template',
-          select: 'name description items'
-        })
-        .populate({
-          path: 'payments',
-          select: 'amount paymentDate method'
-        })
-        .lean();
+      .populate({
+        path: 'student',
+        match: { class: classObjectId }
+      })
+      .populate('template', 'name description items')
+      .populate('payments')
+      .lean();
 
-      const processedBills = termBills
-        .filter(bill => bill.student)
-        .map(bill => {
-          const transformedBill = transformBill(bill);
+      // Filter bills to only include those whose students are in this class (due to path match)
+      const classBills = existingBills.filter(bill => bill.student);
+
+      // Create a map for quick lookup
+      const billsMap = new Map();
+      classBills.forEach(bill => {
+        billsMap.set(bill.student._id.toString(), bill);
+      });
+
+      // 3. Merge Students with Bills
+      const processedBills = students.map(student => {
+        const existingBill = billsMap.get(student._id.toString());
+        
+        if (existingBill) {
+          const transformedBill = transformBill(existingBill);
           const totalAmount = transformedBill.totalAmount;
           const payments = transformedBill.payments || [];
           const paidAmount = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
@@ -830,17 +833,14 @@ module.exports = {
           else if (paidAmount > 0) paymentStatus = 'Partial';
           else paymentStatus = 'Unpaid';
 
-          // 🟦 BONUS: Updated getTermBills for consistency
-          const { className, classDisplayName } = resolveClassNames(
-            transformedBill.student?.class
-          );
+          const { className, classDisplayName } = resolveClassNames(student.class);
 
           return {
             ...transformedBill,
-            studentName: transformedBill.student?.name || 'Unknown',
+            studentName: student.user?.name || student.admissionNumber || 'Unknown',
             className,
             classDisplayName,
-            studentId: transformedBill.student?._id,
+            studentId: student._id,
             totalAmount,
             paidAmount,
             balance,
@@ -848,34 +848,44 @@ module.exports = {
             formattedPaid: formatCurrency(paidAmount),
             formattedBalance: formatCurrency(balance),
             paymentStatus,
-            lastPayment: payments.length > 0
-              ? payments[payments.length - 1].paymentDate
-              : null
+            lastPayment: payments.length > 0 ? payments[payments.length - 1] : null,
+            isPlaceholder: false
           };
-        });
+        } else {
+          // No bill exists for this student yet
+          const { className, classDisplayName } = resolveClassNames(student.class);
+          return {
+            _id: `temp-${student._id}`,
+            student: student,
+            studentName: student.user?.name || student.admissionNumber || 'Unknown',
+            className,
+            classDisplayName,
+            studentId: student._id,
+            totalAmount: 0,
+            totalPaid: 0,
+            balance: 0,
+            status: 'Unpaid',
+            paymentStatus: 'Unpaid',
+            items: [],
+            payments: [],
+            isPlaceholder: true,
+            term: cleanTerm,
+            academicYear: cleanAcademicYear
+          };
+        }
+      });
 
       return res.status(200).json({
         success: true,
         count: processedBills.length,
-        data: processedBills,
-        meta: {
-          classId,
-          term: cleanTerm,
-          academicYear: cleanAcademicYear,
-          generatedAt: new Date().toISOString(),
-          currency: 'GHS'
-        }
+        data: processedBills
       });
-
     } catch (error) {
-      console.error('Term bill processing failed:', error);
+      console.error('getTermBills error:', error);
       return res.status(500).json({
         success: false,
-        message: 'Failed to process term bills request',
-        error: process.env.NODE_ENV === 'development' ? {
-          message: error.message,
-          stack: error.stack
-        } : undefined
+        message: 'Failed to fetch term bills',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
   },
