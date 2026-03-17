@@ -160,11 +160,6 @@ const markAbsenteesForTodayIfNeeded = async () => {
               signInTime: null,
               signOutTime: null,
               status: "Absent"
-            },
-            // 🔐 CRITICAL FIX:
-            // Ensure NO geo field exists on auto-created Absent records
-            $unset: {
-              location: ""
             }
           },
           upsert: true
@@ -191,7 +186,6 @@ const clockAttendance = async (req, res) => {
   const { teacherId, type, timestamp, date, termId, deviceUUID, latitude, longitude } = req.body;
   const isAdmin = req.user.role === "admin";
 
-  // ─── BASIC VALIDATION ──────────────────────────────────────
   if (!["in", "out"].includes(type)) {
     return res.status(400).json({ status: "fail", message: 'Invalid type. Must be "in" or "out".' });
   }
@@ -207,22 +201,14 @@ const clockAttendance = async (req, res) => {
 
   const lat = parseFloat(latitude);
   const lng = parseFloat(longitude);
-
   if (isNaN(lat) || isNaN(lng)) {
-    return res.status(400).json({
-      status: "fail",
-      message: "Invalid location detected. Please enable GPS and try again.",
-    });
+    return res.status(400).json({ status: "fail", message: "Invalid location detected. Please enable GPS and try again." });
   }
 
   try {
-    // ─── TERM ────────────────────────────────────────────────
     const term = await Term.findById(termId);
-    if (!term) {
-      return res.status(404).json({ status: "fail", message: "Term not found." });
-    }
+    if (!term) return res.status(404).json({ status: "fail", message: "Term not found." });
 
-    // ─── TEACHER ─────────────────────────────────────────────
     const teacher = isAdmin && teacherId
       ? await Teacher.findById(teacherId).populate("school user")
       : await Teacher.findOne({ user: req.user.id }).populate("school user");
@@ -231,26 +217,18 @@ const clockAttendance = async (req, res) => {
       return res.status(404).json({ status: "fail", message: "Teacher not properly assigned." });
     }
 
-    // ─── DEVICE BINDING (UNCHANGED) ──────────────────────────
     const existingByDevice = await DeviceBinding.findOne({ deviceUUID });
     if (existingByDevice && !existingByDevice.teacher.equals(teacher._id)) {
-      return res.status(403).json({
-        status: "fail",
-        message: "This device is registered to another teacher. Contact HeadTeacher.",
-      });
+      return res.status(403).json({ status: "fail", message: "This device is registered to another teacher. Contact HeadTeacher." });
     }
 
     const existingByTeacher = await DeviceBinding.findOne({ teacher: teacher._id });
     if (!existingByTeacher) {
       await DeviceBinding.create({ teacher: teacher._id, deviceUUID });
     } else if (existingByTeacher.deviceUUID !== deviceUUID) {
-      return res.status(403).json({
-        status: "fail",
-        message: "Your account is linked to another device.",
-      });
+      return res.status(403).json({ status: "fail", message: "Your account is linked to another device." });
     }
 
-    // ─── ATTENDANCE LOOKUP (DAY-LOCKED) ──────────────────────
     const attendanceDate = date ? new Date(date) : clockTime;
     const dayStart = startOfDay(attendanceDate);
     const dayEnd = endOfDay(attendanceDate);
@@ -260,12 +238,17 @@ const clockAttendance = async (req, res) => {
       date: { $gte: dayStart, $lte: dayEnd },
     });
 
+    if (type === "in" && !attendance) {
+      console.log(`[CLOCK] Cleaning up potential duplicates for ${teacher._id} on today`);
+      await Attendance.deleteMany({
+        teacher: teacher._id,
+        date: { $gte: dayStart, $lte: dayEnd }
+      });
+    }
+
     const lateThreshold = new Date(dayStart);
     lateThreshold.setHours(8, 0, 0, 0);
 
-    // ─────────────────────────────────────────────────────────
-    // CLOCK IN (Absent → On Time / Late)
-    // ─────────────────────────────────────────────────────────
     if (type === "in") {
       if (!attendance) {
         attendance = new Attendance({
@@ -275,68 +258,40 @@ const clockAttendance = async (req, res) => {
           date: dayStart
         });
       }
-
       if (attendance.signInTime) {
-        return res.status(400).json({
-          status: "fail",
-          message: "You have already clocked in today.",
-        });
+        return res.status(400).json({ status: "fail", message: "You have already clocked in today." });
       }
-
       attendance.signInTime = clockTime;
       attendance.status = clockTime > lateThreshold ? "Late" : "On Time";
     }
 
-    // ─────────────────────────────────────────────────────────
-    // CLOCK OUT (FINAL STATE)
-    // ─────────────────────────────────────────────────────────
     if (type === "out") {
       if (!attendance || !attendance.signInTime) {
-        return res.status(400).json({
-          status: "fail",
-          message: "You must clock in before clocking out.",
-        });
+        return res.status(400).json({ status: "fail", message: "You must clock in before clocking out." });
       }
-
       if (attendance.signOutTime) {
-        return res.status(400).json({
-          status: "fail",
-          message: "You have already clocked out today.",
-        });
+        return res.status(400).json({ status: "fail", message: "You have already clocked out today." });
       }
-
       attendance.signOutTime = clockTime;
     }
 
-    // ─── COMMON UPDATE ───────────────────────────────────────
-    attendance.location = {
-      type: "Point",
-      coordinates: [lng, lat],
-    };
+    attendance.location = { type: "Point", coordinates: [lng, lat] };
     attendance.term = term._id;
-
     await attendance.save();
 
-    // ─── RESPONSE ────────────────────────────────────────────
     return res.status(200).json({
       status: "success",
       data: {
         attendance,
-        message: type === "in"
-          ? "Clock-in successful. Have a great day!"
-          : "Clock-out successful. Goodbye!",
+        message: type === "in" ? "Clock-in successful." : "Clock-out successful.",
         teacherId: teacher._id,
         geofenceStatus: req.geofenceStatus || "validated",
         distanceFromCenter: req.geofenceData?.distanceFromCenter || null,
       },
     });
-
   } catch (err) {
     console.error("Clock attendance error:", err);
-    return res.status(500).json({
-      status: "error",
-      message: "Something went wrong. Please try again.",
-    });
+    return res.status(500).json({ status: "error", message: "Something went wrong. Please try again." });
   }
 };
 
@@ -995,19 +950,10 @@ const getTodayAttendance = async (req, res) => {
     const todayStart = startOfDay(now);
     const todayEnd = endOfDay(now);
 
-    const allToday = await Attendance.find({
+    const attendance = await Attendance.findOne({
       teacher: teacher._id,
       date: { $gte: todayStart, $lte: todayEnd }
     });
-
-    console.log('[TODAY] All records found count:', allToday.length);
-    if (allToday.length > 0) {
-      console.log('[TODAY] Records detail:', allToday.map(r => ({ id: r._id, status: r.status, date: r.date, createdAt: r.createdAt })));
-    }
-
-    const attendance = allToday[0]; // Picking first for now like before
-
-    console.log('[TODAY] Attendance picked for response:', attendance ? { id: attendance._id, status: attendance.status, date: attendance.date } : 'NONE');
 
     // 🔐 AUTHORITATIVE PERMISSIONS (NO GUESSING)
     // Block clock-in/out when the status is Holiday or Absent (manual admin entry)
@@ -1108,13 +1054,10 @@ const getTeacherAttendanceHistory = async (req, res) => {
       });
     }
 
-    console.log(`[HISTORY] Fetching records for teacher ${teacher._id}`);
     const history = await Attendance.find({ teacher: teacher._id })
       .sort({ date: -1 })
       .select('date signInTime signOutTime status location')
       .limit(30);
-
-    console.log(`[HISTORY] Found ${history.length} records. Latest status: ${history[0]?.status} on ${history[0]?.date}`);
 
     res.status(200).json({
       status: 'success',
@@ -1223,6 +1166,13 @@ const markManualAttendance = async (req, res) => {
     if (teachersToUpdate.length === 0) {
       return res.status(404).json({ status: 'fail', message: 'No teachers found to update.' });
     }
+
+    // 🔐 DE-DUPLICATION: Clear any existing records for these teachers on this day
+    console.log(`[MANUAL] Clearing existing records for ${teachersToUpdate.length} teachers on ${date}`);
+    await Attendance.deleteMany({
+      teacher: { $in: teachersToUpdate },
+      date: { $gte: attendanceDate, $lte: endOfDay(attendanceDate) }
+    });
 
     const bulkOps = teachersToUpdate.map(tId => {
       const updateData = {
