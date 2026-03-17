@@ -11,6 +11,12 @@
 const express = require('express');
 const router = express.Router();
 
+// 🔍 DEBUG: Log every request entering this router
+router.use((req, res, next) => {
+  console.log(`[ROUTE-DEBUG] ${req.method} ${req.originalUrl}`);
+  next();
+});
+
 const {
   clockAttendance,
   getTodayAttendance,
