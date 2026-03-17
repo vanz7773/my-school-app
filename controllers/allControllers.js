@@ -859,10 +859,20 @@ module.exports = {
         } else {
           // No bill exists for this student yet
           const { className, classDisplayName } = resolveClassNames(student.class);
+          const studentName = student.user?.name || student.admissionNumber || 'Unknown';
+          
           return {
             _id: `temp-${student._id}`,
-            student: student,
-            studentName: student.user?.name || student.admissionNumber || 'Unknown',
+            student: {
+              ...student,
+              name: studentName,
+            },
+            class: {
+              ...(student.class || {}),
+              name: className,
+              displayName: classDisplayName,
+            },
+            studentName,
             className,
             classDisplayName,
             studentId: student._id,
