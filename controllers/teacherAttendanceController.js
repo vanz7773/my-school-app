@@ -453,40 +453,54 @@ const getAdminDailyRecords = async (req, res) => {
       const startDate = startOfDay(new Date(from));
       const endDate = startOfDay(new Date(to));
       
-      // Generate array of all dates in range (descending)
+      // Generate array of all dates in range (ascending order - as requested)
       const dates = [];
-      let current = new Date(endDate);
-      while (current >= startDate) {
+      let current = new Date(startDate);
+      while (current <= endDate) {
         dates.push(new Date(current));
-        current.setDate(current.getDate() - 1);
+        current.setDate(current.getDate() + 1);
       }
 
       for (const date of dates) {
         // Skip weekends
         if (date.getDay() === 0 || date.getDay() === 6) continue;
 
+        // Collect all records for this specific date
+        const dayRecords = [];
+
         for (const teacher of allTeachers) {
-          // Find existing record for this teacher on this specific date
           const existing = records.find(r => 
             r.teacher?._id?.toString() === teacher._id.toString() &&
             startOfDay(new Date(r.date)).getTime() === date.getTime()
           );
 
           if (existing) {
-            finalRecords.push(existing);
+            dayRecords.push(existing);
           } else {
-            // Create a "Placeholder" record
-            finalRecords.push({
+            dayRecords.push({
               _id: `temp-${teacher._id}-${date.getTime()}`,
               teacher: teacher,
               date: date,
-              status: 'Absent', // Default status for missing records
+              status: 'Absent',
               signInTime: null,
               signOutTime: null,
               isPlaceholder: true
             });
           }
         }
+
+        // Sort teachers for this day by sign-in time (Arrived first, then placeholders)
+        dayRecords.sort((a, b) => {
+          if (a.signInTime && b.signInTime) {
+            return new Date(a.signInTime).getTime() - new Date(b.signInTime).getTime();
+          }
+          if (a.signInTime) return -1;
+          if (b.signInTime) return 1;
+          // Both are placeholders, keep alphabetical (already sorted in allTeachers)
+          return 0;
+        });
+
+        finalRecords.push(...dayRecords);
       }
     } else {
       // Fallback if no dates provided (shouldn't happen with current frontend)
