@@ -52,7 +52,7 @@ const schoolSchema = new mongoose.Schema(
 
     geofenceRadius: {
       type: Number,
-      default: 30,
+      default: 50,
       min: 10,
     },
 
