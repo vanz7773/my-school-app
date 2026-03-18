@@ -430,13 +430,72 @@ const getAdminDailyRecords = async (req, res) => {
       match.term = term._id;
     }
 
+    // 1️⃣ Fetch all teachers for this school to ensure "Always list all teachers"
+    const teacherQuery = { school: req.user.school };
+    if (teacherId) teacherQuery._id = new mongoose.Types.ObjectId(teacherId);
+    
+    const allTeachers = await Teacher.find(teacherQuery)
+      .populate({ path: 'user', select: 'name' })
+      .lean();
+      
+    // Sort teachers alphabetically by name
+    allTeachers.sort((a, b) => (a.user?.name || '').localeCompare(b.user?.name || ''));
+
+    // 2️⃣ Fetch actual attendance records
     const records = await Attendance.find(match)
       .populate({ path: 'teacher', populate: { path: 'user', select: 'name' } })
       .sort({ date: -1 });
 
-    console.log('Records found:', records.length);
+    // 3️⃣ Generate the full list with placeholders
+    let finalRecords = [];
+    
+    if (from && to) {
+      const startDate = startOfDay(new Date(from));
+      const endDate = startOfDay(new Date(to));
+      
+      // Generate array of all dates in range (descending)
+      const dates = [];
+      let current = new Date(endDate);
+      while (current >= startDate) {
+        dates.push(new Date(current));
+        current.setDate(current.getDate() - 1);
+      }
 
-    // Weekly chart calculation
+      for (const date of dates) {
+        // Skip weekends
+        if (date.getDay() === 0 || date.getDay() === 6) continue;
+
+        for (const teacher of allTeachers) {
+          // Find existing record for this teacher on this specific date
+          const existing = records.find(r => 
+            r.teacher?._id?.toString() === teacher._id.toString() &&
+            startOfDay(new Date(r.date)).getTime() === date.getTime()
+          );
+
+          if (existing) {
+            finalRecords.push(existing);
+          } else {
+            // Create a "Placeholder" record
+            finalRecords.push({
+              _id: `temp-${teacher._id}-${date.getTime()}`,
+              teacher: teacher,
+              date: date,
+              status: 'Absent', // Default status for missing records
+              signInTime: null,
+              signOutTime: null,
+              isPlaceholder: true
+            });
+          }
+        }
+      }
+    } else {
+      // Fallback if no dates provided (shouldn't happen with current frontend)
+      finalRecords = records;
+    }
+
+    console.log('Final records count:', finalRecords.length);
+
+    // Weekly chart calculation (use finalRecords for stats)
     const dayCounts = {};
     const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
@@ -444,7 +503,7 @@ const getAdminDailyRecords = async (req, res) => {
       dayCounts[day] = { total: 0, present: 0 };
     });
 
-    records.forEach(record => {
+    finalRecords.forEach(record => {
       try {
         const recordDate = new Date(record.date);
         const day = recordDate.toLocaleDateString('en-US', { weekday: 'long' });
@@ -452,8 +511,8 @@ const getAdminDailyRecords = async (req, res) => {
         if (weekdays.includes(day)) {
           dayCounts[day].total += 1;
 
-          // Present = On Time or Late (Absent now exists explicitly)
-          if (['On Time', 'Late'].includes(record.status)) {
+          // Present = On Time or Late
+          if (['On Time', 'Late', 'Present'].includes(record.status)) {
             dayCounts[day].present += 1;
           }
         }
@@ -478,7 +537,7 @@ const getAdminDailyRecords = async (req, res) => {
     res.status(200).json({
       status: 'success',
       data: {
-        records,
+        records: finalRecords,
         weeklyChart
       }
     });
