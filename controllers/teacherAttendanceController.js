@@ -183,71 +183,116 @@ const markAbsenteesForTodayIfNeeded = async () => {
 // CLOCK IN / OUT (LOCKED, ONE-WAY, PRODUCTION VERSION)
 // ─────────────────────────────────────────────────────────────
 const clockAttendance = async (req, res) => {
+  console.log('\n========================================');
+  console.log('[CLOCK] === CLOCK ATTENDANCE STARTED ===');
+  console.log('[CLOCK] Request body:', JSON.stringify({
+    type: req.body.type,
+    timestamp: req.body.timestamp,
+    date: req.body.date,
+    termId: req.body.termId,
+    deviceUUID: req.body.deviceUUID,
+    latitude: req.body.latitude,
+    longitude: req.body.longitude,
+    teacherId: req.body.teacherId,
+  }, null, 2));
+  console.log('[CLOCK] User:', JSON.stringify({ id: req.user?.id, role: req.user?.role, school: req.user?.school }));
+  console.log('[CLOCK] Geofence status from middleware:', req.geofenceStatus);
+  console.log('[CLOCK] Geofence data from middleware:', JSON.stringify(req.geofenceData || {}));
+  console.log('========================================\n');
+
   const { teacherId, type, timestamp, date, termId, deviceUUID, latitude, longitude } = req.body;
   const isAdmin = req.user.role === "admin";
 
   if (!["in", "out"].includes(type)) {
+    console.log('[CLOCK] ❌ Invalid type:', type);
     return res.status(400).json({ status: "fail", message: 'Invalid type. Must be "in" or "out".' });
   }
 
   const clockTime = new Date(timestamp);
   if (isNaN(clockTime.getTime())) {
+    console.log('[CLOCK] ❌ Invalid timestamp:', timestamp);
     return res.status(400).json({ status: "fail", message: "Invalid timestamp format." });
   }
+  console.log('[CLOCK] ✅ Clock time parsed:', clockTime.toISOString());
 
   if (!deviceUUID) {
+    console.log('[CLOCK] ❌ Missing deviceUUID');
     return res.status(400).json({ status: "fail", message: "Device ID missing. Please restart the app." });
   }
+  console.log('[CLOCK] ✅ Device UUID:', deviceUUID);
 
   const lat = parseFloat(latitude);
   const lng = parseFloat(longitude);
   if (isNaN(lat) || isNaN(lng)) {
+    console.log('[CLOCK] ❌ Invalid coordinates:', { latitude, longitude, lat, lng });
     return res.status(400).json({ status: "fail", message: "Invalid location detected. Please enable GPS and try again." });
   }
+  console.log(`[CLOCK] ✅ Coordinates: lat=${lat}, lng=${lng}`);
 
   try {
     const term = await Term.findById(termId);
-    if (!term) return res.status(404).json({ status: "fail", message: "Term not found." });
+    if (!term) {
+      console.log('[CLOCK] ❌ Term not found:', termId);
+      return res.status(404).json({ status: "fail", message: "Term not found." });
+    }
+    console.log('[CLOCK] ✅ Term found:', term.name || term._id);
 
     const teacher = isAdmin && teacherId
       ? await Teacher.findById(teacherId).populate("school user")
       : await Teacher.findOne({ user: req.user.id }).populate("school user");
 
     if (!teacher || !teacher.school) {
+      console.log('[CLOCK] ❌ Teacher not found or not assigned. isAdmin:', isAdmin, 'teacherId:', teacherId, 'userId:', req.user.id);
       return res.status(404).json({ status: "fail", message: "Teacher not properly assigned." });
     }
+    console.log('[CLOCK] ✅ Teacher found:', teacher.user?.name || teacher._id, '| School:', teacher.school?.name || teacher.school?._id);
 
+    // Device binding checks
     const existingByDevice = await DeviceBinding.findOne({ deviceUUID });
+    console.log('[CLOCK] Device binding by UUID:', existingByDevice ? `Bound to teacher ${existingByDevice.teacher}` : 'Not found');
     if (existingByDevice && !existingByDevice.teacher.equals(teacher._id)) {
+      console.log('[CLOCK] ❌ Device bound to different teacher:', existingByDevice.teacher.toString(), '!= ', teacher._id.toString());
       return res.status(403).json({ status: "fail", message: "This device is registered to another teacher. Contact HeadTeacher." });
     }
 
     const existingByTeacher = await DeviceBinding.findOne({ teacher: teacher._id });
+    console.log('[CLOCK] Device binding by teacher:', existingByTeacher ? `UUID: ${existingByTeacher.deviceUUID}` : 'Not found');
     if (!existingByTeacher) {
       await DeviceBinding.create({ teacher: teacher._id, deviceUUID });
+      console.log('[CLOCK] ✅ New device binding created');
     } else if (existingByTeacher.deviceUUID !== deviceUUID) {
+      console.log('[CLOCK] ❌ Teacher linked to different device:', existingByTeacher.deviceUUID, '!= ', deviceUUID);
       return res.status(403).json({ status: "fail", message: "Your account is linked to another device." });
     }
 
     const attendanceDate = date ? new Date(date) : clockTime;
     const dayStart = startOfDay(attendanceDate);
     const dayEnd = endOfDay(attendanceDate);
+    console.log('[CLOCK] Date range:', dayStart.toISOString(), '-', dayEnd.toISOString());
 
     let attendance = await Attendance.findOne({
       teacher: teacher._id,
       date: { $gte: dayStart, $lte: dayEnd },
     });
+    console.log('[CLOCK] Existing attendance record:', attendance ? JSON.stringify({
+      id: attendance._id,
+      status: attendance.status,
+      signInTime: attendance.signInTime,
+      signOutTime: attendance.signOutTime,
+    }) : 'None');
 
     if (type === "in" && !attendance) {
       console.log(`[CLOCK] Cleaning up potential duplicates for ${teacher._id} on today`);
-      await Attendance.deleteMany({
+      const deleteResult = await Attendance.deleteMany({
         teacher: teacher._id,
         date: { $gte: dayStart, $lte: dayEnd }
       });
+      console.log('[CLOCK] Deleted duplicates:', deleteResult.deletedCount);
     }
 
     const lateThreshold = new Date(dayStart);
     lateThreshold.setHours(8, 0, 0, 0);
+    console.log('[CLOCK] Late threshold:', lateThreshold.toISOString());
 
     if (type === "in") {
       if (!attendance) {
@@ -257,28 +302,36 @@ const clockAttendance = async (req, res) => {
           term: term._id,
           date: dayStart
         });
+        console.log('[CLOCK] ✅ Created new attendance record');
       }
       if (attendance.signInTime) {
+        console.log('[CLOCK] ❌ Already clocked in:', attendance.signInTime);
         return res.status(400).json({ status: "fail", message: "You have already clocked in today." });
       }
       attendance.signInTime = clockTime;
       attendance.status = clockTime > lateThreshold ? "Late" : "On Time";
+      console.log('[CLOCK] ✅ Clock-in recorded. Status:', attendance.status);
     }
 
     if (type === "out") {
       if (!attendance || !attendance.signInTime) {
+        console.log('[CLOCK] ❌ Cannot clock out - no clock-in found');
         return res.status(400).json({ status: "fail", message: "You must clock in before clocking out." });
       }
       if (attendance.signOutTime) {
+        console.log('[CLOCK] ❌ Already clocked out:', attendance.signOutTime);
         return res.status(400).json({ status: "fail", message: "You have already clocked out today." });
       }
       attendance.signOutTime = clockTime;
+      console.log('[CLOCK] ✅ Clock-out recorded');
     }
 
     attendance.location = { type: "Point", coordinates: [lng, lat] };
     attendance.term = term._id;
     await attendance.save();
+    console.log('[CLOCK] ✅ Attendance saved successfully. ID:', attendance._id);
 
+    console.log('[CLOCK] === CLOCK ATTENDANCE COMPLETED SUCCESSFULLY ===\n');
     return res.status(200).json({
       status: "success",
       data: {
@@ -290,7 +343,7 @@ const clockAttendance = async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("Clock attendance error:", err);
+    console.error("[CLOCK] ❌ Clock attendance error:", err);
     return res.status(500).json({ status: "error", message: "Something went wrong. Please try again." });
   }
 };
