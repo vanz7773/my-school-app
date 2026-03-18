@@ -59,10 +59,10 @@ const teacherAttendanceSchema = new mongoose.Schema(
       type: {
         type: String,
         enum: ['Point'],
-        // ❌ NO DEFAULT — prevents invalid GeoJSON
       },
       coordinates: {
         type: [Number], // [longitude, latitude]
+        default: undefined, // 🚀 CRITICAL: Prevents Mongoose from defaulting to [] which breaks GeoJSON index
         validate: {
           validator: function (v) {
             // Allow undefined (Absent records)

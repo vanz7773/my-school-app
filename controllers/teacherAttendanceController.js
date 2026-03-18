@@ -159,7 +159,8 @@ const markAbsenteesForTodayIfNeeded = async () => {
               date: todayStart,
               signInTime: null,
               signOutTime: null,
-              status: "Absent"
+              status: "Absent",
+              location: undefined // 🚀 Explicitly undefined to avoid Mongoose defaults
             }
           },
           upsert: true
