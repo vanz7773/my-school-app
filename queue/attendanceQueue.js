@@ -1,9 +1,9 @@
 const { Queue } = require('bullmq');
-const { redisConfig } = require('../config/ioredis');
+const { redisConnection } = require('../config/ioredis');
 
 // Create the attendance queue
 const attendanceQueue = new Queue('AttendanceQueue', {
-  connection: redisConfig,
+  connection: redisConnection,
   defaultJobOptions: {
     removeOnComplete: true, // Clean up successful jobs
     removeOnFail: false,    // Keep failed jobs for inspection/retry

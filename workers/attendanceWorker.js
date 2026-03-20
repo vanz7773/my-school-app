@@ -1,5 +1,5 @@
 const { Worker } = require('bullmq');
-const { redisConfig } = require('../config/ioredis');
+const { redisConnection } = require('../config/ioredis');
 const { processAttendanceJob } = require('../controllers/studentAttendanceController');
 const { processFeedingJob } = require('../controllers/feedingFeeController');
 
@@ -19,7 +19,7 @@ const attendanceWorker = new Worker('AttendanceQueue', async (job) => {
     return result;
   }
 }, { 
-  connection: redisConfig,
+  connection: redisConnection,
   concurrency: 5 // Process up to 5 class attendance lists simultaneously
 });
 
