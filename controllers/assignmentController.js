@@ -147,26 +147,46 @@ async function createAssignmentNotification({
     const students = await Student.find({ 
       class: classId, 
       school 
-    }).select("user parent parentIds").lean();
+    }).populate("user", "name").select("user parent parentIds name").lean();
 
-    let userIds = [];
+    const studentIds = new Set();
+    const parentNotifications = {};
 
     students.forEach(s => {
-      if (s.user) userIds.push(String(s.user));
-      if (s.parent) userIds.push(String(s.parent));
-      if (Array.isArray(s.parentIds))
-        s.parentIds.forEach(pid => userIds.push(String(pid)));
+      // Collect Student
+      if (s.user && s.user._id) studentIds.add(String(s.user._id));
+      else if (s.user) studentIds.add(String(s.user));
+      
+      // Collect Parents
+      const parentTokens = new Set();
+      if (s.parent) parentTokens.add(String(s.parent._id || s.parent));
+      if (Array.isArray(s.parentIds)) {
+        s.parentIds.forEach(pid => {
+          if (pid) parentTokens.add(String(pid._id || pid));
+        });
+      }
+      
+      if (parentTokens.size > 0) {
+        const studentName = s.user?.name || s.name || "your child";
+        const parentMsg = `${title} for ${studentName}`;
+        
+        if (!parentNotifications[parentMsg]) {
+          parentNotifications[parentMsg] = new Set();
+        }
+        parentTokens.forEach(token => parentNotifications[parentMsg].add(token));
+      }
     });
 
-    userIds = [...new Set(userIds)];
-
-    if (userIds.length > 0) {
-      // 3️⃣ Send push notification
-      await sendPush(
-        userIds,
-        actionMap[action],
-        title
-      );
+    // 3️⃣ Send push notifications to Students
+    if (studentIds.size > 0) {
+      await sendPush([...studentIds], actionMap[action], title);
+    }
+    
+    // 4️⃣ Send specific push notifications to Parents
+    for (const [msg, pTokens] of Object.entries(parentNotifications)) {
+      if (pTokens.size > 0) {
+        await sendPush([...pTokens], actionMap[action], msg).catch(e => console.error("Push Error:", e));
+      }
     }
 
   } catch (err) {

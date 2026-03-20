@@ -2137,9 +2137,8 @@ exports.uploadReportSheetPDF = [
       const uploadedReports = {};
       const notifications = [];
 
-      function collectRecipientIds(student) {
+      function getParentIds(student) {
         const set = new Set();
-        if (student.user?._id) set.add(String(student.user._id));
         if (student.parent) {
           if (typeof student.parent === "string") set.add(student.parent);
           else if (student.parent._id) set.add(String(student.parent._id));
@@ -2196,21 +2195,39 @@ exports.uploadReportSheetPDF = [
             }
           });
 
-          notifications.push({
+          const studentName = student.user?.name || student.name || "your child";
+          const pIds = getParentIds(student);
+          const sId = student.user?._id ? String(student.user._id) : null;
+
+          const baseNotification = {
             title: "New Report Card Available",
-            message: `Your Term ${termDoc.term || 'Unknown'} report card has been uploaded.`,
             category: "report",
             audience: "specific",
             class: classId,
             studentId: student._id,
-            termId: termKey, // Store the termKey (ObjectId string)
-            termNumber: termDoc.term, // Store term number separately for display
+            termId: termKey,
+            termNumber: termDoc.term,
             academicYear: termDoc.academicYear,
             fileUrl: studentUrl,
             school: schoolId,
             sender: req.user?._id,
-            recipientUsers: collectRecipientIds(student)
-          });
+          };
+
+          if (sId) {
+            notifications.push({
+              ...baseNotification,
+              message: `Your Term ${termDoc.term || 'Unknown'} report card has been uploaded.`,
+              recipientUsers: [sId]
+            });
+          }
+
+          if (pIds.length > 0) {
+            notifications.push({
+              ...baseNotification,
+              message: `The Term ${termDoc.term || 'Unknown'} report card for ${studentName} is now available.`,
+              recipientUsers: pIds
+            });
+          }
         } catch (err) {
           console.error(`Failed processing student ${student._id}:`, err);
         }
@@ -2219,8 +2236,27 @@ exports.uploadReportSheetPDF = [
       if (notifications.length) {
         try {
           await Notification.insertMany(notifications);
+          
+          // 🔥 Send Push Notifications
+          // Group by message so each recipient gets the exact right text
+          const pushesByMessage = {};
+          notifications.forEach(n => {
+            if (n.recipientUsers && n.recipientUsers.length > 0) {
+              if (!pushesByMessage[n.message]) {
+                pushesByMessage[n.message] = new Set();
+              }
+              n.recipientUsers.forEach(u => pushesByMessage[n.message].add(String(u)));
+            }
+          });
+          
+          for (const [msg, userSet] of Object.entries(pushesByMessage)) {
+            if (userSet.size > 0) {
+              const pushTitle = "New Report Card Available";
+              await sendPush([...userSet], pushTitle, msg).catch(e => console.error("Push Error:", e));
+            }
+          }
         } catch (e) {
-          console.warn("Failed to batch insert notifications:", e.message || e);
+          console.warn("Failed to batch insert or push notifications:", e.message || e);
         }
       }
 

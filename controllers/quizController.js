@@ -824,40 +824,91 @@ const publishQuiz = async (req, res) => {
             school,
             status: "active",
           })
-            .select("user _id")
+            .populate("user", "name")
+            .select("user parent parentIds _id name")
             .lean();
 
           const validStudents = students.filter((s) => s.user);
-          const userIds = validStudents.map((s) => s.user);
+          const studentIds = validStudents.map((s) => s.user._id || s.user);
+          
+          let parentPushCount = 0;
+          const notifications = [];
 
-          console.log(
-            `🔔 Sending publish notification to ${userIds.length} students`
-          );
-
-          // 1. Send Push
-          await sendPush(
-            userIds,
-            "New Quiz Published 📝",
-            `"${quiz.title}" is now available.`,
-            { type: "quiz", quizId: quiz._id, screen: "QuizDetails" }
-          );
-
-          // 2. Create In-App Notifications
-          if (validStudents.length > 0) {
-            const notifications = validStudents.map((student) => ({
+          validStudents.forEach((student) => {
+             // 1. Student In-App Notification
+             notifications.push({
               school,
               title: "New Quiz Published 📝",
               message: `"${quiz.title}" is now available for you to take.`,
               type: "online-quiz",
               audience: "specific",
-              recipientUsers: [student.user],
+              recipientUsers: [student.user._id || student.user],
               studentId: student._id,
               quizId: quiz._id,
               relatedResource: quiz._id,
               resourceModel: "QuizSession",
               isRead: false,
-            }));
+             });
+             
+             // 2. Parent In-App & Push Notification
+             const parentTokens = new Set();
+             if (student.parent) {
+                if (typeof student.parent === "string") parentTokens.add(student.parent);
+                else if (student.parent._id) parentTokens.add(String(student.parent._id));
+             }
+             if (Array.isArray(student.parentIds)) {
+                student.parentIds.forEach(p => {
+                   if (!p) return;
+                   if (typeof p === "string") parentTokens.add(p);
+                   else if (p._id) parentTokens.add(String(p._id));
+                });
+             }
+             
+             if (parentTokens.size > 0) {
+                const pTokens = [...parentTokens];
+                const studentName = student.user?.name || student.name || "your child";
+                const parentMsg = `"${quiz.title}" is now available for ${studentName}.`;
+                
+                notifications.push({
+                  school,
+                  title: "New Quiz Published 📝",
+                  message: parentMsg,
+                  type: "online-quiz",
+                  audience: "specific",
+                  recipientUsers: pTokens,
+                  studentId: student._id,
+                  quizId: quiz._id,
+                  relatedResource: quiz._id,
+                  resourceModel: "QuizSession",
+                  isRead: false,
+                });
+                
+                parentPushCount += pTokens.length;
+                
+                // Fire push specifically for this parent group regarding this specific student
+                sendPush(
+                  pTokens,
+                  "New Quiz Published 📝",
+                  parentMsg,
+                  { type: "quiz", quizId: quiz._id, screen: "QuizDetails" }
+                ).catch(e => console.error("Parent quiz push failed:", e));
+             }
+          });
 
+          console.log(`🔔 Sending publish notification to ${studentIds.length} students and ${parentPushCount} parents`);
+
+          // 1. Send Student Push Notification (Bulk)
+          if (studentIds.length > 0) {
+            await sendPush(
+              studentIds,
+              "New Quiz Published 📝",
+              `"${quiz.title}" is now available.`,
+              { type: "quiz", quizId: quiz._id, screen: "QuizDetails" }
+            );
+          }
+
+          // 2. Create ALL In-App Notifications
+          if (notifications.length > 0) {
             await Notification.insertMany(notifications);
             console.log(`📝 Created ${notifications.length} in-app notifications`);
           }
@@ -2986,6 +3037,49 @@ const submitQuiz = async (req, res) => {
     activeAttempt.status = "submitted";
     activeAttempt.completedAt = now;
     await activeAttempt.save();
+
+    // 🔔 Send push notification to parents
+    try {
+      const studentDoc = await Student.findById(studentId).populate("user", "name").lean();
+      if (studentDoc) {
+        const parentTokens = new Set();
+        if (studentDoc.parent) {
+          if (typeof studentDoc.parent === "string") parentTokens.add(studentDoc.parent);
+          else if (studentDoc.parent._id) parentTokens.add(String(studentDoc.parent._id));
+        }
+        if (Array.isArray(studentDoc.parentIds)) {
+          studentDoc.parentIds.forEach(p => {
+             if (!p) return;
+             if (typeof p === "string") parentTokens.add(p);
+             else if (p._id) parentTokens.add(String(p._id));
+          });
+        }
+        
+        if (parentTokens.size > 0) {
+          const pTokens = [...parentTokens];
+          const studentName = studentDoc.user?.name || studentDoc.name || "your child";
+          
+          let parentMsg;
+          if (!requiresManualReview) {
+            parentMsg = `Quiz Result: ${studentName} scored ${quizResultDoc.score}/${quizResultDoc.totalPoints} on "${quiz.title}".`;
+          } else {
+            parentMsg = `Quiz Submitted: ${studentName} has completed "${quiz.title}".`;
+          }
+
+          const notificationController = require('../controllers/notificationController');
+          await notificationController.sendPushNotifications(
+            pTokens,
+            "New Quiz Activity",
+            parentMsg,
+            { type: "quiz", quizId: quiz._id }
+          ).catch(e => console.error("Parent quiz result push failed:", e));
+          
+          console.log(`🔔 Sent parent quiz submission push to ${pTokens.length} recipients`);
+        }
+      }
+    } catch (pushErr) {
+      console.error("❌ Failed to push quiz submission parent notification:", pushErr);
+    }
 
     return res.json({
       message: autoSubmit

@@ -1071,11 +1071,15 @@ module.exports = {
 
         // Also notify parents if linked
         if (updatedBill.student.parentIds && updatedBill.student.parentIds.length > 0) {
-          for (const parentId of updatedBill.student.parentIds) {
-            // Parent IDs in Student model refer to User IDs of parents? Spec check needed.
-            // Assuming parentIds are User IDs or we need to find Parent doc first. 
-            // Safest is to just notify student for now, or check schema.
-            // Let's stick to student user for safety unless requested.
+          const parentTokens = updatedBill.student.parentIds.filter(Boolean);
+          if (parentTokens.length > 0) {
+            const studentName = updatedBill.student.user?.name || "your child";
+            await notificationController.sendPushNotifications(
+              parentTokens,
+              'Fees Payment Receipt',
+              `Payment of ${amountFormatted} received for ${studentName}. Receipt #${payment[0]._id}`,
+              { type: 'payment', paymentId: payment[0]._id }
+            ).catch(e => console.error("Parent receipt push failed:", e));
           }
         }
       }
@@ -1225,6 +1229,38 @@ module.exports = {
 
       await session.commitTransaction();
       committed = true;
+
+      // 🔔 Send Push Notification for Statement
+      try {
+        const notificationController = require('../controllers/notificationController');
+        const amountFormatted = typeof formatCurrency === 'function' ? formatCurrency(totalAmount) : `GHS ${totalAmount}`;
+        
+        // Student push
+        if (student.user?._id) {
+          await notificationController.sendPushToUser(
+            student.user._id,
+            'New Fee Statement',
+            `Your fee statement for Term ${term} has been posted. Total: ${amountFormatted}`,
+            { type: 'bill', billId: bill._id }
+          ).catch(e => console.error("Student bill push failed:", e));
+        }
+
+        // Parent push
+        if (student.parentIds && student.parentIds.length > 0) {
+          const parentTokens = student.parentIds.filter(Boolean);
+          if (parentTokens.length > 0) {
+            const studentName = student.user?.name || student.name || "your child";
+            await notificationController.sendPushNotifications(
+              parentTokens,
+              'New Fee Statement',
+              `A fee statement for ${studentName} (Term ${term}) has been posted. Total: ${amountFormatted}`,
+              { type: 'bill', billId: bill._id }
+            ).catch(e => console.error("Parent bill push failed:", e));
+          }
+        }
+      } catch (pushErr) {
+        console.error('Push notification error in updateOrCreateBill:', pushErr);
+      }
 
       res.status(billId ? 200 : 201).json({
         success: true,
