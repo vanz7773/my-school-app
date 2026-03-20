@@ -1207,8 +1207,8 @@ module.exports = {
   getStudentTermAttendance,
   getStudentTermTotalAttendance,
   initializeWeek,
-  // getWeeklyAttendance, // Removed as per instruction
-  // migrateTermIdToStudentAttendance, // Added as per instruction, assuming it exists elsewhere
+  getWeeklyAttendance,
+  migrateTermIdToStudentAttendance,
   getMyAttendance,
   getClassTermAttendance
 };
