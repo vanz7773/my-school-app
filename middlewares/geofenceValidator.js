@@ -31,7 +31,7 @@ const geofenceValidator = async (req, res, next) => {
       console.error('[GEOFENCE] Invalid coordinates:', { latitude, longitude });
       return res.status(400).json({
         status: 'fail',
-        message: 'Valid latitude and longitude are required for location validation.',
+        message: 'Unable to detect your location. Please ensure GPS is enabled and try again.',
       });
     }
 

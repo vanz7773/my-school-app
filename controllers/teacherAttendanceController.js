@@ -65,7 +65,7 @@ const withGeofenceValidation = (handler) => {
       console.error('Geofence validation wrapper error:', error);
       return res.status(500).json({
         status: 'error',
-        message: 'Internal server error during geofence validation',
+        message: 'Geofence validation failed due to a server error. Please try again.',
       });
     }
   };
@@ -226,7 +226,7 @@ const clockAttendance = async (req, res) => {
   const lng = parseFloat(longitude);
   if (isNaN(lat) || isNaN(lng)) {
     console.log('[CLOCK] ❌ Invalid coordinates:', { latitude, longitude, lat, lng });
-    return res.status(400).json({ status: "fail", message: "Invalid location detected. Please enable GPS and try again." });
+    return res.status(400).json({ status: "fail", message: "Invalid location detected. Please ensure your GPS is enabled and try again." });
   }
   console.log(`[CLOCK] ✅ Coordinates: lat=${lat}, lng=${lng}`);
 
@@ -345,7 +345,7 @@ const clockAttendance = async (req, res) => {
     });
   } catch (err) {
     console.error("[CLOCK] ❌ Clock attendance error:", err);
-    return res.status(500).json({ status: "error", message: "Something went wrong. Please try again." });
+    return res.status(500).json({ status: "error", message: "Service unavailable. Please try again or contact your administrator." });
   }
 };
 
