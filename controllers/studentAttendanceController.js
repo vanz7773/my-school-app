@@ -1208,7 +1208,6 @@ module.exports = {
   getStudentTermTotalAttendance,
   initializeWeek,
   getWeeklyAttendance,
-  migrateTermIdToStudentAttendance,
   getMyAttendance,
   getClassTermAttendance
 };
