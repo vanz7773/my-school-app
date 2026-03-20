@@ -21,10 +21,29 @@ exports.syncLogs = async (req, res) => {
     }));
 
     await DeviceActivityLog.insertMany(logsToInsert);
+    
+    // 🔐 GEOFENCE ALERT CHECK: Trigger real-time alert if violation detected
+    const geofenceViolationLog = logs.find(l => l.geofenceViolation === true);
+    if (geofenceViolationLog) {
+      // Check if we already created a Geofence alert in the last hour to prevent spam
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+      const recentAlert = await DeviceAlert.findOne({
+        teacherId,
+        alertType: 'Out of Bounds (During Working Hours)',
+        timestamp: { $gte: oneHourAgo }
+      });
 
-    // Optionally check for suspicious verification event inline if it was passed via log
-    // For this design, rules are mainly checked asynchronously in a cron job,
-    // but if the app does a verification, we can check stationary duration now.
+      if (!recentAlert) {
+        await DeviceAlert.create({
+          teacherId,
+          alertType: 'Out of Bounds (During Working Hours)',
+          timestamp: geofenceViolationLog.timestamp || new Date(),
+          movementScore: 'N/A'
+        });
+      }
+    }
+
+    // Existing suspicion verification check
     const isVerificationEvent = logs.some(l => l.verificationCompleted);
     if (isVerificationEvent) {
        const stationaryMin = await DeviceMovementService.calculateStationaryDuration(teacherId, new Date());

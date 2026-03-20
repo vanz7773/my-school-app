@@ -37,6 +37,19 @@ const deviceActivityLogSchema = new mongoose.Schema({
   location: {
     latitude: { type: Number },
     longitude: { type: Number }
+  },
+  geofenceStatus: {
+    type: String,
+    enum: ['inside', 'radius', 'outside', null],
+    default: null
+  },
+  distanceFromSchool: {
+    type: Number,
+    default: 0
+  },
+  geofenceViolation: {
+    type: Boolean,
+    default: false
   }
 }, { timestamps: true });
 
