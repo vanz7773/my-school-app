@@ -10,7 +10,7 @@ const Notification = require('../models/Notification');
 const PushToken = require("../models/PushToken");
 const { Expo } = require("expo-server-sdk");
 const expo = new Expo();
-const { broadcastNotification } = require('./notificationController');
+const { attendanceQueue } = require('../queue/attendanceQueue');
 
 
 // 🔔 Reusable Push Sender (same as announcements)
@@ -349,24 +349,15 @@ try {
 }
 
 // --------------------------------------------------------------------
-// ✅ Mark feeding fee WITH TRANSACTION & NOTIFICATION SUPPORT
+// ⚙️ Process Background Feeding Job 
 // --------------------------------------------------------------------
-const markFeeding = async (req, res) => {
+const processFeedingJob = async (jobData) => {
+  const { student, termId, classId, week, fed, day, reqUser } = jobData;
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
-    const { student, termId, classId, week, fed, day } = req.body;
-
-    // 🧩 Validation
-    if (!student || !termId || !classId || !week || !day) {
-      await session.abortTransaction();
-      return res.status(400).json({
-        message: "Missing required fields: student, termId, classId, week, or day",
-      });
-    }
-
-    const schoolId = req.user.school;
+    const schoolId = reqUser.school;
     const weekNumber = normalizeWeekNumber(week);
 
     // 1️⃣ Config (cached)
@@ -531,7 +522,11 @@ const markFeeding = async (req, res) => {
     studentCache.delete(`student_${student}_${schoolId}_none`);
     feeConfigCache.delete(`feeConfig_${schoolId}`);
 
-    return res.json({
+    // 🔟 Clear relevant caches
+    studentCache.delete(`student_${student}_${schoolId}_none`);
+    feeConfigCache.delete(`feeConfig_${schoolId}`);
+
+    return {
       success: true,
       message: `${getFullStudentName(studentDoc)} marked as ${normalizedValue === "present"
         ? "fed (present)"
@@ -545,17 +540,46 @@ const markFeeding = async (req, res) => {
       totalAmount: breakdownEntry.amount,
       daysPaid: breakdownEntry.daysPaid,
       week: weekNumber,
-    });
+    };
   } catch (error) {
     await session.abortTransaction();
-    console.error("❌ Error in markFeeding:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Feeding fee marking failed",
-      error: error.message,
-    });
+    console.error("❌ Error in processFeedingJob:", error);
+    throw error;
   } finally {
     session.endSession();
+  }
+};
+
+// --------------------------------------------------------------------
+// ✅ Mark feeding fee - FAST API WRAPPER
+// --------------------------------------------------------------------
+const markFeeding = async (req, res) => {
+  const { student, termId, classId, week, fed, day } = req.body;
+
+  if (!student || !termId || !classId || !week || !day) {
+    return res.status(400).json({
+      message: "Missing required fields: student, termId, classId, week, or day",
+    });
+  }
+
+  try {
+    // Add lightweight job to queue using the entire payload
+    await attendanceQueue.add('markFeeding', {
+      student, termId, classId, week, fed, day,
+      reqUser: { _id: req.user._id, school: req.user.school } // Pass along required parts of req.user
+    });
+
+    // Return instant success so the UI renders immediately
+    res.json({
+      success: true,
+      message: 'Feeding fee marking queued for processing',
+      student,
+      day,
+      fed
+    });
+  } catch (err) {
+    console.error("❌ Failed to queue markFeeding job:", err);
+    res.status(500).json({ message: "Internal Server Error while queueing" });
   }
 };
 
@@ -1540,6 +1564,7 @@ const getDailyTotalSummary = async (req, res) => {
 
 module.exports = {
   markFeeding,
+  processFeedingJob, // Added processFeedingJob
   calculateFeedingFeeCollection,
   getFeedingFeeConfig,
   setFeedingFeeConfig,

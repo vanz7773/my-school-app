@@ -186,4 +186,7 @@ app.get('/', (req, res) => res.send('🎓 School Management API Running with Rea
 
 // Start server with Socket.IO support
 const PORT = process.env.PORT || 5001;
-server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+server.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  require('./workers/attendanceWorker'); // Initialize BullMQ background workers
+});
