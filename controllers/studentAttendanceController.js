@@ -593,21 +593,6 @@ const markAttendance = async (req, res) => {
     return res.status(400).json({ message: 'Missing classId, termId, or week' });
   }
 
-  // 1. Redis Idempotency Lock: Prevent duplicate requests from same teacher for same class+week within 5 seconds
-  const lockKey = `lock:attendance:${userId}:${classId}:${termId}:${weekNumber}`;
-  const isLocked = await redisConnection.set(lockKey, 'locked', 'NX', 'EX', 5);
-  
-  if (!isLocked) {
-    console.log('🔒 Duplicate attendance request blocked by Redis for', lockKey);
-    // Pretend it succeeded so the frontend spinner stops
-    return res.json({ 
-      success: true, 
-      message: 'Processing in background', 
-      week: weekNumber,
-      note: 'Duplicate ignored'
-    });
-  }
-
   // 2. Add job to BullMQ
   try {
     await attendanceQueue.add('markAttendance', {
