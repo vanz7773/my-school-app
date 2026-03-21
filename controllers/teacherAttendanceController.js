@@ -292,7 +292,7 @@ const clockAttendance = async (req, res) => {
     }
 
     const lateThreshold = new Date(dayStart);
-    lateThreshold.setHours(8, 0, 0, 0);
+    lateThreshold.setHours(7, 30, 0, 0);
     console.log('[CLOCK] Late threshold:', lateThreshold.toISOString());
 
     if (type === "in") {
