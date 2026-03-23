@@ -16,8 +16,14 @@ const redisConnection = process.env.REDIS_URL
       ...redisOptions
     });
 
-redisConnection.on('connect', () => {
+redisConnection.on('connect', async () => {
   console.log('✅ Connected to ioredis successfully (for BullMQ)');
+  try {
+    await redisConnection.config('SET', 'maxmemory-policy', 'noeviction');
+    console.log('✅ Redis config updated successfully: maxmemory-policy = noeviction');
+  } catch (err) {
+    console.log('⚠️ Note: Could not auto-set Redis maxmemory-policy. You may need to do this manually if Redis lacks admin permissions.', err.message);
+  }
 });
 
 redisConnection.on('error', (err) => {
