@@ -493,9 +493,9 @@ const processFeedingJob = async (jobData) => {
         try {
           if (isRecoveredDebt) {
             // Send Alert to Admin & Parent & Student
-            await createFeedingFeeNotification(req, {
+            await createFeedingFeeNotification(null, {
               title: "💰 Recovered Feeding Fee Debt",
-              sender: req.user._id,
+              sender: reqUser._id,
               school: schoolId,
               studentId: student,
               studentName: getFullStudentName(studentDoc),
@@ -504,9 +504,9 @@ const processFeedingJob = async (jobData) => {
           }
 
           // Send Standard Parent Update (Optional, keeping existing logic)
-          await createFeedingFeeNotification(req, {
+          await createFeedingFeeNotification(null, {
             title: "Feeding Fee Updated",
-            sender: req.user._id,
+            sender: reqUser._id,
             school: schoolId,
             studentId: student,
             studentName: getFullStudentName(studentDoc),
