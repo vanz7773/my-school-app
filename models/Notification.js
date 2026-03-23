@@ -19,7 +19,7 @@ const VALID_TYPES = [
   'transaction',
 ];
 
-const VALID_AUDIENCES = ['admin', 'teacher', 'student', 'parent', 'all', 'class'];
+const VALID_AUDIENCES = ['admin', 'teacher', 'student', 'parent', 'all', 'class', 'specific'];
 
 const notificationSchema = new mongoose.Schema(
   {
