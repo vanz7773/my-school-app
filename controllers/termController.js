@@ -47,23 +47,34 @@ exports.createTerm = async (req, res) => {
     // Week number always starts at 1
     const weekNumber = 1;
 
-    // Calculate weekStartDate (Monday of the first week)
+    // Calculate total weeks in the term aligning to Monday-Friday
     const start = new Date(startDate);
-    const day = start.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-
-    const weekStartDate = new Date(start);
-    const diffToMonday = (day === 0 ? -6 : 1 - day); // shift to Monday
-    weekStartDate.setDate(start.getDate() + diffToMonday);
-
-    // Calculate total weeks in the term
     const end = new Date(endDate);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+
     let weekCount = 0;
-    let current = new Date(weekStartDate);
+    let current = new Date(start);
 
     while (current <= end) {
       weekCount++;
-      current.setDate(current.getDate() + 7);
+      let dayOfWeek = current.getDay();
+      let daysToFriday = dayOfWeek === 0 ? 5 : dayOfWeek === 6 ? 6 : 5 - dayOfWeek;
+      
+      let weekEnd = new Date(current);
+      weekEnd.setDate(weekEnd.getDate() + daysToFriday);
+      weekEnd.setHours(23, 59, 59, 999);
+      
+      current = new Date(weekEnd);
+      current.setDate(current.getDate() + 3); // Friday + 3 = Monday
+      current.setHours(0, 0, 0, 0);
     }
+
+    // Keep the weekStartDate as Monday of the first week for DB
+    const day = start.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+    const weekStartDate = new Date(start);
+    const diffToMonday = (day === 0 ? -6 : 1 - day); // shift to Monday
+    weekStartDate.setDate(start.getDate() + diffToMonday);
 
     // -------------------------------------------------------
     // ⭐ CREATE TERM
@@ -297,6 +308,9 @@ exports.getTermWeeks = async (req, res) => {
 
     const startDate = new Date(foundTerm.startDate);
     const endDate = new Date(foundTerm.endDate);
+    startDate.setHours(0, 0, 0, 0);
+    endDate.setHours(23, 59, 59, 999);
+
     const weeks = [];
     let currentDate = new Date(startDate);
     let weekNumber = 1;
@@ -309,7 +323,12 @@ exports.getTermWeeks = async (req, res) => {
     while (currentDate <= endDate) {
       const weekStart = new Date(currentDate);
       let weekEnd = new Date(weekStart);
-      weekEnd.setDate(weekEnd.getDate() + 6);
+      
+      let dayOfWeek = weekStart.getDay();
+      let daysToFriday = dayOfWeek === 0 ? 5 : dayOfWeek === 6 ? 6 : 5 - dayOfWeek;
+      weekEnd.setDate(weekEnd.getDate() + daysToFriday);
+      weekEnd.setHours(23, 59, 59, 999);
+
       if (weekEnd > endDate) weekEnd = new Date(endDate);
 
       let instructionalDays = 0;
@@ -331,7 +350,11 @@ exports.getTermWeeks = async (req, res) => {
       const normalizedWeekStart = new Date(weekStart);
       normalizedWeekStart.setHours(0, 0, 0, 0);
       const normalizedWeekEnd = new Date(weekEnd);
-      normalizedWeekEnd.setHours(23, 59, 59, 999);
+      
+      // Expand conceptually to Sunday to include the weekend within isCurrent context
+      let weekEndInclusive = new Date(weekEnd);
+      weekEndInclusive.setDate(weekEndInclusive.getDate() + 2); 
+      weekEndInclusive.setHours(23, 59, 59, 999);
 
       weeks.push({
         weekNumber,
@@ -340,8 +363,8 @@ exports.getTermWeeks = async (req, res) => {
         endDate: weekEnd,
         instructionalDays,
         calendarDays: weekDays.length,
-        isCurrent: today >= normalizedWeekStart && today <= normalizedWeekEnd,
-        isPast: today > normalizedWeekEnd,
+        isCurrent: today >= normalizedWeekStart && today <= weekEndInclusive,
+        isPast: today > weekEndInclusive,
         isFuture: today < normalizedWeekStart,
         weekDays,
         isPartialWeek: instructionalDays < 5
@@ -349,7 +372,12 @@ exports.getTermWeeks = async (req, res) => {
 
       totalInstructionalDays += instructionalDays;
       totalCalendarDays += weekDays.length;
-      currentDate.setDate(currentDate.getDate() + 7);
+      
+      const actualFriday = new Date(weekStart);
+      actualFriday.setDate(actualFriday.getDate() + daysToFriday);
+      currentDate = new Date(actualFriday);
+      currentDate.setDate(currentDate.getDate() + 3); // Move to Monday
+      currentDate.setHours(0, 0, 0, 0);
       weekNumber++;
     }
 
@@ -419,12 +447,24 @@ exports.updateTerm = async (req, res) => {
     if (startDate || endDate) {
       const start = new Date(updatedStartDate);
       const end = new Date(updatedEndDate);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+
       let weekCount = 0;
       let current = new Date(start);
 
       while (current <= end) {
         weekCount++;
-        current.setDate(current.getDate() + 7);
+        let dayOfWeek = current.getDay();
+        let daysToFriday = dayOfWeek === 0 ? 5 : dayOfWeek === 6 ? 6 : 5 - dayOfWeek;
+        
+        let weekEnd = new Date(current);
+        weekEnd.setDate(weekEnd.getDate() + daysToFriday);
+        weekEnd.setHours(23, 59, 59, 999);
+        
+        current = new Date(weekEnd);
+        current.setDate(current.getDate() + 3); // Friday + 3 = Monday
+        current.setHours(0, 0, 0, 0);
       }
       term.weeks = weekCount; // Update weeks count
     }
@@ -638,13 +678,44 @@ exports.getCurrentWeek = async (req, res) => {
       });
     }
 
-    // Calculate current week
+    // Calculate current week mapping through Monday-Friday weeks
     const startDate = new Date(currentTerm.startDate);
-    const diffInDays = Math.floor((today - startDate) / (1000 * 60 * 60 * 24));
-    const currentWeek = Math.min(
-      Math.floor(diffInDays / 7) + 1,
-      currentTerm.weeks
-    );
+    const endDate = new Date(currentTerm.endDate);
+    startDate.setHours(0, 0, 0, 0);
+    endDate.setHours(23, 59, 59, 999);
+
+    let currentDate = new Date(startDate);
+    let calculatedWeek = 0;
+
+    while (currentDate <= endDate) {
+      calculatedWeek++;
+      
+      let dayOfWeek = currentDate.getDay();
+      let daysToFriday = dayOfWeek === 0 ? 5 : dayOfWeek === 6 ? 6 : 5 - dayOfWeek;
+      let weekEnd = new Date(currentDate);
+      weekEnd.setDate(weekEnd.getDate() + daysToFriday);
+      
+      // Expand bounding box for weekend so `today` handles Saturday/Sunday safely
+      let weekEndInclusive = new Date(weekEnd);
+      weekEndInclusive.setDate(weekEndInclusive.getDate() + 2); // Includes Saturday & Sunday
+      weekEndInclusive.setHours(23, 59, 59, 999);
+
+      if (today >= currentDate && today <= weekEndInclusive) {
+        break; // Today falls in this week
+      }
+
+      currentDate = new Date(weekEnd);
+      currentDate.setDate(currentDate.getDate() + 3); // Move to next Monday
+      currentDate.setHours(0, 0, 0, 0);
+    }
+
+    if (today > endDate) {
+      calculatedWeek = currentTerm.weeks;
+    } else if (today < startDate) {
+      calculatedWeek = 0;
+    }
+
+    const currentWeek = Math.min(calculatedWeek, currentTerm.weeks);
 
     res.json({
       current: currentWeek,
