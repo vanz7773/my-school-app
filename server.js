@@ -130,6 +130,8 @@ const examQuestion = require("./routes/examQuestion.routes");
 const pdfTest = require("./routes/pdfTest.routes");
 const searchRoutes = require('./routes/searchRoutes');
 const schoolRecordsRoutes = require('./routes/schoolRecordsRoutes');
+const transportRoutes = require('./routes/transportRoutes');
+
 // Define API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/students', studentRoutes);
@@ -175,6 +177,7 @@ app.use("/api/super-admin", superAdminRoutes);
 const webPushRoutes = require('./routes/webPushRoutes');
 app.use('/api/web-push', webPushRoutes);
 app.use('/api/school-records', schoolRecordsRoutes);
+app.use('/api/transport', transportRoutes);
 
 // Device Activity Monitoring System (Teacher)
 const deviceActivityRoutes = require('./routes/deviceActivityRoutes');
