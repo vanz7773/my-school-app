@@ -143,7 +143,7 @@ exports.getOverview = async (req, res) => {
         status: (offlineMin >= 60 || stationaryMin >= 90) ? 'Suspicious' : 'Active',
         movementScore: score,
         stationaryTime: stationaryMin, // explicitly send mins
-        internetStatus: latestLog?.internetStatus || 'online',
+        internetStatus: offlineMin >= 15 ? 'offline' : (latestLog?.internetStatus || 'online'),
         hasAlerts: !!hasAlerts,
         lastSeen: latestLog?.timestamp
       });

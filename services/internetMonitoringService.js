@@ -5,30 +5,20 @@ class InternetMonitoringService {
    * Calculates continuous offline duration (in minutes) for a teacher up to the given end time.
    */
   async calculateOfflineDuration(teacherId, endTime) {
-    // Fetch logs for today up to endTime, sorted descending by time
-    const startOfDay = new Date(endTime);
-    startOfDay.setHours(0, 0, 0, 0);
-
-    const logs = await DeviceActivityLog.find({
+    // If the device's internet is off, it CANNOT send logs to the server.
+    // Thus, measuring "offline" means measuring the gap since the last received log heartbeat.
+    const latestLog = await DeviceActivityLog.findOne({
       teacherId,
-      timestamp: { $gte: startOfDay, $lte: endTime }
+      timestamp: { $lte: endTime }
     }).sort({ timestamp: -1 });
 
-    if (!logs.length) return 0;
+    if (!latestLog) return 0; // If they have never sent a log, they haven't clocked in
 
-    let offlineMinutes = 0;
+    // Calculate minutes since the last ping
+    const diffMs = endTime.getTime() - new Date(latestLog.timestamp).getTime();
+    const diffMins = Math.floor(diffMs / 60000);
 
-    for (const log of logs) {
-      if (log.internetStatus === 'online') {
-        break; // Restored online status breaks the offline chain
-      }
-      
-      // Each offline log typically represents a 5-minute offline sampling window (since it synced later)
-      // or we can calculate the explicit delta between the first offline log and current.
-      offlineMinutes += 5;
-    }
-
-    return offlineMinutes;
+    return diffMins;
   }
 }
 
