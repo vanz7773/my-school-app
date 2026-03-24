@@ -1,7 +1,7 @@
-const express = require('require');
+const express = require('express');
 const router = express.Router();
 const transportController = require('../controllers/transportController');
-const { protect } = require('../middleware/authMiddleware'); // assuming standard auth middleware
+const { protect } = require('../middlewares/authMiddleware'); // assuming standard auth middleware
 
 router.use(protect);
 
