@@ -1562,6 +1562,114 @@ const getDailyTotalSummary = async (req, res) => {
   }
 };
 
+// --------------------------------------------------------------------
+// 📋 Get Daily Feeding Fee Audit Report
+// --------------------------------------------------------------------
+const getFeedingFeeAuditReport = async (req, res) => {
+  try {
+    const { termId, week, day } = req.query;
+    const schoolId = req.user.school;
+
+    if (!termId || !week || !day) {
+      return res.status(400).json({ success: false, message: "Missing termId, week, or day" });
+    }
+
+    const weekNumber = normalizeWeekNumber(week);
+
+    // Fetch all records for the school/term/week
+    const records = await FeedingFeeRecord.find({
+      school: schoolId,
+      termId,
+      week: weekNumber
+    })
+      .populate('breakdown.student', 'guardianName guardianPhone')
+      .populate('classId', 'name displayName')
+      .lean();
+
+    const auditReport = [];
+    let grandTotal = 0;
+    let totalPaid = 0;
+    let totalUnpaid = 0;
+
+    for (const record of records) {
+      if (!record.breakdown || record.breakdown.length === 0) continue;
+
+      const classId = record.classId?._id || record.classId;
+      const className = record.classId?.displayName || record.classId?.name || 'Unknown Class';
+      
+      let classTotalAmount = 0;
+      let classPaidCount = 0;
+      let classUnpaidCount = 0;
+      const studentsDetails = [];
+
+      for (const entry of record.breakdown) {
+        const status = entry.days?.[day];
+        // Ensure accurate status matching logic where present = paid
+        const isPaid = status === 'present';
+        const amount = isPaid ? (Number(entry.perDayFee?.[day]) || 0) : 0;
+        
+        if (isPaid) {
+          classPaidCount++;
+          classTotalAmount += amount;
+          grandTotal += amount;
+          totalPaid++;
+        } else {
+          classUnpaidCount++;
+          totalUnpaid++;
+        }
+
+        const studentObj = entry.student || {};
+
+        studentsDetails.push({
+          studentId: studentObj._id || entry.student,
+          studentName: entry.studentName,
+          status: status || 'notmarked',
+          amount,
+          guardianName: studentObj.guardianName || '',
+          guardianPhone: studentObj.guardianPhone || ''
+        });
+      }
+
+      // Sort students alphabetically
+      studentsDetails.sort((a, b) => {
+        if (!a.studentName) return 1;
+        if (!b.studentName) return -1;
+        return a.studentName.localeCompare(b.studentName);
+      });
+
+      auditReport.push({
+        classId,
+        className,
+        totalAmount: classTotalAmount,
+        paidCount: classPaidCount,
+        unpaidCount: classUnpaidCount,
+        students: studentsDetails
+      });
+    }
+
+    // Sort classes alphabetically
+    auditReport.sort((a, b) => {
+      if (!a.className) return 1;
+      if (!b.className) return -1;
+      return a.className.localeCompare(b.className);
+    });
+
+    return res.json({
+      success: true,
+      day,
+      week: weekNumber,
+      grandTotal,
+      totalPaid,
+      totalUnpaid,
+      report: auditReport
+    });
+
+  } catch (error) {
+    console.error("Error fetching audit report:", error);
+    return res.status(500).json({ success: false, message: "Failed to fetch audit report", error: error.message });
+  }
+};
+
 module.exports = {
   markFeeding,
   processFeedingJob, // Added processFeedingJob
@@ -1573,5 +1681,6 @@ module.exports = {
   getFeedingFeeSummary,
   getAbsenteesForWeek,
   getDebtorsForWeek,
-  getDailyTotalSummary
+  getDailyTotalSummary,
+  getFeedingFeeAuditReport
 };

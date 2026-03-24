@@ -11,7 +11,8 @@ const {
   getClassesWithFeeBands,
   getAbsenteesForWeek,
   getDebtorsForWeek,
-  getDailyTotalSummary
+  getDailyTotalSummary,
+  getFeedingFeeAuditReport
 } = require('../controllers/feedingFeeController');
 const { protect, requirePrivateSchool } = require('../middlewares/authMiddleware');
 
@@ -33,6 +34,7 @@ router.get('/student/:studentId', protect, requirePrivateSchool, getFeedingFeeFo
 // ----------------- Reporting Routes -----------------
 router.get('/summary', protect, requirePrivateSchool, getFeedingFeeSummary);
 router.get('/daily-summary', protect, requirePrivateSchool, getDailyTotalSummary);
+router.get('/audit-report', protect, requirePrivateSchool, getFeedingFeeAuditReport);
 
 // ----------------- Manual Marking Routes -----------------
 router.post("/mark", protect, requirePrivateSchool, markFeeding);
