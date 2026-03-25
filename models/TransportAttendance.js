@@ -6,36 +6,44 @@ const transportAttendanceSchema = new mongoose.Schema({
     ref: 'Student',
     required: true,
   },
-  route: {
+  bus: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'TransportRoute',
+    ref: 'Bus',
+  },
+  routeSnapshot: {
+    type: String,
+    required: true,
+  },
+  stopSnapshot: {
+    type: String,
     required: true,
   },
   assignment: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'TransportAssignment',
-    required: true,
   },
   date: {
     type: String, // Format: YYYY-MM-DD
     required: true,
   },
-  boarded: {
+  picked: {
     type: Boolean,
     default: false,
   },
-  boardedAt: {
+  pickedAt: {
     type: Date,
   },
-  exited: {
+  dropped: {
     type: Boolean,
     default: false,
   },
-  exitedAt: {
+  droppedAt: {
     type: Date,
   },
-  exitStop: {
-    type: String,
+  markedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
   },
   school: {
     type: mongoose.Schema.Types.ObjectId,

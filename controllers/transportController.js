@@ -3,7 +3,54 @@ const TransportEnrollment = require('../models/TransportEnrollment');
 const TransportAssignment = require('../models/TransportAssignment');
 const TransportAttendance = require('../models/TransportAttendance');
 const TransportFee = require('../models/TransportFee');
+const Bus = require('../models/Bus');
 const Term = require('../models/term');
+
+// ==========================================
+// BUS MANAGEMENT
+// ==========================================
+exports.createBus = async (req, res) => {
+  try {
+    const { name, capacity, driverName, driverPhone, teacher } = req.body;
+    const school = req.user.school;
+    const bus = new Bus({ name, capacity, driverName, driverPhone, teacher, school });
+    await bus.save();
+    res.status(201).json({ success: true, bus });
+  } catch (err) {
+    res.status(500).json({ message: 'Error creating bus', error: err.message });
+  }
+};
+
+exports.getBuses = async (req, res) => {
+  try {
+    const buses = await Bus.find({ school: req.user.school }).populate('teacher', 'name');
+    res.status(200).json({ success: true, buses });
+  } catch (err) {
+    res.status(500).json({ message: 'Error fetching buses', error: err.message });
+  }
+};
+
+exports.updateBus = async (req, res) => {
+  try {
+    const bus = await Bus.findOneAndUpdate(
+      { _id: req.params.id, school: req.user.school },
+      req.body,
+      { new: true }
+    );
+    res.status(200).json({ success: true, bus });
+  } catch (err) {
+    res.status(500).json({ message: 'Error updating bus', error: err.message });
+  }
+};
+
+exports.deleteBus = async (req, res) => {
+  try {
+    await Bus.findOneAndDelete({ _id: req.params.id, school: req.user.school });
+    res.status(200).json({ success: true, message: 'Bus deleted' });
+  } catch (err) {
+    res.status(500).json({ message: 'Error deleting bus', error: err.message });
+  }
+};
 
 // ==========================================
 // ROUTES MANAGEMENT
@@ -43,39 +90,28 @@ exports.deleteRoute = async (req, res) => {
 // ==========================================
 exports.enrollStudent = async (req, res) => {
   try {
-    const { studentId, termId, academicYear, routeId, dropOffStop } = req.body;
+    const { studentId, termId, academicYear, busId, routeId, stop, status } = req.body;
     const school = req.user.school;
 
-    // Check if enrolled
-    const existing = await TransportEnrollment.findOne({ student: studentId, term: termId });
-    if (existing) {
-      existing.route = routeId;
-      existing.dropOffStop = dropOffStop;
-      await existing.save();
-      return res.status(200).json({ success: true, enrollment: existing });
-    }
-
-    const enrollment = new TransportEnrollment({
-      student: studentId,
-      term: termId,
-      academicYear,
-      route: routeId,
-      dropOffStop,
-      school
-    });
-    await enrollment.save();
-
-    // Optionally create a Fee record here
-    const route = await TransportRoute.findById(routeId);
-    if (route && route.defaultFee > 0) {
-      const fee = new TransportFee({
+    let enrollment = await TransportEnrollment.findOne({ student: studentId, term: termId });
+    if (enrollment) {
+      if (busId !== undefined) enrollment.bus = busId;
+      if (routeId !== undefined) enrollment.route = routeId;
+      if (stop !== undefined) enrollment.stop = stop;
+      if (status !== undefined) enrollment.status = status;
+      await enrollment.save();
+    } else {
+      enrollment = new TransportEnrollment({
         student: studentId,
         term: termId,
-        totalAmount: route.defaultFee,
-        balance: route.defaultFee,
+        academicYear,
+        bus: busId,
+        route: routeId,
+        stop,
+        status: status || 'active',
         school
       });
-      await fee.save().catch(e => console.log('Fee exists or err', e.message)); // Ignore duplicate fee errors
+      await enrollment.save();
     }
 
     res.status(201).json({ success: true, enrollment });
@@ -86,14 +122,17 @@ exports.enrollStudent = async (req, res) => {
 
 exports.getEnrollments = async (req, res) => {
   try {
-    const { termId, routeId } = req.query;
+    const { termId, routeId, busId } = req.query;
     const filter = { school: req.user.school };
     if (termId) filter.term = termId;
     if (routeId) filter.route = routeId;
+    if (busId) filter.bus = busId;
 
     const enrollments = await TransportEnrollment.find(filter)
       .populate('student', 'name admissionNumber currentClass')
-      .populate('route', 'name');
+      .populate('route', 'name')
+      .populate('bus', 'name')
+      .populate('term', 'term academicYear');
 
     res.status(200).json({ success: true, enrollments });
   } catch (err) {
@@ -109,7 +148,6 @@ exports.assignTeacher = async (req, res) => {
     const { teacherId, routeId, date, termId } = req.body;
     const school = req.user.school;
 
-    // Update if exists for that date and route, else create
     const assignment = await TransportAssignment.findOneAndUpdate(
       { route: routeId, date },
       { teacher: teacherId, term: termId, school },
@@ -131,7 +169,8 @@ exports.getAssignments = async (req, res) => {
 
     const assignments = await TransportAssignment.find(filter)
       .populate('teacher', 'name')
-      .populate('route', 'name');
+      .populate('route', 'name')
+      .populate('term', 'term academicYear');
 
     res.status(200).json({ success: true, assignments });
   } catch (err) {
@@ -144,19 +183,13 @@ exports.getAssignments = async (req, res) => {
 // ==========================================
 exports.getTodayAssignment = async (req, res) => {
   try {
-    // Expected format: YYYY-MM-DD
     const today = new Date().toISOString().split('T')[0];
     const teacherId = req.user.id;
 
-    // First find the assignment
     const assignment = await TransportAssignment.findOne({
       teacher: teacherId,
       date: today
-    }).populate('route');
-
-    if (!assignment) {
-      return res.status(200).json({ success: true, assignment: null });
-    }
+    }).populate('route').populate('term', 'term academicYear');
 
     res.status(200).json({ success: true, assignment });
   } catch (err) {
@@ -167,13 +200,17 @@ exports.getTodayAssignment = async (req, res) => {
 exports.getRouteStudents = async (req, res) => {
   try {
     const { routeId, termId } = req.query;
-    
-    // Find enrollments for this route and term
-    const enrollments = await TransportEnrollment.find({
-      route: routeId,
+    const filter = {
       term: termId,
-      school: req.user.school
-    }).populate('student', 'name admissionNumber photo');
+      school: req.user.school,
+      status: 'active'
+    };
+    if (routeId) filter.route = routeId;
+    
+    const enrollments = await TransportEnrollment.find(filter)
+      .populate('student', 'name admissionNumber photo')
+      .populate('route', 'name')
+      .populate('term', 'term academicYear');
 
     res.status(200).json({ success: true, students: enrollments });
   } catch (err) {
@@ -181,28 +218,32 @@ exports.getRouteStudents = async (req, res) => {
   }
 };
 
-// Sync handler for offline mobile operations
 exports.syncAttendance = async (req, res) => {
   try {
-    const { date, routeId, assignmentId, updates } = req.body;
+    const { date, busId, assignmentId, updates } = req.body;
     const school = req.user.school;
 
-    // updates format: [{ studentId, boarded, boardedAt, exited, exitedAt, exitStop }, ...]
     const results = [];
 
     for (const update of updates) {
-      const { studentId, boarded, boardedAt, exited, exitedAt, exitStop } = update;
+      const { studentId, routeSnapshot, stopSnapshot, picked, pickedAt, dropped, droppedAt, markedBy } = update;
+
+      if (dropped && !picked) {
+        continue;
+      }
 
       const record = await TransportAttendance.findOneAndUpdate(
         { student: studentId, date },
         {
-          route: routeId,
+          bus: busId,
+          routeSnapshot,
+          stopSnapshot,
           assignment: assignmentId,
-          boarded,
-          boardedAt: boardedAt || null,
-          exited,
-          exitedAt: exitedAt || null,
-          exitStop: exitStop || null,
+          picked,
+          pickedAt: picked ? (pickedAt || new Date()) : null,
+          dropped,
+          droppedAt: dropped ? (droppedAt || new Date()) : null,
+          markedBy: markedBy || req.user.id,
           school
         },
         { upsert: true, new: true }
@@ -224,14 +265,14 @@ exports.getMissingDropOffs = async (req, res) => {
     const { date } = req.query;
     const filter = { 
       school: req.user.school, 
-      boarded: true, 
-      exited: false 
+      picked: true, 
+      dropped: false 
     };
     if (date) filter.date = date;
 
     const missing = await TransportAttendance.find(filter)
       .populate('student', 'name')
-      .populate('route', 'name')
+      .populate('bus', 'name')
       .populate({
         path: 'assignment',
         populate: { path: 'teacher', select: 'name' }
@@ -245,13 +286,13 @@ exports.getMissingDropOffs = async (req, res) => {
 
 exports.getDailyAttendance = async (req, res) => {
   try {
-    const { date, routeId } = req.query;
+    const { date, routeSnapshot } = req.query;
     const filter = { school: req.user.school, date };
-    if (routeId) filter.route = routeId;
+    if (routeSnapshot) filter.routeSnapshot = routeSnapshot;
 
     const records = await TransportAttendance.find(filter)
       .populate('student', 'name admissionNumber')
-      .populate('route', 'name stops');
+      .populate('markedBy', 'name');
 
     res.status(200).json({ success: true, records });
   } catch (err) {
@@ -260,13 +301,81 @@ exports.getDailyAttendance = async (req, res) => {
 };
 
 // ==========================================
-// FEE MANAGEMENT
+// USAGE-BASED FEE COMPUTATION
 // ==========================================
+exports.getMonthlyReport = async (req, res) => {
+  try {
+    const { month, year } = req.query;
+    const school = req.user.school;
+    
+    if (!month || !year) {
+      return res.status(400).json({ message: 'Month and year are required' });
+    }
+
+    const monthStr = month.toString().padStart(2, '0');
+    const datePrefix = `${year}-${monthStr}`;
+
+    const attendances = await TransportAttendance.find({
+      school,
+      date: { $regex: `^${datePrefix}` },
+      picked: true
+    }).lean();
+
+    const routes = await TransportRoute.find({ school }).lean();
+    const routeFeeMap = {};
+    routes.forEach(r => {
+      routeFeeMap[r.name] = r.defaultFee || 0;
+    });
+
+    const studentUsageMap = {};
+
+    attendances.forEach(att => {
+      const sId = att.student.toString();
+      if (!studentUsageMap[sId]) {
+        studentUsageMap[sId] = {
+          studentId: att.student,
+          daysUsed: 0,
+          totalFee: 0,
+          dailyBreakdown: []
+        };
+      }
+      studentUsageMap[sId].daysUsed += 1;
+      
+      const feeForDay = routeFeeMap[att.routeSnapshot] || 0;
+      studentUsageMap[sId].totalFee += feeForDay;
+      studentUsageMap[sId].dailyBreakdown.push({
+        date: att.date,
+        route: att.routeSnapshot,
+        fee: feeForDay
+      });
+    });
+
+    const studentIds = Object.keys(studentUsageMap);
+    const students = await require('../models/Student').find({ _id: { $in: studentIds } }, 'name admissionNumber currentClass').lean();
+    
+    const finalReport = students.map(s => {
+      const usage = studentUsageMap[s._id.toString()];
+      return {
+        student: s,
+        daysUsed: usage.daysUsed,
+        totalFee: usage.totalFee,
+        dailyBreakdown: usage.dailyBreakdown,
+        avgFeePerDay: usage.daysUsed > 0 ? (usage.totalFee / usage.daysUsed) : 0
+      };
+    });
+
+    res.status(200).json({ success: true, report: finalReport });
+  } catch (err) {
+    res.status(500).json({ message: 'Error generating report', error: err.message });
+  }
+};
+
 exports.getFees = async (req, res) => {
   try {
     const { termId } = req.query;
     const fees = await TransportFee.find({ term: termId, school: req.user.school })
-      .populate('student', 'name admissionNumber currentClass');
+      .populate('student', 'name admissionNumber currentClass')
+      .populate('term', 'term academicYear');
 
     res.status(200).json({ success: true, fees });
   } catch (err) {

@@ -15,14 +15,23 @@ const transportEnrollmentSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  bus: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Bus',
+  },
   route: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'TransportRoute',
     required: true,
   },
-  dropOffStop: {
+  stop: {
     type: String,
     required: true,
+  },
+  status: {
+    type: String,
+    enum: ['active', 'inactive'],
+    default: 'active',
   },
   school: {
     type: mongoose.Schema.Types.ObjectId,
