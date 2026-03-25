@@ -168,7 +168,10 @@ exports.getAssignments = async (req, res) => {
     if (termId) filter.term = termId;
 
     const assignments = await TransportAssignment.find(filter)
-      .populate('teacher', 'name')
+      .populate({
+        path: 'teacher',
+        populate: { path: 'user', select: 'name profilePicture' }
+      })
       .populate('route', 'name')
       .populate('term', 'term academicYear');
 
