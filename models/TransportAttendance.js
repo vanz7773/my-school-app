@@ -30,6 +30,10 @@ const transportAttendanceSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  isAbsent: {
+    type: Boolean,
+    default: false,
+  },
   pickedAt: {
     type: Date,
   },

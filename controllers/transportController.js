@@ -254,7 +254,7 @@ exports.syncAttendance = async (req, res) => {
     const results = [];
 
     for (const update of updates) {
-      const { studentId, routeSnapshot, stopSnapshot, picked, pickedAt, dropped, droppedAt, markedBy } = update;
+      const { studentId, routeSnapshot, stopSnapshot, picked, isAbsent, pickedAt, dropped, droppedAt, markedBy } = update;
 
       if (dropped && !picked) {
         continue;
@@ -268,6 +268,7 @@ exports.syncAttendance = async (req, res) => {
           stopSnapshot,
           assignment: assignmentId,
           picked,
+          isAbsent: isAbsent || false,
           pickedAt: picked ? (pickedAt || new Date()) : null,
           dropped,
           droppedAt: dropped ? (droppedAt || new Date()) : null,
