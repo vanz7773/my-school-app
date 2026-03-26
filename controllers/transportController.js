@@ -188,10 +188,19 @@ exports.getAssignments = async (req, res) => {
 exports.getTodayAssignment = async (req, res) => {
   try {
     const today = new Date().toISOString().split('T')[0];
-    const teacherId = req.user.id;
+    const userId = req.user.id;
+
+    // TransportAssignment.teacher references 'User' (stores User._id)
+    // But older records may have stored the Teacher document _id by mistake.
+    // Look up the Teacher profile to get both IDs so we match either way.
+    const Teacher = require('../models/Teacher');
+    const teacherProfile = await Teacher.findOne({ user: userId });
+
+    const teacherIds = [userId];
+    if (teacherProfile) teacherIds.push(teacherProfile._id);
 
     const assignment = await TransportAssignment.findOne({
-      teacher: teacherId,
+      teacher: { $in: teacherIds },
       date: today
     }).populate('route').populate('term', 'term academicYear');
 
