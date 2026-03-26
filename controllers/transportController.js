@@ -187,12 +187,12 @@ exports.getAssignments = async (req, res) => {
 // ==========================================
 exports.getTodayAssignment = async (req, res) => {
   try {
-    const today = new Date().toISOString().split('T')[0];
+    // Priority: Query param date > Localized date > UTC fallback
+    const today = req.query.date || new Date().toISOString().split('T')[0];
     const userId = req.user.id;
 
-    // TransportAssignment.teacher references 'User' (stores User._id)
-    // But older records may have stored the Teacher document _id by mistake.
-    // Look up the Teacher profile to get both IDs so we match either way.
+    console.log(`[DEBUG] getTodayAssignment lookup - User: ${userId}, Date: ${today}`);
+
     const Teacher = require('../models/Teacher');
     const teacherProfile = await Teacher.findOne({ user: userId });
 
@@ -204,15 +204,29 @@ exports.getTodayAssignment = async (req, res) => {
       date: today
     }).populate('route').populate('term', 'term academicYear');
 
+    if (assignment) {
+      console.log(`[DEBUG] Found assignment for route: ${assignment.route?.name}, term: ${assignment.term?._id || assignment.term}`);
+    } else {
+      console.log(`[DEBUG] No assignment found for teacher IDs: ${teacherIds}`);
+    }
+
     res.status(200).json({ success: true, assignment });
   } catch (err) {
+    console.error('[CRITICAL] getTodayAssignment error:', err);
     res.status(500).json({ message: 'Failed to fetch today assignment', error: err.message });
   }
 };
 
 exports.getRouteStudents = async (req, res) => {
   try {
-    const { routeId, termId } = req.query;
+    let { routeId, termId } = req.query;
+    console.log(`[DEBUG] getRouteStudents Query - routeId: ${routeId}, termId: ${termId}, user school: ${req.user?.school}`);
+
+    // Robust ID Casting (Prevent string vs ObjectId mismatch in filter)
+    const mongoose = require('mongoose');
+    if (routeId && mongoose.Types.ObjectId.isValid(routeId)) routeId = new mongoose.Types.ObjectId(routeId);
+    if (termId && mongoose.Types.ObjectId.isValid(termId)) termId = new mongoose.Types.ObjectId(termId);
+
     const filter = {
       term: termId,
       school: req.user.school,
@@ -220,21 +234,29 @@ exports.getRouteStudents = async (req, res) => {
     };
     if (routeId) filter.route = routeId;
     
+    console.log('[DEBUG] Final filter:', JSON.stringify(filter));
+
     const enrollments = await TransportEnrollment.find(filter)
       .populate({
         path: 'student',
-        select: 'admissionNumber gender',
+        select: 'admissionNumber gender user', // MUST include 'user' to populate it
         populate: { path: 'user', select: 'name profilePicture photo' }
       })
       .populate('route', 'name stops')
       .populate('term', 'term academicYear');
 
-    // Normalize each enrollment so the mobile app gets a flat student.name
+    console.log(`[DEBUG] Found ${enrollments.length} matching enrollments`);
+
+    // Normalize each enrollment for the mobile app
     const students = enrollments.map(e => {
       const obj = e.toObject();
       if (obj.student && obj.student.user) {
+        // Flatten student name and photo for easy access on mobile FlatList
         obj.student.name = obj.student.user.name;
         obj.student.photo = obj.student.user.photo || obj.student.user.profilePicture;
+      } else if (obj.student) {
+         // Fallback if student document exists but user profile is missing
+         obj.student.name = obj.student.name || 'Unknown Student';
       }
       return obj;
     });
