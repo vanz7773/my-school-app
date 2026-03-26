@@ -199,13 +199,17 @@ exports.getTodayAssignment = async (req, res) => {
     const teacherIds = [userId];
     if (teacherProfile) teacherIds.push(teacherProfile._id);
 
+    // DYNAMIC ACCESS: Since the teacher is assigned to the bus permanently 
+    // (Monday - Friday), we fetch their MOST RECENT assignment and use its 
+    // term credentials to grant them access to today's manifest, ignoring strict date expiration.
     const assignment = await TransportAssignment.findOne({
-      teacher: { $in: teacherIds },
-      date: today
-    }).populate('route').populate('term', 'term academicYear');
+      teacher: { $in: teacherIds }
+    }).sort({ createdAt: -1 })
+      .populate('route')
+      .populate('term', 'term academicYear');
 
     if (assignment) {
-      console.log(`[DEBUG] Found assignment for route: ${assignment.route?.name}, term: ${assignment.term?._id || assignment.term}`);
+      console.log(`[DEBUG] Found recent persistent assignment for route: ${assignment.route?.name}, term: ${assignment.term?._id || assignment.term}`);
     } else {
       console.log(`[DEBUG] No assignment found for teacher IDs: ${teacherIds}`);
     }
@@ -339,8 +343,15 @@ exports.getMissingDropOffs = async (req, res) => {
 
 exports.getDailyAttendance = async (req, res) => {
   try {
-    const { date, routeSnapshot } = req.query;
-    const filter = { school: req.user.school, date };
+    const { date, startDate, endDate, routeSnapshot } = req.query;
+    const filter = { school: req.user.school };
+    
+    if (startDate && endDate) {
+      filter.date = { $gte: startDate, $lte: endDate };
+    } else if (date) {
+      filter.date = date;
+    }
+    
     if (routeSnapshot) filter.routeSnapshot = routeSnapshot;
 
     const records = await TransportAttendance.find(filter)
