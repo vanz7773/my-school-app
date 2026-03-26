@@ -42,11 +42,15 @@ async function diagnose() {
         route: ass.route?._id,
         term: ass.term,
         status: 'active'
-      }).populate('student', 'name school');
+      }).populate({
+        path: 'student',
+        populate: { path: 'user', select: 'name' }
+      });
       console.log(`  - Enrollments found for this route/term: ${enrollments.length}`);
       
       for (const enr of enrollments) {
-         console.log(`    * Student: ${enr.student?.name || 'Unknown'}, Enrollment School: ${enr.school}, Student School: ${enr.student?.school}`);
+         const studentName = enr.student?.user?.name || enr.student?.name || 'STILL UNKNOWN';
+         console.log(`    * Student: ${studentName}, User ID: ${enr.student?.user?._id}, Enrollment School: ${enr.school}`);
       }
     }
 

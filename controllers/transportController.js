@@ -239,7 +239,6 @@ exports.getRouteStudents = async (req, res) => {
     const enrollments = await TransportEnrollment.find(filter)
       .populate({
         path: 'student',
-        select: 'admissionNumber gender user', // MUST include 'user' to populate it
         populate: { path: 'user', select: 'name profilePicture photo' }
       })
       .populate('route', 'name stops')
@@ -250,20 +249,20 @@ exports.getRouteStudents = async (req, res) => {
     // Normalize each enrollment for the mobile app
     const students = enrollments.map(e => {
       const obj = e.toObject();
-      if (obj.student && obj.student.user) {
-        // Flatten student name and photo for easy access on mobile FlatList
-        obj.student.name = obj.student.user.name;
-        obj.student.photo = obj.student.user.photo || obj.student.user.profilePicture;
-      } else if (obj.student) {
-         // Fallback if student document exists but user profile is missing
-         obj.student.name = obj.student.name || 'Unknown Student';
+      if (obj.student) {
+        // Explicitly extract name from nested user if available
+        const studentName = obj.student.user?.name || obj.student.name || 'Unknown Student';
+        obj.student.name = studentName;
+        obj.student.photo = obj.student.user?.photo || obj.student.user?.profilePicture || obj.student.photo;
+        
+        console.log(`[DEBUG] Mapping Student - ID: ${obj.student._id}, Name: ${studentName}`);
       }
       return obj;
     });
 
     res.status(200).json({ success: true, students });
   } catch (err) {
-    console.error('getRouteStudents error:', err);
+    console.error('[CRITICAL] getRouteStudents error:', err);
     res.status(500).json({ message: 'Failed to fetch route students', error: err.message });
   }
 };
