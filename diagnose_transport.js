@@ -6,6 +6,8 @@ const path = require('path');
 dotenv.config({ path: path.join(__dirname, '.env') });
 
 const TransportRoute = require('./models/TransportRoute');
+const TransportFee = require('./models/TransportFee');
+const Term = require('./models/term');
 const TransportEnrollment = require('./models/TransportEnrollment');
 const TransportAssignment = require('./models/TransportAssignment');
 const Student = require('./models/Student');
@@ -54,14 +56,10 @@ async function diagnose() {
       }
     }
 
-    // Global stats
-    const totalEnrollments = await TransportEnrollment.countDocuments({ status: 'active' });
-    console.log('Total active enrollments across all terms/routes:', totalEnrollments);
-
-    const recentEnrollments = await TransportEnrollment.find().sort({ createdAt: -1 }).limit(5).populate('route', 'name').populate('student', 'name');
-    console.log('Most recent 5 enrollments:');
-    recentEnrollments.forEach(e => {
-       console.log(`- Student: ${e.student?.name || 'Unknown'}, Route: ${e.route?.name || 'Unknown'}, Term: ${e.term}`);
+    const rawActive = await TransportEnrollment.find({ status: 'active' }).lean();
+    console.log(`\nRAW ACTIVE ENROLLMENTS (Total: ${rawActive.length}):`);
+    rawActive.forEach((e, i) => {
+      console.log(`- [${i}] Student: ${e.student} (${typeof e.student}), Route: ${e.route} (${typeof e.route}, isObjectId: ${e.route instanceof require('mongoose').Types.ObjectId}), Term: ${e.term} (${typeof e.term}, isObjectId: ${e.term instanceof require('mongoose').Types.ObjectId}), School: ${e.school}`);
     });
 
     process.exit(0);

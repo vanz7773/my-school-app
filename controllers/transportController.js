@@ -232,9 +232,12 @@ exports.getRouteStudents = async (req, res) => {
       school: req.user.school,
       status: 'active'
     };
-    if (routeId) filter.route = routeId;
     
-    console.log('[DEBUG] Final filter:', JSON.stringify(filter));
+    // DELIBERATE OMISSION: We are NO LONGER filtering by `filter.route = routeId`
+    // because this school operates a Single-Bus System where one bus picks up 
+    // ALL students from all locations. This ensures the teacher sees the full manifest.
+
+    console.log('[DEBUG] Final filter (Single-Bus Mode):', JSON.stringify(filter));
 
     const enrollments = await TransportEnrollment.find(filter)
       .populate({
