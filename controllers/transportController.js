@@ -221,12 +221,27 @@ exports.getRouteStudents = async (req, res) => {
     if (routeId) filter.route = routeId;
     
     const enrollments = await TransportEnrollment.find(filter)
-      .populate('student', 'name admissionNumber photo')
-      .populate('route', 'name')
+      .populate({
+        path: 'student',
+        select: 'admissionNumber gender',
+        populate: { path: 'user', select: 'name profilePicture photo' }
+      })
+      .populate('route', 'name stops')
       .populate('term', 'term academicYear');
 
-    res.status(200).json({ success: true, students: enrollments });
+    // Normalize each enrollment so the mobile app gets a flat student.name
+    const students = enrollments.map(e => {
+      const obj = e.toObject();
+      if (obj.student && obj.student.user) {
+        obj.student.name = obj.student.user.name;
+        obj.student.photo = obj.student.user.photo || obj.student.user.profilePicture;
+      }
+      return obj;
+    });
+
+    res.status(200).json({ success: true, students });
   } catch (err) {
+    console.error('getRouteStudents error:', err);
     res.status(500).json({ message: 'Failed to fetch route students', error: err.message });
   }
 };
