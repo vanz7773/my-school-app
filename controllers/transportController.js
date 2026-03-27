@@ -122,11 +122,12 @@ exports.enrollStudent = async (req, res) => {
 
 exports.getEnrollments = async (req, res) => {
   try {
-    const { termId, routeId, busId } = req.query;
+    const { termId, routeId, busId, academicYear } = req.query;
     const filter = { school: req.user.school };
     if (termId) filter.term = termId;
     if (routeId) filter.route = routeId;
     if (busId) filter.bus = busId;
+    if (academicYear) filter.academicYear = academicYear;
 
     const enrollments = await TransportEnrollment.find(filter)
       .populate('student', 'name admissionNumber currentClass')
