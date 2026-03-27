@@ -209,11 +209,8 @@ const clockAttendance = async (req, res) => {
     return res.status(400).json({ status: "fail", message: 'Invalid type. Must be "in" or "out".' });
   }
 
-  const clockTime = new Date(timestamp);
-  if (isNaN(clockTime.getTime())) {
-    console.log('[CLOCK] ❌ Invalid timestamp:', timestamp);
-    return res.status(400).json({ status: "fail", message: "Invalid timestamp format." });
-  }
+  // Override client timestamp with accurate server time to prevent timezone and clock tampering vulnerabilities
+  const clockTime = new Date();
   console.log('[CLOCK] ✅ Clock time parsed:', clockTime.toISOString());
 
   if (!deviceUUID) {
