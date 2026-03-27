@@ -1,9 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const transportController = require('../controllers/transportController');
-const { protect } = require('../middlewares/authMiddleware');
+const { protect, requirePrivateSchool } = require('../middlewares/authMiddleware');
 
 router.use(protect);
+// 🛑 Lock all Transport API endpoints to Private Schools strictly
+router.use(requirePrivateSchool);
 
 // Buses
 router.post('/buses', transportController.createBus);
