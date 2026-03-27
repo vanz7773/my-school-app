@@ -5,6 +5,9 @@ const TransportAttendance = require('../models/TransportAttendance');
 const TransportFee = require('../models/TransportFee');
 const Bus = require('../models/Bus');
 const Term = require('../models/term');
+const Student = require('../models/Student');
+const Notification = require('../models/Notification');
+const { broadcastNotification } = require('./notificationController');
 
 // ==========================================
 // BUS MANAGEMENT
@@ -279,8 +282,10 @@ exports.syncAttendance = async (req, res) => {
   try {
     const { date, busId, assignmentId, updates } = req.body;
     const school = req.user.school;
+    const senderId = req.user._id || req.user.id;
 
     const results = [];
+    const pushPromises = [];
 
     for (const update of updates) {
       const { studentId, routeSnapshot, stopSnapshot, picked, isAbsent, pickedAt, dropped, droppedAt, markedBy } = update;
@@ -288,6 +293,11 @@ exports.syncAttendance = async (req, res) => {
       if (dropped && !picked) {
         continue;
       }
+
+      // Check PREVIOUS state to only notify when state CHANGES
+      const existing = await TransportAttendance.findOne({ student: studentId, date });
+      const wasDropped = existing ? existing.dropped : false;
+      const wasPicked = existing ? existing.picked : false;
 
       const record = await TransportAttendance.findOneAndUpdate(
         { student: studentId, date },
@@ -307,6 +317,54 @@ exports.syncAttendance = async (req, res) => {
         { upsert: true, new: true }
       );
       results.push(record);
+
+      // Trigger Push Notification if status changed
+      if ((picked && !wasPicked) || (dropped && !wasDropped)) {
+        const studentInfo = await Student.findById(studentId).populate('user', 'name');
+        if (studentInfo) {
+          const parentRecipients = new Set();
+          if (studentInfo.parent) parentRecipients.add(String(studentInfo.parent));
+          if (Array.isArray(studentInfo.parentIds)) {
+            studentInfo.parentIds.forEach(p => parentRecipients.add(String(p._id || p)));
+          }
+
+          if (parentRecipients.size > 0) {
+            const userList = [...parentRecipients];
+            const studentName = studentInfo.user?.name || studentInfo.name || "Your child";
+            
+            let title = '';
+            let message = '';
+            
+            if (dropped && !wasDropped) {
+                title = "Student Dropped Off";
+                message = `${studentName} has safely been dropped off by the school bus.`;
+            } else if (picked && !wasPicked) {
+                title = "Student Boarded Bus";
+                message = `${studentName} has boarded the school bus.`;
+            }
+
+            const notif = new Notification({
+              sender: senderId,
+              school: school,
+              title: title,
+              message: message,
+              type: "parent-transport",
+              audience: "parent",
+              recipientRoles: [],
+              recipientUsers: userList,
+              studentId: studentInfo._id,
+              createdAt: new Date()
+            });
+
+            pushPromises.push(notif.save().then(saved => broadcastNotification(req, saved)));
+          }
+        }
+      }
+    }
+
+    // Process push notifications in the background
+    if (pushPromises.length > 0) {
+        Promise.allSettled(pushPromises).catch(console.error);
     }
 
     res.status(200).json({ success: true, updatedCount: results.length });
@@ -344,8 +402,11 @@ exports.getMissingDropOffs = async (req, res) => {
 
 exports.getDailyAttendance = async (req, res) => {
   try {
-    const { date, startDate, endDate, routeSnapshot } = req.query;
+    const { date, startDate, endDate, routeSnapshot, student } = req.query;
     const filter = { school: req.user.school };
+    
+    // Add student filtering for parent tracking
+    if (student) filter.student = student;
     
     if (startDate && endDate) {
       filter.date = { $gte: startDate, $lte: endDate };
@@ -357,7 +418,8 @@ exports.getDailyAttendance = async (req, res) => {
 
     const records = await TransportAttendance.find(filter)
       .populate('student', 'name admissionNumber')
-      .populate('markedBy', 'name');
+      .populate('markedBy', 'name')
+      .sort({ date: -1 }); // Newest dates first for parent history
 
     res.status(200).json({ success: true, records });
   } catch (err) {
