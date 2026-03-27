@@ -45,9 +45,9 @@ exports.addOrUpdateExercise = async (req, res) => {
 
     let computedCount = 0;
     if (subjectCounts && Array.isArray(subjectCounts)) {
-        computedCount = subjectCounts.reduce((acc, curr) => acc + (Number(curr.count) || 0), 0);
+      computedCount = subjectCounts.reduce((acc, curr) => acc + (Number(curr.count) || 0), 0);
     } else {
-        computedCount = count !== undefined ? Number(count) : 0;
+      computedCount = count !== undefined ? Number(count) : 0;
     }
 
     if (typeof computedCount !== 'number' || computedCount < 0 || !Number.isInteger(computedCount)) {
@@ -210,9 +210,9 @@ exports.updateExercise = async (req, res) => {
 
     let computedCount = 0;
     if (subjectCounts && Array.isArray(subjectCounts)) {
-        computedCount = subjectCounts.reduce((acc, curr) => acc + (Number(curr.count) || 0), 0);
+      computedCount = subjectCounts.reduce((acc, curr) => acc + (Number(curr.count) || 0), 0);
     } else {
-        computedCount = count !== undefined ? Number(count) : 0;
+      computedCount = count !== undefined ? Number(count) : 0;
     }
 
     if (typeof computedCount !== "number" || computedCount < 0 || !Number.isInteger(computedCount)) {
