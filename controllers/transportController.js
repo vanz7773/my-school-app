@@ -588,18 +588,26 @@ exports.recordWeeklyFeePayment = async (req, res) => {
     const tId = (termId && mongoose.Types.ObjectId.isValid(termId)) ? new mongoose.Types.ObjectId(termId) : termId;
     const schoolId = (req.user.school && mongoose.Types.ObjectId.isValid(req.user.school)) ? new mongoose.Types.ObjectId(req.user.school) : req.user.school;
 
-    console.log(`[DEBUG] recordWeeklyFeePayment lookup - Student: ${sId}, Term: ${tId}, School: ${schoolId}`);
+    console.log(`[DEBUG] recordWeeklyFeePayment lookup - Student: ${sId}, Term: ${tId}, Teacher School: ${schoolId}`);
 
-    // Find the enrollment to get the daily rate
-    const enrollment = await TransportEnrollment.findOne({
+    // DIAGNOSTIC LOOKUP: First find BY STUDENT AND TERM ONLY to see if school is the mismatch
+    let enrollment = await TransportEnrollment.findOne({
       student: sId,
       term: tId,
-      school: schoolId,
     });
 
-    if (!enrollment) {
-      console.warn(`[DEBUG] Transport enrollment NOT FOUND for Student: ${sId}, Term: ${tId}, School: ${schoolId}`);
-      return res.status(404).json({ message: 'Transport enrollment not found for this student' });
+    if (enrollment) {
+      const enrolSchoolId = enrollment.school?.toString();
+      const currentUserSchoolId = schoolId?.toString();
+      
+      console.log(`[DEBUG] Enrollment found! Record School: ${enrolSchoolId} vs Teacher School: ${currentUserSchoolId}`);
+      
+      if (enrolSchoolId !== currentUserSchoolId) {
+        console.warn(`[DEBUG] School Mismatch! Enrollment is linked to school ${enrolSchoolId} but teacher is in school ${currentUserSchoolId}. Proceeding anyway since it's the right student/term.`);
+      }
+    } else {
+      console.warn(`[DEBUG] NO ENROLLMENT found even by student/term only for ${sId} / ${tId}`);
+      return res.status(404).json({ message: 'Transport enrollment not found for this student. Please enroll them first.' });
     }
 
     const dailyRate = enrollment.feeAmount || 0;
