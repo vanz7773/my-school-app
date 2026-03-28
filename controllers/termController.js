@@ -255,11 +255,13 @@ exports.getAcademicYears = async (req, res) => {
 // 🟢 Get weeks in a term
 exports.getTermWeeks = async (req, res) => {
   try {
-    const { school, academicYear, term } = req.query;
+    const { school, academicYear, term, termId } = req.query;
     const missing = [];
     if (!school) missing.push('school');
-    if (!academicYear) missing.push('academicYear');
-    if (!term) missing.push('term');
+    // either termId OR both academicYear and term are required
+    if (!termId && (!academicYear || !term)) {
+      missing.push('termId OR (academicYear AND term)');
+    }
 
     if (missing.length > 0) {
       return res.status(400).json({
@@ -293,11 +295,15 @@ exports.getTermWeeks = async (req, res) => {
       });
     }
 
-    const foundTerm = await Term.findOne({
-      school: new mongoose.Types.ObjectId(schoolId),
-      academicYear,
-      term
-    }).lean();
+    let searchObj = { school: new mongoose.Types.ObjectId(schoolId) };
+    if (termId && mongoose.Types.ObjectId.isValid(termId)) {
+      searchObj._id = new mongoose.Types.ObjectId(termId);
+    } else {
+      searchObj.academicYear = academicYear;
+      searchObj.term = term;
+    }
+
+    const foundTerm = await Term.findOne(searchObj).lean();
 
     if (!foundTerm) {
       return res.status(404).json({
