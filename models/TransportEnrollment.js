@@ -38,6 +38,10 @@ const transportEnrollmentSchema = new mongoose.Schema({
     ref: 'School',
     required: true,
   },
+  feeAmount: {
+    type: Number,
+    default: 0,
+  },
 }, { timestamps: true });
 
 // Ensure a student is only enrolled in one route per term

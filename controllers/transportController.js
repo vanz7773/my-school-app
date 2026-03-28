@@ -144,6 +144,31 @@ exports.getEnrollments = async (req, res) => {
   }
 };
 
+exports.updateEnrollmentFee = async (req, res) => {
+  try {
+    const { enrollmentId } = req.params;
+    const { feeAmount } = req.body;
+    
+    if (feeAmount === undefined || isNaN(feeAmount)) {
+      return res.status(400).json({ message: 'Valid feeAmount is required' });
+    }
+
+    const enrollment = await TransportEnrollment.findOneAndUpdate(
+      { _id: enrollmentId, school: req.user.school },
+      { feeAmount: Number(feeAmount) },
+      { new: true }
+    );
+
+    if (!enrollment) {
+      return res.status(404).json({ message: 'Enrollment not found' });
+    }
+
+    res.status(200).json({ success: true, enrollment });
+  } catch (err) {
+    res.status(500).json({ message: 'Error updating fee amount', error: err.message });
+  }
+};
+
 // ==========================================
 // TEACHER ASSIGNMENT
 // ==========================================

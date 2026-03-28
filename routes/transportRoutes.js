@@ -21,6 +21,7 @@ router.delete('/routes/:id', transportController.deleteRoute);
 // Enrollments
 router.post('/enrollments', transportController.enrollStudent);
 router.get('/enrollments', transportController.getEnrollments);
+router.put('/enrollments/:enrollmentId/fee', transportController.updateEnrollmentFee);
 
 // Assignments
 router.post('/assignments', transportController.assignTeacher);
