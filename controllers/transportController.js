@@ -101,12 +101,16 @@ exports.enrollStudent = async (req, res) => {
     const sId = (studentId && mongoose.Types.ObjectId.isValid(studentId)) ? new mongoose.Types.ObjectId(studentId) : studentId;
     const tId = (termId && mongoose.Types.ObjectId.isValid(termId)) ? new mongoose.Types.ObjectId(termId) : termId;
 
-    let enrollment = await TransportEnrollment.findOne({ student: sId, term: tId });
+    // UNIQUE KEY: student + school (Continuous Enrollment)
+    let enrollment = await TransportEnrollment.findOne({ student: sId, school });
     if (enrollment) {
       if (busId !== undefined) enrollment.bus = busId;
       if (routeId !== undefined) enrollment.route = routeId;
       if (stop !== undefined) enrollment.stop = stop;
       if (status !== undefined) enrollment.status = status;
+      // Optionally update term/academicYear for the record, but it's not the primary key
+      if (termId !== undefined) enrollment.term = termId;
+      if (academicYear !== undefined) enrollment.academicYear = academicYear;
       await enrollment.save();
     } else {
       enrollment = new TransportEnrollment({
@@ -266,10 +270,12 @@ exports.getRouteStudents = async (req, res) => {
     if (termId && mongoose.Types.ObjectId.isValid(termId)) termId = new mongoose.Types.ObjectId(termId);
 
     const filter = {
-      term: termId,
       school: req.user.school,
       status: 'active'
     };
+    
+    // NOTE: Term filter is removed to allow Continuous Enrollment manifest.
+    // Students enrolled in ANY term (active status) are picked up by the bus.
     
     // DELIBERATE OMISSION: We are NO LONGER filtering by `filter.route = routeId`
     // because this school operates a Single-Bus System where one bus picks up 

@@ -9,11 +9,11 @@ const transportEnrollmentSchema = new mongoose.Schema({
   term: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Term',
-    required: true,
+    required: false,
   },
   academicYear: {
     type: String,
-    required: true,
+    required: false,
   },
   bus: {
     type: mongoose.Schema.Types.ObjectId,
@@ -44,7 +44,7 @@ const transportEnrollmentSchema = new mongoose.Schema({
   },
 }, { timestamps: true });
 
-// Ensure a student is only enrolled in one route per term
-transportEnrollmentSchema.index({ student: 1, term: 1 }, { unique: true });
+// Ensure a student has only one transport enrollment per school (persistent)
+transportEnrollmentSchema.index({ student: 1, school: 1 }, { unique: true });
 
 module.exports = mongoose.model('TransportEnrollment', transportEnrollmentSchema);
