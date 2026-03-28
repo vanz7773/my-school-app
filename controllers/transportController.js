@@ -97,7 +97,11 @@ exports.enrollStudent = async (req, res) => {
     const { studentId, termId, academicYear, busId, routeId, stop, status } = req.body;
     const school = req.user.school;
 
-    let enrollment = await TransportEnrollment.findOne({ student: studentId, term: termId });
+    const mongoose = require('mongoose');
+    const sId = (studentId && mongoose.Types.ObjectId.isValid(studentId)) ? new mongoose.Types.ObjectId(studentId) : studentId;
+    const tId = (termId && mongoose.Types.ObjectId.isValid(termId)) ? new mongoose.Types.ObjectId(termId) : termId;
+
+    let enrollment = await TransportEnrollment.findOne({ student: sId, term: tId });
     if (enrollment) {
       if (busId !== undefined) enrollment.bus = busId;
       if (routeId !== undefined) enrollment.route = routeId;
@@ -579,14 +583,22 @@ exports.recordWeeklyFeePayment = async (req, res) => {
       return res.status(400).json({ message: 'studentId, termId, academicYear, weekLabel are required' });
     }
 
+    const mongoose = require('mongoose');
+    const sId = (studentId && mongoose.Types.ObjectId.isValid(studentId)) ? new mongoose.Types.ObjectId(studentId) : studentId;
+    const tId = (termId && mongoose.Types.ObjectId.isValid(termId)) ? new mongoose.Types.ObjectId(termId) : termId;
+    const schoolId = (req.user.school && mongoose.Types.ObjectId.isValid(req.user.school)) ? new mongoose.Types.ObjectId(req.user.school) : req.user.school;
+
+    console.log(`[DEBUG] recordWeeklyFeePayment lookup - Student: ${sId}, Term: ${tId}, School: ${schoolId}`);
+
     // Find the enrollment to get the daily rate
     const enrollment = await TransportEnrollment.findOne({
-      student: studentId,
-      term: termId,
-      school: req.user.school,
+      student: sId,
+      term: tId,
+      school: schoolId,
     });
 
     if (!enrollment) {
+      console.warn(`[DEBUG] Transport enrollment NOT FOUND for Student: ${sId}, Term: ${tId}, School: ${schoolId}`);
       return res.status(404).json({ message: 'Transport enrollment not found for this student' });
     }
 
@@ -595,7 +607,7 @@ exports.recordWeeklyFeePayment = async (req, res) => {
 
     // upsert: if already paid this week, update notes/method but keep the amount
     const payment = await TransportWeeklyFeePayment.findOneAndUpdate(
-      { student: studentId, term: termId, weekLabel, school: req.user.school },
+      { student: sId, term: tId, weekLabel, school: schoolId },
       {
         $set: {
           enrollment: enrollment._id,
