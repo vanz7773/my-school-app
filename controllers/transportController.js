@@ -637,7 +637,7 @@ exports.recordWeeklyFeePayment = async (req, res) => {
     res.status(200).json({
       success: true,
       payment,
-      message: `Weekly fee of ¢${totalAmount.toFixed(2)} recorded for ${weekLabel}`,
+      message: `Transport fee of ¢${totalAmount.toFixed(2)} recorded for ${weekLabel}`,
     });
   } catch (err) {
     if (err.code === 11000) {
