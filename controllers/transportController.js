@@ -3,6 +3,7 @@ const TransportEnrollment = require('../models/TransportEnrollment');
 const TransportAssignment = require('../models/TransportAssignment');
 const TransportAttendance = require('../models/TransportAttendance');
 const TransportFee = require('../models/TransportFee');
+const TransportWeeklyFeePayment = require('../models/transportWeeklyFeePayment');
 const Bus = require('../models/Bus');
 const Term = require('../models/term');
 const Student = require('../models/Student');
@@ -556,5 +557,95 @@ exports.recordPayment = async (req, res) => {
     res.status(200).json({ success: true, fee });
   } catch (err) {
     res.status(500).json({ message: 'Error recording payment', error: err.message });
+  }
+};
+
+// ==========================================
+// WEEKLY FEE PAYMENT (Teacher records)
+// ==========================================
+exports.recordWeeklyFeePayment = async (req, res) => {
+  try {
+    const {
+      studentId,
+      termId,
+      academicYear,
+      weekLabel,      // e.g. "Week 4"
+      daysCount = 5,  // default to full 5-day school week
+      paymentMethod,
+      notes,
+    } = req.body;
+
+    if (!studentId || !termId || !academicYear || !weekLabel) {
+      return res.status(400).json({ message: 'studentId, termId, academicYear, weekLabel are required' });
+    }
+
+    // Find the enrollment to get the daily rate
+    const enrollment = await TransportEnrollment.findOne({
+      student: studentId,
+      term: termId,
+      school: req.user.school,
+    });
+
+    if (!enrollment) {
+      return res.status(404).json({ message: 'Transport enrollment not found for this student' });
+    }
+
+    const dailyRate = enrollment.feeAmount || 0;
+    const totalAmount = dailyRate * Number(daysCount);
+
+    // upsert: if already paid this week, update notes/method but keep the amount
+    const payment = await TransportWeeklyFeePayment.findOneAndUpdate(
+      { student: studentId, term: termId, weekLabel, school: req.user.school },
+      {
+        $set: {
+          enrollment: enrollment._id,
+          academicYear,
+          daysCount: Number(daysCount),
+          dailyRate,
+          totalAmount,
+          paymentMethod: paymentMethod || 'Cash',
+          notes: notes || '',
+          recordedBy: req.user.id,
+          school: req.user.school,
+        },
+      },
+      { upsert: true, new: true }
+    );
+
+    res.status(200).json({
+      success: true,
+      payment,
+      message: `Weekly fee of ¢${totalAmount.toFixed(2)} recorded for ${weekLabel}`,
+    });
+  } catch (err) {
+    if (err.code === 11000) {
+      // Duplicate key — already recorded, return existing
+      const existing = await TransportWeeklyFeePayment.findOne({
+        student: req.body.studentId,
+        term: req.body.termId,
+        weekLabel: req.body.weekLabel,
+      });
+      return res.status(200).json({ success: true, payment: existing, alreadyRecorded: true });
+    }
+    res.status(500).json({ message: 'Error recording weekly fee payment', error: err.message });
+  }
+};
+
+exports.getWeeklyFeePayments = async (req, res) => {
+  try {
+    const { termId, weekLabel, studentId } = req.query;
+    const filter = { school: req.user.school };
+    if (termId) filter.term = termId;
+    if (weekLabel) filter.weekLabel = weekLabel;
+    if (studentId) filter.student = studentId;
+
+    const payments = await TransportWeeklyFeePayment.find(filter)
+      .populate('student', 'name admissionNumber')
+      .populate('recordedBy', 'user')
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({ success: true, payments });
+  } catch (err) {
+    res.status(500).json({ message: 'Error fetching weekly fee payments', error: err.message });
   }
 };

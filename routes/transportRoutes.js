@@ -41,4 +41,8 @@ router.get('/monthly-report', transportController.getMonthlyReport);
 router.get('/fees', transportController.getFees);
 router.post('/fees/pay', transportController.recordPayment);
 
+// Weekly Fee Payment (Teacher records when student pays for whole week)
+router.post('/teacher/weekly-fee-payment', transportController.recordWeeklyFeePayment);
+router.get('/teacher/weekly-fee-payments', transportController.getWeeklyFeePayments);
+
 module.exports = router;
