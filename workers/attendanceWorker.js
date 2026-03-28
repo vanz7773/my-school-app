@@ -20,7 +20,7 @@ const attendanceWorker = new Worker('AttendanceQueue', async (job) => {
   }
 }, { 
   connection: redisConnection,
-  concurrency: 5 // Process up to 5 class attendance lists simultaneously
+  concurrency: 1 // STRICTLY SEQUENTIAL: Process 1 at a time to prevent MongoDB VersionError overwrites on the same FeedingFeeRecord
 });
 
 // Event listeners for monitoring
