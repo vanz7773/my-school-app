@@ -589,12 +589,12 @@ exports.recordWeeklyFeePayment = async (req, res) => {
       return res.status(400).json({ message: 'studentId, termId, academicYear, weekLabel are required' });
     }
 
+    console.log(`[DEBUG] recordWeeklyFeePayment lookup - Student: ${studentId}, Term: ${termId}, Week: ${weekLabel}, Received daysCount: ${req.body.daysCount}`);
+
     const mongoose = require('mongoose');
     const sId = (studentId && mongoose.Types.ObjectId.isValid(studentId)) ? new mongoose.Types.ObjectId(studentId) : studentId;
     const tId = (termId && mongoose.Types.ObjectId.isValid(termId)) ? new mongoose.Types.ObjectId(termId) : termId;
     const schoolId = (req.user.school && mongoose.Types.ObjectId.isValid(req.user.school)) ? new mongoose.Types.ObjectId(req.user.school) : req.user.school;
-
-    console.log(`[DEBUG] recordWeeklyFeePayment lookup - Student: ${sId}, Term: ${tId}, Teacher School: ${schoolId}`);
 
     // UNIQUE LOOKUP: Find the one persistent and active enrollment for this student in this school
     let enrollment = await TransportEnrollment.findOne({
