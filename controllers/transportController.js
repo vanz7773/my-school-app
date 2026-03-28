@@ -596,23 +596,15 @@ exports.recordWeeklyFeePayment = async (req, res) => {
 
     console.log(`[DEBUG] recordWeeklyFeePayment lookup - Student: ${sId}, Term: ${tId}, Teacher School: ${schoolId}`);
 
-    // DIAGNOSTIC LOOKUP: First find BY STUDENT AND TERM ONLY to see if school is the mismatch
+    // UNIQUE LOOKUP: Find the one persistent and active enrollment for this student in this school
     let enrollment = await TransportEnrollment.findOne({
       student: sId,
-      term: tId,
+      school: schoolId,
+      status: 'active'
     });
-
-    if (enrollment) {
-      const enrolSchoolId = enrollment.school?.toString();
-      const currentUserSchoolId = schoolId?.toString();
-      
-      console.log(`[DEBUG] Enrollment found! Record School: ${enrolSchoolId} vs Teacher School: ${currentUserSchoolId}`);
-      
-      if (enrolSchoolId !== currentUserSchoolId) {
-        console.warn(`[DEBUG] School Mismatch! Enrollment is linked to school ${enrolSchoolId} but teacher is in school ${currentUserSchoolId}. Proceeding anyway since it's the right student/term.`);
-      }
-    } else {
-      console.warn(`[DEBUG] NO ENROLLMENT found even by student/term only for ${sId} / ${tId}`);
+    
+    if (!enrollment) {
+      console.warn(`[DEBUG] NO ACTIVE ENROLLMENT found for student ${sId} at school ${schoolId}`);
       return res.status(404).json({ message: 'Transport enrollment not found for this student. Please enroll them first.' });
     }
 
