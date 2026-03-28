@@ -580,16 +580,17 @@ exports.recordWeeklyFeePayment = async (req, res) => {
       termId,
       academicYear,
       weekLabel,      // e.g. "Week 4"
+      date,           // e.g. "2026-03-28" 
       daysCount = 5,  // default to full 5-day school week
       paymentMethod,
       notes,
     } = req.body;
 
-    if (!studentId || !termId || !academicYear || !weekLabel) {
-      return res.status(400).json({ message: 'studentId, termId, academicYear, weekLabel are required' });
+    if (!studentId || !termId || !academicYear || !weekLabel || !date) {
+      return res.status(400).json({ message: 'studentId, termId, academicYear, weekLabel, date are required' });
     }
 
-    console.log(`[DEBUG] recordWeeklyFeePayment lookup - Student: ${studentId}, Term: ${termId}, Week: ${weekLabel}, Received daysCount: ${req.body.daysCount}`);
+    console.log(`[DEBUG] recordWeeklyFeePayment lookup - Student: ${studentId}, Term: ${termId}, Week: ${weekLabel}, Date: ${date}, Received daysCount: ${req.body.daysCount}`);
 
     const mongoose = require('mongoose');
     const sId = (studentId && mongoose.Types.ObjectId.isValid(studentId)) ? new mongoose.Types.ObjectId(studentId) : studentId;
@@ -611,13 +612,16 @@ exports.recordWeeklyFeePayment = async (req, res) => {
     const dailyRate = enrollment.feeAmount || 0;
     const totalAmount = dailyRate * Number(daysCount);
 
-    // upsert: if already paid this week, update notes/method but keep the amount
+    // upsert: record payment for the specific DATE
     const payment = await TransportWeeklyFeePayment.findOneAndUpdate(
-      { student: sId, term: tId, weekLabel, school: schoolId },
+      { student: sId, date },
       {
         $set: {
           enrollment: enrollment._id,
+          term: tId,
+          weekLabel,
           academicYear,
+          date,
           daysCount: Number(daysCount),
           dailyRate,
           totalAmount,
@@ -640,8 +644,7 @@ exports.recordWeeklyFeePayment = async (req, res) => {
       // Duplicate key — already recorded, return existing
       const existing = await TransportWeeklyFeePayment.findOne({
         student: req.body.studentId,
-        term: req.body.termId,
-        weekLabel: req.body.weekLabel,
+        date: req.body.date,
       });
       return res.status(200).json({ success: true, payment: existing, alreadyRecorded: true });
     }
@@ -651,11 +654,12 @@ exports.recordWeeklyFeePayment = async (req, res) => {
 
 exports.getWeeklyFeePayments = async (req, res) => {
   try {
-    const { termId, weekLabel, studentId } = req.query;
+    const { termId, weekLabel, studentId, date } = req.query;
     const filter = { school: req.user.school };
     if (termId) filter.term = termId;
     if (weekLabel) filter.weekLabel = weekLabel;
     if (studentId) filter.student = studentId;
+    if (date) filter.date = date;
 
     const payments = await TransportWeeklyFeePayment.find(filter)
       .populate('student', 'name admissionNumber')

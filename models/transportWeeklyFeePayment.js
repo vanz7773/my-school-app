@@ -31,6 +31,10 @@ const transportWeeklyFeePaymentSchema = new mongoose.Schema({
     type: String,  // e.g. "Week 4"
     required: true,
   },
+  date: {
+    type: String,  // e.g. "2026-03-28"
+    required: true,
+  },
   daysCount: {
     type: Number,
     default: 5,
@@ -60,9 +64,9 @@ const transportWeeklyFeePaymentSchema = new mongoose.Schema({
   },
 }, { timestamps: true });
 
-// Prevent duplicate weekly payment for the same student in the same week/term
+// Prevent duplicate payment for the same student on the same day
 transportWeeklyFeePaymentSchema.index(
-  { student: 1, term: 1, weekLabel: 1 },
+  { student: 1, date: 1 },
   { unique: true }
 );
 
