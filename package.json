@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "migrate:transport-payments": "node scripts/migrateTransportPaymentsToAttendance.js"
+    "migrate:transport-payments": "node scripts/migrateTransportPaymentsToAttendance.js",
+    "backfill:transport-fees": "node scripts/backfillTransportAttendanceFees.js"
   },
   "keywords": [],
   "author": "You",

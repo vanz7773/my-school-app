@@ -359,6 +359,15 @@ exports.syncAttendance = async (req, res) => {
         continue;
       }
 
+      const enrollment = await TransportEnrollment.findOne({
+        student: studentId,
+        school,
+        status: 'active',
+      }).select('feeAmount');
+
+      const dailyRate = Number(enrollment?.feeAmount) || 0;
+      const expectedAmount = dailyRate;
+
       // Check PREVIOUS state to only notify when state CHANGES
       const existing = await TransportAttendance.findOne({ student: studentId, date });
       const wasDropped = existing ? existing.dropped : false;
@@ -371,6 +380,9 @@ exports.syncAttendance = async (req, res) => {
           routeSnapshot,
           stopSnapshot,
           assignment: assignmentId,
+          dailyRate,
+          weeklyDaysExpected: 5,
+          expectedAmount,
           picked,
           isAbsent: isAbsent || false,
           pickedAt: picked ? (pickedAt || new Date()) : null,
@@ -672,6 +684,9 @@ exports.recordWeeklyFeePayment = async (req, res) => {
         $set: {
           term: tId,
           academicYear,
+          dailyRate,
+          weeklyDaysExpected: safeDaysCount,
+          expectedAmount: totalAmount,
           payment: paymentPayload,
           routeSnapshot: enrollment.route?.name || 'Unknown Route',
           stopSnapshot: enrollment.stop || 'Unknown Stop',

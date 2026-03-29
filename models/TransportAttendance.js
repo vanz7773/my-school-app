@@ -58,6 +58,18 @@ const transportAttendanceSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'TransportAssignment',
   },
+  dailyRate: {
+    type: Number,
+    default: 0,
+  },
+  weeklyDaysExpected: {
+    type: Number,
+    default: 5,
+  },
+  expectedAmount: {
+    type: Number,
+    default: 0,
+  },
   date: {
     type: String, // Format: YYYY-MM-DD
     required: true,
