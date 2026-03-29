@@ -672,8 +672,6 @@ exports.recordWeeklyFeePayment = async (req, res) => {
         $setOnInsert: {
           student: sId,
           date,
-          routeSnapshot: enrollment.route?.name || 'Unknown Route',
-          stopSnapshot: enrollment.stop || 'Unknown Stop',
           assignment: null,
           picked: false,
           isAbsent: false,
