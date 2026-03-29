@@ -731,7 +731,10 @@ exports.getWeeklyFeePayments = async (req, res) => {
       .populate('student', 'name admissionNumber')
       .sort({ createdAt: -1 });
 
-    res.status(200).json({ success: true, payments });
+    res.status(200).json({
+      success: true,
+      payments: payments.map(flattenWeeklyPaymentRecord),
+    });
   } catch (err) {
     res.status(500).json({ message: 'Error fetching weekly fee payments', error: err.message });
   }
