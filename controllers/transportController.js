@@ -712,55 +712,12 @@ exports.getWeeklyFeePayments = async (req, res) => {
     if (studentId) filter.student = studentId;
     if (date) filter.date = date;
 
-    const attendancePayments = await TransportAttendance.find({
+    const payments = await TransportAttendance.find({
       ...filter,
       'payment.totalAmount': { $gt: 0 },
     })
       .populate('student', 'name admissionNumber')
       .sort({ createdAt: -1 });
-
-    const legacyFilter = { school: req.user.school };
-    if (termId) legacyFilter.term = termId;
-    if (weekLabel) legacyFilter.weekLabel = weekLabel;
-    if (studentId) legacyFilter.student = studentId;
-    if (date) legacyFilter.date = date;
-
-    const legacyPayments = await TransportWeeklyFeePayment.find(legacyFilter)
-      .populate('student', 'name admissionNumber')
-      .populate('recordedBy', 'user')
-      .sort({ createdAt: -1 });
-
-    const merged = new Map();
-    [...attendancePayments.map(flattenWeeklyPaymentRecord), ...legacyPayments.map((doc) => ({
-      _id: doc._id,
-      student: doc.student,
-      enrollment: doc.enrollment,
-      term: doc.term,
-      academicYear: doc.academicYear,
-      weekLabel: doc.weekLabel,
-      date: doc.date,
-      daysCount: Number(doc.daysCount || 0),
-      dailyRate: Number(doc.dailyRate || 0),
-      totalAmount: Number(doc.totalAmount || 0),
-      paymentMethod: doc.paymentMethod || 'Cash',
-      notes: doc.notes || '',
-      school: doc.school,
-      recordedBy: doc.recordedBy,
-      createdAt: doc.createdAt,
-      updatedAt: doc.updatedAt,
-      source: 'legacy',
-    }))].forEach((payment) => {
-      if (!payment) return;
-      const studentKey = payment.student?._id ? String(payment.student._id) : String(payment.student || '');
-      const uniqueKey = `${studentKey}:${payment.date}:${payment.weekLabel || ''}`;
-      if (!merged.has(uniqueKey)) merged.set(uniqueKey, payment);
-    });
-
-    const payments = [...merged.values()].sort((a, b) => {
-      const aTime = new Date(a.createdAt || a.date || 0).getTime();
-      const bTime = new Date(b.createdAt || b.date || 0).getTime();
-      return bTime - aTime;
-    });
 
     res.status(200).json({ success: true, payments });
   } catch (err) {
