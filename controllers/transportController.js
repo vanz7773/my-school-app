@@ -654,20 +654,21 @@ exports.recordWeeklyFeePayment = async (req, res) => {
     const dailyRate = Number(enrollment.feeAmount) || 0;
     const totalAmount = dailyRate * safeDaysCount;
 
-    const paymentPayload = {
-      weekLabel,
-      daysCount: safeDaysCount,
-      dailyRate,
-      totalAmount,
-      paymentMethod: paymentMethod || 'Cash',
-      notes: notes || '',
-      recordedBy: req.user.id,
-      paidAt: new Date(),
-    };
+    const existingWeeklyPayment = await TransportAttendance.findOne({
+      student: sId,
+      term: tId,
+      school: req.user.school,
+      'payment.weekLabel': weekLabel,
+    });
 
-    // upsert: keep boarding and payment in the same attendance document
+    const paymentPayload = existingWeeklyPayment?.payment || {};
+    const updatedDaysCount = (Number(paymentPayload.daysCount) || 0) + safeDaysCount;
+    const updatedTotalAmount = (Number(paymentPayload.totalAmount) || 0) + totalAmount;
+
     const payment = await TransportAttendance.findOneAndUpdate(
-      { student: sId, date },
+      existingWeeklyPayment
+        ? { _id: existingWeeklyPayment._id }
+        : { student: sId, date },
       {
         $setOnInsert: {
           student: sId,
@@ -683,9 +684,18 @@ exports.recordWeeklyFeePayment = async (req, res) => {
           term: tId,
           academicYear,
           dailyRate,
-          weeklyDaysExpected: safeDaysCount,
-          expectedAmount: totalAmount,
-          payment: paymentPayload,
+          weeklyDaysExpected: updatedDaysCount,
+          expectedAmount: updatedTotalAmount,
+          payment: {
+            weekLabel,
+            daysCount: updatedDaysCount,
+            dailyRate,
+            totalAmount: updatedTotalAmount,
+            paymentMethod: paymentMethod || paymentPayload.paymentMethod || 'Cash',
+            notes: notes || paymentPayload.notes || '',
+            recordedBy: req.user.id,
+            paidAt: new Date(),
+          },
           routeSnapshot: enrollment.route?.name || 'Unknown Route',
           stopSnapshot: enrollment.stop || 'Unknown Stop',
         },
