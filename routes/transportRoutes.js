@@ -30,7 +30,9 @@ router.get('/assignments', transportController.getAssignments);
 // Mobile Teacher API
 router.get('/teacher/today-assignment', transportController.getTodayAssignment);
 router.get('/teacher/route-students', transportController.getRouteStudents);
-router.post('/teacher/mark-transport', transportController.syncAttendance);
+router.post('/teacher/mark-transport-legacy', transportController.syncAttendance);
+router.post('/teacher/mark-transport', transportController.markTransport);
+router.get('/teacher/transport-fee-records', transportController.getTransportFeeRecords);
 
 // Analytics & Reports
 router.get('/missing-dropoffs', transportController.getMissingDropOffs);

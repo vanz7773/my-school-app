@@ -2,8 +2,9 @@ const { Worker } = require('bullmq');
 const { redisConnection } = require('../config/ioredis');
 const { processAttendanceJob } = require('../controllers/studentAttendanceController');
 const { processFeedingJob } = require('../controllers/feedingFeeController');
+const { processTransportJob } = require('../controllers/transportController');
 
-console.log('👷‍♂️ Starting Attendance/Feeding Worker...');
+console.log('👷‍♂️ Starting Attendance/Feeding/Transport Worker...');
 
 // Initialize the worker to process 'AttendanceQueue'
 const attendanceWorker = new Worker('AttendanceQueue', async (job) => {
@@ -16,6 +17,12 @@ const attendanceWorker = new Worker('AttendanceQueue', async (job) => {
   if (job.name === 'markFeeding') {
     console.log(`🍔 Processing Feeding Fee Job ${job.id} for student ${job.data.student} - ${job.data.day}`);
     const result = await processFeedingJob(job.data);
+    return result;
+  }
+
+  if (job.name === 'markTransport') {
+    console.log(`🚌 Processing Transport Job ${job.id} for student ${job.data.studentId} - ${job.data.day}`);
+    const result = await processTransportJob(job.data);
     return result;
   }
 }, { 

@@ -8,6 +8,9 @@ const Bus = require('../models/Bus');
 const Term = require('../models/term');
 const Student = require('../models/Student');
 const Notification = require('../models/Notification');
+const mongoose = require('mongoose');
+const TransportFeeRecord = require('../models/TransportFeeRecord');
+const { attendanceQueue } = require('../queue/attendanceQueue');
 const { broadcastNotification } = require('./notificationController');
 
 const flattenWeeklyPaymentRecord = (doc) => {
@@ -750,4 +753,137 @@ exports.getWeeklyFeePayments = async (req, res) => {
   } catch (err) {
     res.status(500).json({ message: 'Error fetching weekly fee payments', error: err.message });
   }
+};
+
+// Utility: Normalize week number
+const normalizeWeekNumber = (week) => {
+  if (!week) return 1;
+  return typeof week === 'string' ? parseInt(week.replace(/Week\s*/i, '').trim(), 10) || 1 : parseInt(week, 10) || 1;
+};
+
+// ==========================================
+// QUEUE BASED MARKS (Like Feeding Fee)
+// ==========================================
+exports.processTransportJob = async (jobData) => {
+    const { student, termId, academicYear, week, day, status, routeSnapshot, stopSnapshot, reqUser } = jobData;
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+        const schoolId = reqUser.school;
+        const weekNumber = normalizeWeekNumber(week);
+
+        let record = await TransportFeeRecord.findOne({
+            termId,
+            week: weekNumber,
+            school: schoolId
+        }).session(session);
+
+        if (!record) {
+            record = new TransportFeeRecord({
+                school: schoolId,
+                termId,
+                academicYear,
+                week: weekNumber,
+                breakdown: []
+            });
+        }
+
+        let breakdownIndex = record.breakdown.findIndex(b => b.student.toString() === student.toString());
+
+        if (breakdownIndex === -1) {
+            const enrollment = await TransportEnrollment.findOne({
+                student,
+                school: schoolId,
+                status: 'active'
+            }).session(session);
+
+            const dailyRate = enrollment && enrollment.feeAmount ? enrollment.feeAmount : 0;
+
+            const studentDoc = await Student.findById(student).session(session);
+
+            record.breakdown.push({
+                student,
+                studentName: studentDoc ? (studentDoc.user?.name || studentDoc.name) : "Unknown Student",
+                className: studentDoc && studentDoc.currentClass ? "Class Enrolled" : "Unknown Class",
+                routeSnapshot: routeSnapshot || (enrollment?.route ? 'Route' : null),
+                stopSnapshot: stopSnapshot || (enrollment?.stop || null),
+                dailyRate,
+                days: {
+                    M: 'notmarked',
+                    T: 'notmarked',
+                    W: 'notmarked',
+                    TH: 'notmarked',
+                    F: 'notmarked'
+                },
+                perDayFee: { M: 0, T: 0, W: 0, TH: 0, F: 0 },
+                total: 0,
+                daysBoarded: 0,
+                currency: 'GHS'
+            });
+            breakdownIndex = record.breakdown.length - 1;
+        }
+
+        // Validate day key
+        if (['M', 'T', 'W', 'TH', 'F'].includes(day)) {
+            record.breakdown[breakdownIndex].days[day] = status; // 'boarded', 'absent', 'notmarked'
+        }
+        
+        record.markModified('breakdown');
+        await record.save({ session });
+        await session.commitTransaction();
+        
+        return { success: true, updatedDays: record.breakdown[breakdownIndex].days };
+    } catch (error) {
+        await session.abortTransaction();
+        console.error("❌ Error in processTransportJob:", error);
+        throw error;
+    } finally {
+        session.endSession();
+    }
+};
+
+exports.markTransport = async (req, res) => {
+    const { student, termId, academicYear, week, day, status, routeSnapshot, stopSnapshot } = req.body;
+
+    if (!student || !termId || !week || !day || !status) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    try {
+        await attendanceQueue.add('markTransport', {
+            student, termId, academicYear, week, day, status, routeSnapshot, stopSnapshot,
+            reqUser: { 
+                school: req.user.school, 
+                _id: req.user._id 
+            }
+        });
+
+        res.status(200).json({ success: true, message: 'Transport attendance queued successfully' });
+    } catch (error) {
+        console.error('Error queuing transport attendance:', error);
+        res.status(500).json({ success: false, message: 'Server error enqueueing transport attendance' });
+    }
+};
+
+exports.getTransportFeeRecords = async (req, res) => {
+    try {
+        const { termId, week } = req.query;
+        const weekNumber = normalizeWeekNumber(week);
+        
+        const record = await TransportFeeRecord.findOne({ 
+            school: req.user.school, 
+            termId, 
+            week: weekNumber
+        });
+
+        // Use the same response shape as FeedingFee
+        res.status(200).json({ 
+          success: true, 
+          data: record ? [record] : [] 
+        });
+    } catch (error) {
+        console.error('Error fetching transport fee records:', error);
+        res.status(500).json({ success: false, message: 'Server error fetching transport records' });
+    }
 };
