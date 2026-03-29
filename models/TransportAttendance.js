@@ -58,6 +58,14 @@ const transportAttendanceSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'TransportAssignment',
   },
+  term: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Term',
+  },
+  academicYear: {
+    type: String,
+    default: '',
+  },
   dailyRate: {
     type: Number,
     default: 0,

@@ -345,7 +345,7 @@ exports.getRouteStudents = async (req, res) => {
 
 exports.syncAttendance = async (req, res) => {
   try {
-    const { date, busId, assignmentId, updates } = req.body;
+    const { date, busId, assignmentId, updates, termId, academicYear, weekLabel } = req.body;
     const school = req.user.school;
     const senderId = req.user._id || req.user.id;
 
@@ -380,6 +380,8 @@ exports.syncAttendance = async (req, res) => {
           routeSnapshot,
           stopSnapshot,
           assignment: assignmentId,
+          term: termId || undefined,
+          academicYear: academicYear || undefined,
           dailyRate,
           weeklyDaysExpected: 5,
           expectedAmount,
