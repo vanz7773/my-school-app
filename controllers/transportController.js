@@ -688,7 +688,6 @@ exports.recordWeeklyFeePayment = async (req, res) => {
           payment: paymentPayload,
           routeSnapshot: enrollment.route?.name || 'Unknown Route',
           stopSnapshot: enrollment.stop || 'Unknown Stop',
-          school: req.user.school,
         },
       },
       { upsert: true, new: true }
