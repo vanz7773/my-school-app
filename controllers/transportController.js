@@ -10,6 +10,35 @@ const Student = require('../models/Student');
 const Notification = require('../models/Notification');
 const { broadcastNotification } = require('./notificationController');
 
+const flattenWeeklyPaymentRecord = (doc) => {
+  if (!doc) return null;
+  const obj = typeof doc.toObject === 'function' ? doc.toObject() : doc;
+  const payment = obj.payment || {};
+  const daysCount = Number(payment.daysCount ?? obj.daysCount ?? 0) || 0;
+  const dailyRate = Number(payment.dailyRate ?? obj.dailyRate ?? 0) || 0;
+  const totalAmount = Number(payment.totalAmount ?? obj.totalAmount ?? 0) || 0;
+
+  return {
+    _id: obj._id,
+    student: obj.student,
+    enrollment: obj.enrollment,
+    term: obj.term,
+    academicYear: obj.academicYear,
+    weekLabel: payment.weekLabel || obj.weekLabel || '',
+    date: obj.date,
+    daysCount,
+    dailyRate,
+    totalAmount,
+    paymentMethod: payment.paymentMethod || obj.paymentMethod || 'Cash',
+    notes: payment.notes || obj.notes || '',
+    school: obj.school,
+    recordedBy: payment.recordedBy || obj.recordedBy || obj.markedBy || null,
+    createdAt: obj.createdAt,
+    updatedAt: obj.updatedAt,
+    source: 'attendance',
+  };
+};
+
 // ==========================================
 // BUS MANAGEMENT
 // ==========================================
@@ -596,38 +625,56 @@ exports.recordWeeklyFeePayment = async (req, res) => {
     const sId = (studentId && mongoose.Types.ObjectId.isValid(studentId)) ? new mongoose.Types.ObjectId(studentId) : studentId;
     const tId = (termId && mongoose.Types.ObjectId.isValid(termId)) ? new mongoose.Types.ObjectId(termId) : termId;
     const schoolId = (req.user.school && mongoose.Types.ObjectId.isValid(req.user.school)) ? new mongoose.Types.ObjectId(req.user.school) : req.user.school;
+    const safeDaysCount = Math.max(1, Number(daysCount) || 1);
 
     // UNIQUE LOOKUP: Find the one persistent and active enrollment for this student in this school
     let enrollment = await TransportEnrollment.findOne({
       student: sId,
       school: schoolId,
       status: 'active'
-    });
+    }).populate('route', 'name');
     
     if (!enrollment) {
       console.warn(`[DEBUG] NO ACTIVE ENROLLMENT found for student ${sId} at school ${schoolId}`);
       return res.status(404).json({ message: 'Transport enrollment not found for this student. Please enroll them first.' });
     }
 
-    const dailyRate = enrollment.feeAmount || 0;
-    const totalAmount = dailyRate * Number(daysCount);
+    const dailyRate = Number(enrollment.feeAmount) || 0;
+    const totalAmount = dailyRate * safeDaysCount;
 
-    // upsert: record payment for the specific DATE
-    const payment = await TransportWeeklyFeePayment.findOneAndUpdate(
+    const paymentPayload = {
+      weekLabel,
+      daysCount: safeDaysCount,
+      dailyRate,
+      totalAmount,
+      paymentMethod: paymentMethod || 'Cash',
+      notes: notes || '',
+      recordedBy: req.user.id,
+      paidAt: new Date(),
+    };
+
+    // upsert: keep boarding and payment in the same attendance document
+    const payment = await TransportAttendance.findOneAndUpdate(
       { student: sId, date },
       {
-        $set: {
-          enrollment: enrollment._id,
-          term: tId,
-          weekLabel,
-          academicYear,
+        $setOnInsert: {
+          student: sId,
           date,
-          daysCount: Number(daysCount),
-          dailyRate,
-          totalAmount,
-          paymentMethod: paymentMethod || 'Cash',
-          notes: notes || '',
-          recordedBy: req.user.id,
+          routeSnapshot: enrollment.route?.name || 'Unknown Route',
+          stopSnapshot: enrollment.stop || 'Unknown Stop',
+          assignment: null,
+          picked: false,
+          isAbsent: false,
+          dropped: false,
+          markedBy: req.user.id,
+          school: req.user.school,
+        },
+        $set: {
+          term: tId,
+          academicYear,
+          payment: paymentPayload,
+          routeSnapshot: enrollment.route?.name || 'Unknown Route',
+          stopSnapshot: enrollment.stop || 'Unknown Stop',
           school: req.user.school,
         },
       },
@@ -636,17 +683,21 @@ exports.recordWeeklyFeePayment = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      payment,
+      payment: flattenWeeklyPaymentRecord(payment),
       message: `Transport fee of ¢${totalAmount.toFixed(2)} recorded for ${weekLabel}`,
     });
   } catch (err) {
     if (err.code === 11000) {
-      // Duplicate key — already recorded, return existing
-      const existing = await TransportWeeklyFeePayment.findOne({
+      // Duplicate key — already recorded, return existing attendance-backed payment
+      const existing = await TransportAttendance.findOne({
         student: req.body.studentId,
         date: req.body.date,
+      }).populate('student', 'name admissionNumber');
+      return res.status(200).json({
+        success: true,
+        payment: flattenWeeklyPaymentRecord(existing),
+        alreadyRecorded: true,
       });
-      return res.status(200).json({ success: true, payment: existing, alreadyRecorded: true });
     }
     res.status(500).json({ message: 'Error recording weekly fee payment', error: err.message });
   }
@@ -657,14 +708,59 @@ exports.getWeeklyFeePayments = async (req, res) => {
     const { termId, weekLabel, studentId, date } = req.query;
     const filter = { school: req.user.school };
     if (termId) filter.term = termId;
-    if (weekLabel) filter.weekLabel = weekLabel;
+    if (weekLabel) filter['payment.weekLabel'] = weekLabel;
     if (studentId) filter.student = studentId;
     if (date) filter.date = date;
 
-    const payments = await TransportWeeklyFeePayment.find(filter)
+    const attendancePayments = await TransportAttendance.find({
+      ...filter,
+      'payment.totalAmount': { $gt: 0 },
+    })
+      .populate('student', 'name admissionNumber')
+      .sort({ createdAt: -1 });
+
+    const legacyFilter = { school: req.user.school };
+    if (termId) legacyFilter.term = termId;
+    if (weekLabel) legacyFilter.weekLabel = weekLabel;
+    if (studentId) legacyFilter.student = studentId;
+    if (date) legacyFilter.date = date;
+
+    const legacyPayments = await TransportWeeklyFeePayment.find(legacyFilter)
       .populate('student', 'name admissionNumber')
       .populate('recordedBy', 'user')
       .sort({ createdAt: -1 });
+
+    const merged = new Map();
+    [...attendancePayments.map(flattenWeeklyPaymentRecord), ...legacyPayments.map((doc) => ({
+      _id: doc._id,
+      student: doc.student,
+      enrollment: doc.enrollment,
+      term: doc.term,
+      academicYear: doc.academicYear,
+      weekLabel: doc.weekLabel,
+      date: doc.date,
+      daysCount: Number(doc.daysCount || 0),
+      dailyRate: Number(doc.dailyRate || 0),
+      totalAmount: Number(doc.totalAmount || 0),
+      paymentMethod: doc.paymentMethod || 'Cash',
+      notes: doc.notes || '',
+      school: doc.school,
+      recordedBy: doc.recordedBy,
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+      source: 'legacy',
+    }))].forEach((payment) => {
+      if (!payment) return;
+      const studentKey = payment.student?._id ? String(payment.student._id) : String(payment.student || '');
+      const uniqueKey = `${studentKey}:${payment.date}:${payment.weekLabel || ''}`;
+      if (!merged.has(uniqueKey)) merged.set(uniqueKey, payment);
+    });
+
+    const payments = [...merged.values()].sort((a, b) => {
+      const aTime = new Date(a.createdAt || a.date || 0).getTime();
+      const bTime = new Date(b.createdAt || b.date || 0).getTime();
+      return bTime - aTime;
+    });
 
     res.status(200).json({ success: true, payments });
   } catch (err) {

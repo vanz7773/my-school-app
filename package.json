@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "migrate:transport-payments": "node scripts/migrateTransportPaymentsToAttendance.js"
   },
   "keywords": [],
   "author": "You",

@@ -1,5 +1,41 @@
 const mongoose = require('mongoose');
 
+const transportPaymentSchema = new mongoose.Schema({
+  weekLabel: {
+    type: String,
+    default: '',
+  },
+  daysCount: {
+    type: Number,
+    default: 0,
+  },
+  dailyRate: {
+    type: Number,
+    default: 0,
+  },
+  totalAmount: {
+    type: Number,
+    default: 0,
+  },
+  paymentMethod: {
+    type: String,
+    enum: ['Cash', 'MoMo', 'Cheque', 'Other'],
+    default: 'Cash',
+  },
+  notes: {
+    type: String,
+    default: '',
+  },
+  recordedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+  },
+  paidAt: {
+    type: Date,
+    default: Date.now,
+  },
+}, { _id: false });
+
 const transportAttendanceSchema = new mongoose.Schema({
   student: {
     type: mongoose.Schema.Types.ObjectId,
@@ -44,6 +80,10 @@ const transportAttendanceSchema = new mongoose.Schema({
   droppedAt: {
     type: Date,
   },
+  payment: {
+    type: transportPaymentSchema,
+    default: null,
+  },
   markedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -58,5 +98,6 @@ const transportAttendanceSchema = new mongoose.Schema({
 
 // A student can only have one attendance record per day
 transportAttendanceSchema.index({ student: 1, date: 1 }, { unique: true });
+transportAttendanceSchema.index({ 'payment.weekLabel': 1 });
 
 module.exports = mongoose.model('TransportAttendance', transportAttendanceSchema);
