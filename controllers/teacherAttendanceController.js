@@ -149,7 +149,7 @@ const markAbsenteesForTodayIfNeeded = async () => {
         updateOne: {
           filter: {
             teacher: teacher._id,
-            date: { $gte: todayStart, $lte: todayEnd }
+            date: todayStart // Using exact match to prevent MongoDB E11000 duplicate upserts
           },
           update: {
             $setOnInsert: {
@@ -172,8 +172,16 @@ const markAbsenteesForTodayIfNeeded = async () => {
   // 3️⃣ Execute once
   if (bulkOps.length > 0) {
     console.log(`[ABSENTEE] Executing bulkWrite with ${bulkOps.length} ops`);
-    const result = await Attendance.bulkWrite(bulkOps, { ordered: false });
-    console.log(`[ABSENTEE] Success: upserted=${result.upsertedCount}, modified=${result.modifiedCount}`);
+    try {
+      const result = await Attendance.bulkWrite(bulkOps, { ordered: false });
+      console.log(`[ABSENTEE] Success: upserted=${result.upsertedCount}, modified=${result.modifiedCount}`);
+    } catch (error) {
+      if (error.code === 11000 || (error.writeErrors && error.writeErrors.some((e) => e.code === 11000))) {
+        console.log(`[ABSENTEE] Ignored concurrent duplicate key errors (11000) during absentee sweep.`);
+      } else {
+        console.error(`[ABSENTEE] Error executing bulk write:`, error);
+      }
+    }
   }
 
   console.log(`✅ Absentees processed: ${bulkOps.length}`);
