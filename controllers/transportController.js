@@ -174,7 +174,7 @@ exports.getEnrollments = async (req, res) => {
     if (academicYear) filter.academicYear = academicYear;
 
     const enrollments = await TransportEnrollment.find(filter)
-      .populate('student', 'name admissionNumber currentClass')
+      .populate('student', 'name admissionNumber class')
       .populate('route', 'name')
       .populate('bus', 'name')
       .populate('term', 'term academicYear');
@@ -560,7 +560,7 @@ exports.getMonthlyReport = async (req, res) => {
     });
 
     const studentIds = Object.keys(studentUsageMap);
-    const students = await require('../models/Student').find({ _id: { $in: studentIds } }, 'name admissionNumber currentClass').lean();
+    const students = await require('../models/Student').find({ _id: { $in: studentIds } }, 'name admissionNumber class').lean();
     
     const finalReport = students.map(s => {
       const usage = studentUsageMap[s._id.toString()];
@@ -583,7 +583,7 @@ exports.getFees = async (req, res) => {
   try {
     const { termId } = req.query;
     const fees = await TransportFee.find({ term: termId, school: req.user.school })
-      .populate('student', 'name admissionNumber currentClass')
+      .populate('student', 'name admissionNumber class')
       .populate('term', 'term academicYear');
 
     res.status(200).json({ success: true, fees });
@@ -808,12 +808,20 @@ exports.processTransportJob = async (jobData) => {
 
             const dailyRate = enrollment && enrollment.feeAmount ? enrollment.feeAmount : 0;
 
-            const studentDoc = await Student.findById(student).session(session);
+            const studentDoc = await Student.findById(student)
+              .populate('user', 'name')
+              .populate('class', 'name displayName')
+              .session(session);
+
+            const resolvedClassName =
+              studentDoc?.class?.displayName ||
+              studentDoc?.class?.name ||
+              'Unknown Class';
 
             record.breakdown.push({
                 student,
-                studentName: studentDoc ? (studentDoc.user?.name || studentDoc.name) : "Unknown Student",
-                className: studentDoc && studentDoc.currentClass ? "Class Enrolled" : "Unknown Class",
+              studentName: studentDoc ? (studentDoc.user?.name || studentDoc.name) : "Unknown Student",
+              className: resolvedClassName,
                 routeSnapshot: routeSnapshot || (enrollment?.route ? 'Route' : null),
                 stopSnapshot: stopSnapshot || (enrollment?.stop || null),
                 dailyRate,
