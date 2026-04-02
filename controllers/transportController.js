@@ -780,10 +780,12 @@ exports.processTransportJob = async (jobData) => {
         const weekNumber = normalizeWeekNumber(week);
 
         let record = await TransportFeeRecord.findOne({
-            termId,
-            week: weekNumber,
-            school: schoolId
-        }).session(session);
+          termId,
+          week: weekNumber,
+          school: schoolId
+        })
+          .sort({ updatedAt: -1, createdAt: -1 })
+          .session(session);
 
         if (!record) {
             record = new TransportFeeRecord({
