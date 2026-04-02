@@ -923,12 +923,12 @@ exports.getTransportFeeRecords = async (req, res) => {
         }
         
         // If no week parameter is cleanly provided by the client, sort by nearest chronological week
-        const record = await TransportFeeRecord.findOne(query).sort({ week: -1 });
+        const records = await TransportFeeRecord.find(query).sort({ week: -1 });
 
         // Use the same response shape as FeedingFee
         res.status(200).json({ 
           success: true, 
-          data: record ? [record] : [] 
+          data: records 
         });
     } catch (error) {
         console.error('Error fetching transport fee records:', error);
