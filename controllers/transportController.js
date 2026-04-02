@@ -128,31 +128,59 @@ exports.enrollStudent = async (req, res) => {
   try {
     const { studentId, termId, academicYear, busId, routeId, stop, status } = req.body;
     const school = req.user.school;
+    const enrollmentStatus = status || 'active';
 
     const mongoose = require('mongoose');
     const sId = (studentId && mongoose.Types.ObjectId.isValid(studentId)) ? new mongoose.Types.ObjectId(studentId) : studentId;
-    const tId = (termId && mongoose.Types.ObjectId.isValid(termId)) ? new mongoose.Types.ObjectId(termId) : termId;
+
+    if (!studentId) {
+      return res.status(400).json({ message: 'Student is required' });
+    }
+
+    const student = await Student.findOne({ _id: sId, school }).select('_id');
+    if (!student) {
+      return res.status(404).json({ message: 'Student not found for this school' });
+    }
+
+    let resolvedRouteId = routeId;
+    if (!resolvedRouteId) {
+      let fallbackRoute = await TransportRoute.findOne({ school, name: 'Single Bus Route' }).select('_id');
+      if (!fallbackRoute) {
+        fallbackRoute = await TransportRoute.create({
+          school,
+          name: 'Single Bus Route',
+          stops: ['Default Stop'],
+          defaultFee: 0,
+        });
+      }
+      resolvedRouteId = fallbackRoute._id;
+    }
+
+    const normalizedStop = typeof stop === 'string' ? stop.trim() : '';
+    if (enrollmentStatus === 'active' && !normalizedStop) {
+      return res.status(400).json({ message: 'Pickup location is required for active enrollment' });
+    }
 
     // UNIQUE KEY: student + school (Continuous Enrollment)
     let enrollment = await TransportEnrollment.findOne({ student: sId, school });
     if (enrollment) {
       if (busId !== undefined) enrollment.bus = busId;
-      if (routeId !== undefined) enrollment.route = routeId;
-      if (stop !== undefined) enrollment.stop = stop;
-      if (status !== undefined) enrollment.status = status;
+      if (resolvedRouteId !== undefined) enrollment.route = resolvedRouteId;
+      if (normalizedStop) enrollment.stop = normalizedStop;
+      if (status !== undefined) enrollment.status = enrollmentStatus;
       // Optionally update term/academicYear for the record, but it's not the primary key
       if (termId !== undefined) enrollment.term = termId;
       if (academicYear !== undefined) enrollment.academicYear = academicYear;
       await enrollment.save();
     } else {
       enrollment = new TransportEnrollment({
-        student: studentId,
+        student: sId,
         term: termId,
         academicYear,
         bus: busId,
-        route: routeId,
-        stop,
-        status: status || 'active',
+        route: resolvedRouteId,
+        stop: normalizedStop,
+        status: enrollmentStatus,
         school
       });
       await enrollment.save();
