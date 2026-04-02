@@ -857,7 +857,8 @@ exports.markTransport = async (req, res) => {
     }
 
     try {
-        await attendanceQueue.add('markTransport', {
+        // Run synchronously to ensure instant updates on the Admin Dashboard without background worker delays
+        await exports.processTransportJob({
             student, termId, academicYear, week, day, status, routeSnapshot, stopSnapshot,
             reqUser: { 
                 school: req.user.school, 
@@ -865,7 +866,7 @@ exports.markTransport = async (req, res) => {
             }
         });
 
-        res.status(200).json({ success: true, message: 'Transport attendance queued successfully' });
+        res.status(200).json({ success: true, message: 'Transport attendance processed successfully' });
     } catch (error) {
         console.error('Error queuing transport attendance:', error);
         res.status(500).json({ success: false, message: 'Server error enqueueing transport attendance' });
