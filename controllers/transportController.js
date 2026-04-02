@@ -659,11 +659,17 @@ exports.recordWeeklyFeePayment = async (req, res) => {
     const dailyRate = Number(enrollment.feeAmount) || 0;
     const totalAmount = dailyRate * safeDaysCount;
 
+    // EXACT DATE MATCHING explicitly for 'Daily' logs
+    const targetDate = new Date(date);
+    targetDate.setHours(0,0,0,0);
+    const endOfDay = new Date(targetDate);
+    endOfDay.setHours(23,59,59,999);
+
     const existingWeeklyPayment = await TransportAttendance.findOne({
       student: sId,
       term: tId,
       school: req.user.school,
-      'payment.weekLabel': weekLabel,
+      date: { $gte: targetDate, $lte: endOfDay }
     });
 
     const paymentPayload = existingWeeklyPayment?.payment || {};
