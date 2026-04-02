@@ -49,11 +49,11 @@ const transportFeeRecordSchema = new mongoose.Schema(
         className: String,
         dailyRate: { type: Number, default: 0 },
         days: {
-          M: { type: String, enum: ['boarded', 'absent', 'notmarked'], default: 'notmarked' },
-          T: { type: String, enum: ['boarded', 'absent', 'notmarked'], default: 'notmarked' },
-          W: { type: String, enum: ['boarded', 'absent', 'notmarked'], default: 'notmarked' },
-          TH: { type: String, enum: ['boarded', 'absent', 'notmarked'], default: 'notmarked' },
-          F: { type: String, enum: ['boarded', 'absent', 'notmarked'], default: 'notmarked' },
+          M: { type: String, enum: ['boarded', 'absent', 'notmarked', 'dropped'], default: 'notmarked' },
+          T: { type: String, enum: ['boarded', 'absent', 'notmarked', 'dropped'], default: 'notmarked' },
+          W: { type: String, enum: ['boarded', 'absent', 'notmarked', 'dropped'], default: 'notmarked' },
+          TH: { type: String, enum: ['boarded', 'absent', 'notmarked', 'dropped'], default: 'notmarked' },
+          F: { type: String, enum: ['boarded', 'absent', 'notmarked', 'dropped'], default: 'notmarked' },
         },
         perDayFee: {
           M: { type: Number, default: 0 },
@@ -83,7 +83,7 @@ transportFeeRecordSchema.pre('save', function (next) {
     let daysBoardedCount = 0;
 
     ['M', 'T', 'W', 'TH', 'F'].forEach((day) => {
-      if (entry.days[day] === 'boarded') {
+      if (entry.days[day] === 'boarded' || entry.days[day] === 'dropped') {
         const fee = entry.dailyRate || 0;
         entry.perDayFee[day] = fee;
         studentTotal += fee;
