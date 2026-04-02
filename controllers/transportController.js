@@ -922,8 +922,8 @@ exports.getTransportFeeRecords = async (req, res) => {
             query.week = normalizeWeekNumber(week);
         }
         
-        // If no week parameter is cleanly provided by the client, sort by nearest chronological week
-        const records = await TransportFeeRecord.find(query).sort({ week: -1 });
+        // Sort by updatedAt descending so the freshest duplicate document takes absolute precedence
+        const records = await TransportFeeRecord.find(query).sort({ updatedAt: -1 });
 
         // Use the same response shape as FeedingFee
         res.status(200).json({ 
