@@ -850,7 +850,7 @@ exports.processTransportJob = async (jobData) => {
 };
 
 exports.markTransport = async (req, res) => {
-    const { student, termId, academicYear, week, day, status, routeSnapshot, stopSnapshot } = req.body;
+    const { student, termId, academicYear, week, day, date, status, routeSnapshot, stopSnapshot } = req.body;
 
     if (!student || !termId || !week || !day || !status) {
       return res.status(400).json({ message: "Missing required fields" });
@@ -865,6 +865,45 @@ exports.markTransport = async (req, res) => {
                 _id: req.user._id 
             }
         });
+
+        // Sync with TransportAttendance for backward compatibility with Daily Attendance reports
+        if (date) {
+            const updateObj = {
+                student,
+                school: req.user.school,
+                term: termId,
+                academicYear: academicYear || '',
+                date,
+                routeSnapshot: routeSnapshot || 'Unknown',
+                stopSnapshot: stopSnapshot || 'Unknown',
+                markedBy: req.user._id
+            };
+            
+            if (status === 'boarded' || status === 'picked') {
+                updateObj.picked = true;
+                updateObj.pickedAt = new Date();
+                updateObj.isAbsent = false;
+                updateObj.dropped = false;
+            } else if (status === 'dropped') {
+                updateObj.dropped = true;
+                updateObj.droppedAt = new Date();
+                updateObj.isAbsent = false;
+            } else if (status === 'absent') {
+                updateObj.isAbsent = true;
+                updateObj.picked = false;
+                updateObj.dropped = false;
+            } else if (status === 'notmarked') {
+                updateObj.picked = false;
+                updateObj.dropped = false;
+                updateObj.isAbsent = false;
+            }
+
+            await TransportAttendance.findOneAndUpdate(
+                { student, date, school: req.user.school },
+                { $set: updateObj },
+                { upsert: true, new: true }
+            );
+        }
 
         res.status(200).json({ success: true, message: 'Transport attendance processed successfully' });
     } catch (error) {
