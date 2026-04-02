@@ -246,11 +246,26 @@ exports.assignTeacher = async (req, res) => {
     const { teacherId, routeId, date, termId } = req.body;
     const school = req.user.school;
 
+    if (!teacherId || !routeId || !date || !termId) {
+      return res.status(400).json({ message: 'teacherId, routeId, date and termId are required' });
+    }
+
     const assignment = await TransportAssignment.findOneAndUpdate(
-      { route: routeId, date },
-      { teacher: teacherId, term: termId, school },
-      { upsert: true, new: true }
-    );
+      { route: routeId, date, school },
+      {
+        $set: {
+          teacher: teacherId,
+          route: routeId,
+          date,
+          term: termId,
+          school,
+        },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    )
+      .populate('teacher', 'name profilePicture')
+      .populate('route', 'name')
+      .populate('term', 'term academicYear');
 
     res.status(201).json({ success: true, assignment });
   } catch (err) {
@@ -267,12 +282,10 @@ exports.getAssignments = async (req, res) => {
     if (teacherId) filter.teacher = teacherId;
 
     const assignments = await TransportAssignment.find(filter)
-      .populate({
-        path: 'teacher',
-        populate: { path: 'user', select: 'name profilePicture' }
-      })
+      .populate('teacher', 'name profilePicture')
       .populate('route', 'name')
-      .populate('term', 'term academicYear');
+      .populate('term', 'term academicYear')
+      .sort({ date: -1, updatedAt: -1, createdAt: -1 });
 
     res.status(200).json({ success: true, assignments });
   } catch (err) {
