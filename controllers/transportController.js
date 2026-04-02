@@ -278,7 +278,6 @@ exports.getAssignments = async (req, res) => {
     const { date, termId, teacherId } = req.query;
     const filter = { school: req.user.school };
     if (date) filter.date = date;
-    if (termId) filter.term = termId;
     if (teacherId) filter.teacher = teacherId;
 
     const assignments = await TransportAssignment.find(filter)
