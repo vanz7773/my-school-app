@@ -876,13 +876,15 @@ exports.markTransport = async (req, res) => {
 exports.getTransportFeeRecords = async (req, res) => {
     try {
         const { termId, week } = req.query;
-        const weekNumber = normalizeWeekNumber(week);
+        let query = { school: req.user.school, termId };
         
-        const record = await TransportFeeRecord.findOne({ 
-            school: req.user.school, 
-            termId, 
-            week: weekNumber
-        });
+        // If week is provided correctly (not NaN or undefined string), enforce week constraint
+        if (week && week !== 'NaN' && week !== 'undefined') {
+            query.week = normalizeWeekNumber(week);
+        }
+        
+        // If no week parameter is cleanly provided by the client, sort by nearest chronological week
+        const record = await TransportFeeRecord.findOne(query).sort({ week: -1 });
 
         // Use the same response shape as FeedingFee
         res.status(200).json({ 
