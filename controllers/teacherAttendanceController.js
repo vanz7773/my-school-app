@@ -1187,9 +1187,12 @@ const getTeacherAttendanceHistory = async (req, res) => {
     }
 
     const history = await Attendance.find({ teacher: teacher._id })
+      .populate({
+        path: 'term',
+        select: 'term academicYear startDate endDate'
+      })
       .sort({ date: -1 })
-      .select('date signInTime signOutTime status location')
-      .limit(30);
+      .select('date signInTime signOutTime status location term');
 
     res.status(200).json({
       status: 'success',
@@ -1231,6 +1234,10 @@ const getAdminAttendanceHistory = async (req, res) => {
       .populate({
         path: 'teacher',
         populate: { path: 'user', select: 'name ' }
+      })
+      .populate({
+        path: 'term',
+        select: 'term academicYear startDate endDate'
       })
       .sort({ date: -1 });
 
