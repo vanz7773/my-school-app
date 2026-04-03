@@ -245,24 +245,40 @@ exports.assignTeacher = async (req, res) => {
   try {
     const { teacherId, routeId, date, termId } = req.body;
     const school = req.user.school;
+    const effectiveDate = date || new Date().toISOString().split('T')[0];
 
-    if (!teacherId || !routeId || !date || !termId) {
-      return res.status(400).json({ message: 'teacherId, routeId, date and termId are required' });
+    if (!teacherId || !routeId || !termId) {
+      return res.status(400).json({ message: 'teacherId, routeId and termId are required' });
     }
 
-    const assignment = await TransportAssignment.findOneAndUpdate(
-      { route: routeId, date, school },
-      {
-        $set: {
-          teacher: teacherId,
-          route: routeId,
-          date,
-          term: termId,
-          school,
-        },
-      },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    )
+    let assignment = await TransportAssignment.findOne({ route: routeId, school })
+      .sort({ updatedAt: -1, createdAt: -1 });
+
+    if (!assignment) {
+      assignment = new TransportAssignment({
+        teacher: teacherId,
+        route: routeId,
+        date: effectiveDate,
+        term: termId,
+        school,
+      });
+    } else {
+      assignment.teacher = teacherId;
+      assignment.route = routeId;
+      assignment.date = assignment.date || effectiveDate;
+      assignment.term = termId;
+      assignment.school = school;
+    }
+
+    await assignment.save();
+
+    await TransportAssignment.deleteMany({
+      route: routeId,
+      school,
+      _id: { $ne: assignment._id },
+    });
+
+    assignment = await TransportAssignment.findById(assignment._id)
       .populate('teacher', 'name profilePicture')
       .populate('route', 'name')
       .populate('term', 'term academicYear');
@@ -275,16 +291,24 @@ exports.assignTeacher = async (req, res) => {
 
 exports.getAssignments = async (req, res) => {
   try {
-    const { date, termId, teacherId } = req.query;
+    const { teacherId, routeId } = req.query;
     const filter = { school: req.user.school };
-    if (date) filter.date = date;
     if (teacherId) filter.teacher = teacherId;
+    if (routeId) filter.route = routeId;
 
-    const assignments = await TransportAssignment.find(filter)
+    const assignmentDocs = await TransportAssignment.find(filter)
       .populate('teacher', 'name profilePicture')
       .populate('route', 'name')
       .populate('term', 'term academicYear')
-      .sort({ date: -1, updatedAt: -1, createdAt: -1 });
+      .sort({ updatedAt: -1, createdAt: -1 });
+
+    const seenRoutes = new Set();
+    const assignments = assignmentDocs.filter((assignment) => {
+      const routeKey = String(assignment.route?._id || assignment.route || '');
+      if (!routeKey || seenRoutes.has(routeKey)) return false;
+      seenRoutes.add(routeKey);
+      return true;
+    });
 
     res.status(200).json({ success: true, assignments });
   } catch (err) {
@@ -297,11 +321,9 @@ exports.getAssignments = async (req, res) => {
 // ==========================================
 exports.getTodayAssignment = async (req, res) => {
   try {
-    // Priority: Query param date > Localized date > UTC fallback
-    const today = req.query.date || new Date().toISOString().split('T')[0];
     const userId = req.user.id;
 
-    console.log(`[DEBUG] getTodayAssignment lookup - User: ${userId}, Date: ${today}`);
+    console.log(`[DEBUG] getTodayAssignment lookup - User: ${userId}`);
 
     const Teacher = require('../models/Teacher');
     const teacherProfile = await Teacher.findOne({ user: userId });
@@ -309,17 +331,17 @@ exports.getTodayAssignment = async (req, res) => {
     const teacherIds = [userId];
     if (teacherProfile) teacherIds.push(teacherProfile._id);
 
-    // DYNAMIC ACCESS: Since the teacher is assigned to the bus permanently 
-    // (Monday - Friday), we fetch their MOST RECENT assignment and use its 
-    // term credentials to grant them access to today's manifest, ignoring strict date expiration.
+    // PERSISTENT ACCESS: Once an admin assigns a teacher to the bus, that
+    // assignment remains active until an admin changes it.
     const assignment = await TransportAssignment.findOne({
-      teacher: { $in: teacherIds }
-    }).sort({ createdAt: -1 })
+      teacher: { $in: teacherIds },
+      school: req.user.school,
+    }).sort({ updatedAt: -1, createdAt: -1 })
       .populate('route')
       .populate('term', 'term academicYear');
 
     if (assignment) {
-      console.log(`[DEBUG] Found recent persistent assignment for route: ${assignment.route?.name}, term: ${assignment.term?._id || assignment.term}`);
+      console.log(`[DEBUG] Found persistent assignment for route: ${assignment.route?.name}, term: ${assignment.term?._id || assignment.term}`);
     } else {
       console.log(`[DEBUG] No assignment found for teacher IDs: ${teacherIds}`);
     }
