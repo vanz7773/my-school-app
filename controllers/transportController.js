@@ -1020,6 +1020,10 @@ exports.getTransportDebtorsForWeek = async (req, res) => {
 
         const schoolId = req.user.school;
         const weekNumber = parseInt(String(week).replace(/Week\s*/i, ""), 10) || Number(week);
+        const weekLabel = `Week ${weekNumber}`;
+        const targetDate = new Date(dateStr);
+        targetDate.setHours(0, 0, 0, 0);
+        const DAY_MS = 24 * 60 * 60 * 1000;
 
         const records = await TransportFeeRecord.find({
             school: schoolId,
@@ -1029,13 +1033,26 @@ exports.getTransportDebtorsForWeek = async (req, res) => {
         .populate('breakdown.student', 'guardianName guardianPhone')
         .lean();
 
+        // Fetch ALL payments for this term/weekLabel — coverage-based check below
         const payments = await TransportWeeklyFeePayment.find({
             school: schoolId,
-            termId,
-            date: dateStr
+            term: termId,
+            weekLabel
         }).lean();
 
-        const paidStudentIds = new Set(payments.map(p => p.student?._id?.toString() || p.student?.toString()));
+        // Build a set of student IDs whose payment COVERS the target date
+        const paidStudentIds = new Set();
+        for (const p of payments) {
+            const sid = p.student?._id?.toString() || p.student?.toString();
+            if (!sid || !p.date) continue;
+            const payStart = new Date(p.date);
+            payStart.setHours(0, 0, 0, 0);
+            const daysCount = p.daysCount || 1;
+            const payEnd = new Date(payStart.getTime() + daysCount * DAY_MS);
+            if (targetDate >= payStart && targetDate < payEnd) {
+                paidStudentIds.add(sid);
+            }
+        }
 
         const debtors = [];
 
@@ -1087,6 +1104,10 @@ exports.getTransportAuditReport = async (req, res) => {
 
         const schoolId = req.user.school;
         const weekNumber = parseInt(String(week).replace(/Week\s*/i, ""), 10) || Number(week);
+        const weekLabel = `Week ${weekNumber}`;
+        const targetDate = new Date(dateStr);
+        targetDate.setHours(0, 0, 0, 0);
+        const DAY_MS = 24 * 60 * 60 * 1000;
 
         const records = await TransportFeeRecord.find({
             school: schoolId,
@@ -1096,16 +1117,27 @@ exports.getTransportAuditReport = async (req, res) => {
         .populate('breakdown.student', 'guardianName guardianPhone')
         .lean();
 
+        // Fetch ALL payments for this term/weekLabel — coverage-based check below
         const payments = await TransportWeeklyFeePayment.find({
             school: schoolId,
-            termId,
-            date: dateStr
+            term: termId,
+            weekLabel
         }).lean();
 
+        // Build paymentMap: studentId -> totalAmount, for payments that COVER the target date
         const paymentMap = new Map();
         for (const p of payments) {
             const sid = p.student?._id?.toString() || p.student?.toString();
-            paymentMap.set(sid, Number(p.totalAmount) || 0);
+            if (!sid || !p.date) continue;
+            const payStart = new Date(p.date);
+            payStart.setHours(0, 0, 0, 0);
+            const daysCount = p.daysCount || 1;
+            const payEnd = new Date(payStart.getTime() + daysCount * DAY_MS);
+            if (targetDate >= payStart && targetDate < payEnd) {
+                // Prefer the highest amount if there are multiple payments covering this day
+                const existing = paymentMap.get(sid) || 0;
+                paymentMap.set(sid, Math.max(existing, Number(p.totalAmount) || 0));
+            }
         }
 
         const classMap = new Map();
@@ -1150,7 +1182,7 @@ exports.getTransportAuditReport = async (req, res) => {
                     classGroup.students.push({
                         studentId: sid,
                         studentName: entry.studentName,
-                        status: isPaid ? 'present' : 'absent', // 'present' means PAID in the frontend UI
+                        status: isPaid ? 'present' : 'absent',
                         amount,
                         guardianName: studentObj.guardianName || '',
                         guardianPhone: studentObj.guardianPhone || ''
@@ -1168,7 +1200,6 @@ exports.getTransportAuditReport = async (req, res) => {
 
         const auditReport = Array.from(classMap.values());
 
-        // Sort students alphabetically
         for (const clsReport of auditReport) {
             clsReport.students.sort((a, b) => {
                 if (!a.studentName) return 1;
@@ -1177,10 +1208,7 @@ exports.getTransportAuditReport = async (req, res) => {
             });
         }
 
-        // Sort classes alphabetically
-        auditReport.sort((a, b) => {
-            return a.className.localeCompare(b.className);
-        });
+        auditReport.sort((a, b) => a.className.localeCompare(b.className));
 
         return res.json({
             success: true,
