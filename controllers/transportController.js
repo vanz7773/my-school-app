@@ -12,6 +12,7 @@ const mongoose = require('mongoose');
 const TransportFeeRecord = require('../models/TransportFeeRecord');
 const { attendanceQueue } = require('../queue/attendanceQueue');
 const { broadcastNotification } = require('./notificationController');
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const flattenWeeklyPaymentRecord = (doc) => {
   if (!doc) return null;
@@ -40,6 +41,61 @@ const flattenWeeklyPaymentRecord = (doc) => {
     updatedAt: obj.updatedAt,
     source: 'attendance',
   };
+};
+
+const parseDateOnly = (value) => {
+  if (!value) return null;
+  const [year, month, day] = String(value).split('T')[0].split('-').map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day);
+};
+
+const getCoveredTransportPaymentMap = async ({ schoolId, termId, weekLabel, targetDate }) => {
+  const [attendancePayments, legacyPayments] = await Promise.all([
+    TransportAttendance.find({
+      school: schoolId,
+      term: termId,
+      'payment.weekLabel': weekLabel,
+      'payment.totalAmount': { $gt: 0 },
+    }).lean(),
+    TransportWeeklyFeePayment.find({
+      school: schoolId,
+      term: termId,
+      weekLabel,
+      totalAmount: { $gt: 0 },
+    }).lean(),
+  ]);
+
+  const paymentMap = new Map();
+  const normalizedPayments = [
+    ...attendancePayments.map(flattenWeeklyPaymentRecord),
+    ...legacyPayments.map(flattenWeeklyPaymentRecord),
+  ].filter(Boolean);
+
+  for (const payment of normalizedPayments) {
+    const sid = payment.student?._id?.toString() || payment.student?.toString();
+    const payStart = parseDateOnly(payment.date);
+
+    if (!sid || !payStart) continue;
+
+    const daysCount = Math.max(1, Number(payment.daysCount) || 1);
+    const payEnd = new Date(payStart.getTime() + daysCount * DAY_MS);
+
+    if (targetDate >= payStart && targetDate < payEnd) {
+      const amount = Number(payment.totalAmount) || 0;
+      const existing = paymentMap.get(sid);
+
+      if (!existing || amount > existing.amount) {
+        paymentMap.set(sid, {
+          amount,
+          date: payment.date,
+          daysCount,
+        });
+      }
+    }
+  }
+
+  return paymentMap;
 };
 
 // ==========================================
@@ -1021,9 +1077,10 @@ exports.getTransportDebtorsForWeek = async (req, res) => {
         const schoolId = req.user.school;
         const weekNumber = parseInt(String(week).replace(/Week\s*/i, ""), 10) || Number(week);
         const weekLabel = `Week ${weekNumber}`;
-        const targetDate = new Date(dateStr);
-        targetDate.setHours(0, 0, 0, 0);
-        const DAY_MS = 24 * 60 * 60 * 1000;
+        const targetDate = parseDateOnly(dateStr);
+        if (!targetDate) {
+            return res.status(400).json({ success: false, message: "Invalid dateStr" });
+        }
 
         const records = await TransportFeeRecord.find({
             school: schoolId,
@@ -1033,26 +1090,13 @@ exports.getTransportDebtorsForWeek = async (req, res) => {
         .populate('breakdown.student', 'guardianName guardianPhone')
         .lean();
 
-        // Fetch ALL payments for this term/weekLabel — coverage-based check below
-        const payments = await TransportWeeklyFeePayment.find({
-            school: schoolId,
-            term: termId,
-            weekLabel
-        }).lean();
-
-        // Build a set of student IDs whose payment COVERS the target date
-        const paidStudentIds = new Set();
-        for (const p of payments) {
-            const sid = p.student?._id?.toString() || p.student?.toString();
-            if (!sid || !p.date) continue;
-            const payStart = new Date(p.date);
-            payStart.setHours(0, 0, 0, 0);
-            const daysCount = p.daysCount || 1;
-            const payEnd = new Date(payStart.getTime() + daysCount * DAY_MS);
-            if (targetDate >= payStart && targetDate < payEnd) {
-                paidStudentIds.add(sid);
-            }
-        }
+        const paymentMap = await getCoveredTransportPaymentMap({
+            schoolId,
+            termId,
+            weekLabel,
+            targetDate,
+        });
+        const paidStudentIds = new Set(paymentMap.keys());
 
         const debtors = [];
 
@@ -1105,9 +1149,10 @@ exports.getTransportAuditReport = async (req, res) => {
         const schoolId = req.user.school;
         const weekNumber = parseInt(String(week).replace(/Week\s*/i, ""), 10) || Number(week);
         const weekLabel = `Week ${weekNumber}`;
-        const targetDate = new Date(dateStr);
-        targetDate.setHours(0, 0, 0, 0);
-        const DAY_MS = 24 * 60 * 60 * 1000;
+        const targetDate = parseDateOnly(dateStr);
+        if (!targetDate) {
+            return res.status(400).json({ success: false, message: "Invalid dateStr" });
+        }
 
         const records = await TransportFeeRecord.find({
             school: schoolId,
@@ -1117,28 +1162,12 @@ exports.getTransportAuditReport = async (req, res) => {
         .populate('breakdown.student', 'guardianName guardianPhone')
         .lean();
 
-        // Fetch ALL payments for this term/weekLabel — coverage-based check below
-        const payments = await TransportWeeklyFeePayment.find({
-            school: schoolId,
-            term: termId,
-            weekLabel
-        }).lean();
-
-        // Build paymentMap: studentId -> totalAmount, for payments that COVER the target date
-        const paymentMap = new Map();
-        for (const p of payments) {
-            const sid = p.student?._id?.toString() || p.student?.toString();
-            if (!sid || !p.date) continue;
-            const payStart = new Date(p.date);
-            payStart.setHours(0, 0, 0, 0);
-            const daysCount = p.daysCount || 1;
-            const payEnd = new Date(payStart.getTime() + daysCount * DAY_MS);
-            if (targetDate >= payStart && targetDate < payEnd) {
-                // Prefer the highest amount if there are multiple payments covering this day
-                const existing = paymentMap.get(sid) || 0;
-                paymentMap.set(sid, Math.max(existing, Number(p.totalAmount) || 0));
-            }
-        }
+        const paymentMap = await getCoveredTransportPaymentMap({
+            schoolId,
+            termId,
+            weekLabel,
+            targetDate,
+        });
 
         const classMap = new Map();
         let grandTotal = 0;
@@ -1157,8 +1186,9 @@ exports.getTransportAuditReport = async (req, res) => {
                     
                     if (!sid) continue;
 
-                    const isPaid = paymentMap.has(sid);
-                    const amount = isPaid ? paymentMap.get(sid) : 0;
+                    const paymentDetails = paymentMap.get(sid);
+                    const isPaid = Boolean(paymentDetails);
+                    const amount = isPaid ? paymentDetails.amount : 0;
                     
                     if (isPaid) {
                         totalPaid++;
@@ -1183,7 +1213,9 @@ exports.getTransportAuditReport = async (req, res) => {
                         studentId: sid,
                         studentName: entry.studentName,
                         status: isPaid ? 'present' : 'absent',
+                        isPaid,
                         amount,
+                        paymentDate: paymentDetails?.date || null,
                         guardianName: studentObj.guardianName || '',
                         guardianPhone: studentObj.guardianPhone || ''
                     });
