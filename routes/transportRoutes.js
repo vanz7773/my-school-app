@@ -41,6 +41,7 @@ router.get('/daily-attendance', transportController.getDailyAttendance);
 router.get('/monthly-report', transportController.getMonthlyReport);
 router.get('/debtors', transportController.getTransportDebtorsForWeek);
 router.get('/audit-report', transportController.getTransportAuditReport);
+router.get('/daily-summary', transportController.getDailyTotalSummary);
 
 // Fees (Legacy or Optional)
 router.get('/fees', transportController.getFees);
