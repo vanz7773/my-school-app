@@ -1007,3 +1007,194 @@ exports.getTransportFeeRecords = async (req, res) => {
         res.status(500).json({ success: false, message: 'Server error fetching transport records' });
     }
 };
+
+/* --------------------------------------------------------------------
+ * 🔍 Get Transport Debtors For Date
+ * -------------------------------------------------------------------- */
+exports.getTransportDebtorsForWeek = async (req, res) => {
+    try {
+        const { termId, week, activeDayKey, dateStr } = req.query;
+        if (!termId || !week || !activeDayKey || !dateStr) {
+            return res.status(400).json({ success: false, message: "Missing required parameters" });
+        }
+
+        const schoolId = req.user.school;
+        const weekNumber = parseInt(String(week).replace(/Week\s*/i, ""), 10) || Number(week);
+
+        const records = await TransportFeeRecord.find({
+            school: schoolId,
+            termId,
+            week: weekNumber
+        })
+        .populate('breakdown.student', 'guardianName guardianPhone')
+        .lean();
+
+        const payments = await TransportWeeklyFeePayment.find({
+            school: schoolId,
+            termId,
+            date: dateStr
+        }).lean();
+
+        const paidStudentIds = new Set(payments.map(p => p.student?._id?.toString() || p.student?.toString()));
+
+        const debtors = [];
+
+        for (const record of records) {
+            if (!record.breakdown) continue;
+            
+            for (const entry of record.breakdown) {
+                const status = entry.days?.[activeDayKey];
+                // Check if they boarded
+                if (status === 'boarded' || status === 'dropped') {
+                    const studentObj = entry.student || {};
+                    const studentIdId = studentObj._id?.toString() || studentObj?.toString();
+
+                    if (studentIdId && !paidStudentIds.has(studentIdId)) {
+                        debtors.push({
+                            studentId: studentIdId,
+                            studentName: entry.studentName,
+                            className: entry.className,
+                            week: record.week,
+                            guardianName: studentObj.guardianName || '',
+                            guardianPhone: studentObj.guardianPhone || ''
+                        });
+                    }
+                }
+            }
+        }
+
+        return res.json({
+            success: true,
+            count: debtors.length,
+            debtors
+        });
+
+    } catch (error) {
+        console.error("Error fetching transport debtors:", error);
+        return res.status(500).json({ success: false, message: "Failed to fetch transport debtors" });
+    }
+};
+
+/* --------------------------------------------------------------------
+ * 📋 Get Transport Audit Report
+ * -------------------------------------------------------------------- */
+exports.getTransportAuditReport = async (req, res) => {
+    try {
+        const { termId, week, activeDayKey, dateStr } = req.query;
+        if (!termId || !week || !activeDayKey || !dateStr) {
+            return res.status(400).json({ success: false, message: "Missing required parameters" });
+        }
+
+        const schoolId = req.user.school;
+        const weekNumber = parseInt(String(week).replace(/Week\s*/i, ""), 10) || Number(week);
+
+        const records = await TransportFeeRecord.find({
+            school: schoolId,
+            termId,
+            week: weekNumber
+        })
+        .populate('breakdown.student', 'guardianName guardianPhone')
+        .lean();
+
+        const payments = await TransportWeeklyFeePayment.find({
+            school: schoolId,
+            termId,
+            date: dateStr
+        }).lean();
+
+        const paymentMap = new Map();
+        for (const p of payments) {
+            const sid = p.student?._id?.toString() || p.student?.toString();
+            paymentMap.set(sid, Number(p.totalAmount) || 0);
+        }
+
+        const classMap = new Map();
+        let grandTotal = 0;
+        let totalPaid = 0;
+        let totalUnpaid = 0;
+
+        for (const record of records) {
+            if (!record.breakdown || record.breakdown.length === 0) continue;
+
+            for (const entry of record.breakdown) {
+                const status = entry.days?.[activeDayKey];
+                // Only include boarded students in the audit report
+                if (status === 'boarded' || status === 'dropped') {
+                    const studentObj = entry.student || {};
+                    const sid = studentObj._id?.toString() || studentObj?.toString();
+                    
+                    if (!sid) continue;
+
+                    const isPaid = paymentMap.has(sid);
+                    const amount = isPaid ? paymentMap.get(sid) : 0;
+                    
+                    if (isPaid) {
+                        totalPaid++;
+                        grandTotal += amount;
+                    } else {
+                        totalUnpaid++;
+                    }
+
+                    const className = entry.className || 'Unknown Class';
+                    if (!classMap.has(className)) {
+                        classMap.set(className, {
+                            className,
+                            totalAmount: 0,
+                            paidCount: 0,
+                            unpaidCount: 0,
+                            students: []
+                        });
+                    }
+
+                    const classGroup = classMap.get(className);
+                    classGroup.students.push({
+                        studentId: sid,
+                        studentName: entry.studentName,
+                        status: isPaid ? 'present' : 'absent', // 'present' means PAID in the frontend UI
+                        amount,
+                        guardianName: studentObj.guardianName || '',
+                        guardianPhone: studentObj.guardianPhone || ''
+                    });
+
+                    if (isPaid) {
+                        classGroup.paidCount++;
+                        classGroup.totalAmount += amount;
+                    } else {
+                        classGroup.unpaidCount++;
+                    }
+                }
+            }
+        }
+
+        const auditReport = Array.from(classMap.values());
+
+        // Sort students alphabetically
+        for (const clsReport of auditReport) {
+            clsReport.students.sort((a, b) => {
+                if (!a.studentName) return 1;
+                if (!b.studentName) return -1;
+                return a.studentName.localeCompare(b.studentName);
+            });
+        }
+
+        // Sort classes alphabetically
+        auditReport.sort((a, b) => {
+            return a.className.localeCompare(b.className);
+        });
+
+        return res.json({
+            success: true,
+            day: activeDayKey,
+            week: weekNumber,
+            dateStr,
+            grandTotal,
+            totalPaid,
+            totalUnpaid,
+            report: auditReport
+        });
+
+    } catch (error) {
+        console.error("Error fetching transport audit report:", error);
+        return res.status(500).json({ success: false, message: "Failed to fetch transport audit report" });
+    }
+};

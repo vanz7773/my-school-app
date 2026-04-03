@@ -35,9 +35,12 @@ router.post('/teacher/mark-transport', transportController.markTransport);
 router.get('/teacher/transport-fee-records', transportController.getTransportFeeRecords);
 
 // Analytics & Reports
+// Analytics & Reports
 router.get('/missing-dropoffs', transportController.getMissingDropOffs);
 router.get('/daily-attendance', transportController.getDailyAttendance);
 router.get('/monthly-report', transportController.getMonthlyReport);
+router.get('/debtors', transportController.getTransportDebtorsForWeek);
+router.get('/audit-report', transportController.getTransportAuditReport);
 
 // Fees (Legacy or Optional)
 router.get('/fees', transportController.getFees);
