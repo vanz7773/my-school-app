@@ -48,14 +48,19 @@ class DeviceMonitoringJob {
     });
 
     for (const teacherId of distinctTeachers) {
-      // 1. GEOFENCE CHECK
       try {
+        // 1. GEOFENCE CHECK
         const latestLog = await DeviceActivityLog.findOne({
           teacherId,
           timestamp: { $gte: startOfDay, $lte: now }
         }).sort({ timestamp: -1 });
 
-        if (latestLog && latestLog.location && latestLog.location.latitude && latestLog.location.longitude) {
+        if (
+          latestLog
+          && latestLog.location
+          && latestLog.location.latitude != null
+          && latestLog.location.longitude != null
+        ) {
           const user = await User.findById(teacherId).select('school');
           if (user && user.school) {
             const school = await School.findById(user.school).select('location');
@@ -81,53 +86,53 @@ class DeviceMonitoringJob {
             }
           }
         }
-      } catch (geoErr) {
-        console.error(`Error during geofence check for teacher ${teacherId}:`, geoErr);
-      }
 
-      // 2. STATIONARY CHECK
-      const stationaryMin = await DeviceMovementService.calculateStationaryDuration(teacherId, now);
-      if (stationaryMin >= 90) {
-        const recentAlert = await DeviceAlert.findOne({
-          teacherId,
-          alertType: { $in: ['Device inactive for 2 hours', 'Possible phone abandonment'] },
-          timestamp: { $gte: new Date(now.getTime() - 60 * 60 * 1000) }
-        });
-
-        if (!recentAlert) {
-          const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-          const hourlyLogs = await DeviceActivityLog.find({
+        // 2. STATIONARY CHECK
+        const stationaryMin = await DeviceMovementService.calculateStationaryDuration(teacherId, now);
+        if (stationaryMin >= 90) {
+          const recentAlert = await DeviceAlert.findOne({
             teacherId,
-            timestamp: { $gte: oneHourAgo, $lte: now }
+            alertType: { $in: ['Device inactive for 2 hours', 'Possible phone abandonment'] },
+            timestamp: { $gte: new Date(now.getTime() - 60 * 60 * 1000) }
           });
-          const score = MovementScoreService.calculateScore(hourlyLogs);
 
-          await DeviceAlert.create({
-            teacherId,
-            alertType: stationaryMin >= 120 ? 'Device inactive for 2 hours' : 'Possible phone abandonment',
-            stationaryDuration: stationaryMin,
-            movementScore: score
-          });
+          if (!recentAlert) {
+            const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+            const hourlyLogs = await DeviceActivityLog.find({
+              teacherId,
+              timestamp: { $gte: oneHourAgo, $lte: now }
+            });
+            const score = MovementScoreService.calculateScore(hourlyLogs);
+
+            await DeviceAlert.create({
+              teacherId,
+              alertType: stationaryMin >= 120 ? 'Device inactive for 2 hours' : 'Possible phone abandonment',
+              stationaryDuration: stationaryMin,
+              movementScore: score
+            });
+          }
         }
-      }
 
-      // 3. OFFLINE CHECK
-      const offlineMin = await InternetMonitoringService.calculateOfflineDuration(teacherId, now);
-      if (offlineMin >= 60) {
-        const recentOfflineAlert = await DeviceAlert.findOne({
-          teacherId,
-          alertType: 'Internet disabled during working hours',
-          timestamp: { $gte: new Date(now.getTime() - 60 * 60 * 1000) }
-        });
-
-        if (!recentOfflineAlert) {
-          await DeviceAlert.create({
+        // 3. OFFLINE CHECK
+        const offlineMin = await InternetMonitoringService.calculateOfflineDuration(teacherId, now);
+        if (offlineMin >= 60) {
+          const recentOfflineAlert = await DeviceAlert.findOne({
             teacherId,
             alertType: 'Internet disabled during working hours',
-            offlineDuration: offlineMin,
-            movementScore: 'N/A'
+            timestamp: { $gte: new Date(now.getTime() - 60 * 60 * 1000) }
           });
+
+          if (!recentOfflineAlert) {
+            await DeviceAlert.create({
+              teacherId,
+              alertType: 'Internet disabled during working hours',
+              offlineDuration: offlineMin,
+              movementScore: 'N/A'
+            });
+          }
         }
+      } catch (teacherErr) {
+        console.error(`Error during device monitoring analysis for teacher ${teacherId}:`, teacherErr);
       }
     }
   }

@@ -1,32 +1,47 @@
 const DeviceActivityLog = require('../models/deviceActivityLog');
 
+const MAX_STATIONARY_GAP_MINUTES = 35;
+
 class DeviceMovementService {
   /**
    * Calculates continuous stationary duration (in minutes) for a teacher up to the given end time.
-   * Assumes logs are submitted every ~5 mins during working hours.
+   * Uses the actual time gap between logs so throttled background tasks still count correctly.
    */
   async calculateStationaryDuration(teacherId, endTime) {
-    // Fetch logs for today up to endTime, sorted descending by time
     const startOfDay = new Date(endTime);
     startOfDay.setHours(0, 0, 0, 0);
 
     const logs = await DeviceActivityLog.find({
       teacherId,
       timestamp: { $gte: startOfDay, $lte: endTime }
-    }).sort({ timestamp: -1 });
+    }).sort({ timestamp: -1 }).lean();
 
     if (!logs.length) return 0;
 
     let stationaryMinutes = 0;
+    let previousTimestamp = endTime;
 
     for (const log of logs) {
-      // If the device registered any steps or tilt, or level wasn't NONE, it broke the stationary chain
-      if (log.steps > 0 || log.tiltDetected || log.movementLevel !== 'NONE') {
-        break; // Stop counting backwards
+      const hasMovement = (log.steps || 0) > 0
+        || !!log.tiltDetected
+        || (log.movementLevel && log.movementLevel !== 'NONE');
+
+      if (hasMovement) {
+        break;
       }
-      
-      // Each stationary log usually represents a 5-minute sampling window
-      stationaryMinutes += 5;
+
+      const logTimestamp = new Date(log.timestamp);
+      const gapMinutes = Math.max(
+        0,
+        Math.round((previousTimestamp.getTime() - logTimestamp.getTime()) / 60000)
+      );
+
+      if (gapMinutes > MAX_STATIONARY_GAP_MINUTES) {
+        break;
+      }
+
+      stationaryMinutes += gapMinutes;
+      previousTimestamp = logTimestamp;
     }
 
     return stationaryMinutes;

@@ -14,16 +14,74 @@ exports.syncLogs = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid payload' });
     }
 
-    // Attach teacherId to logs
-    const logsToInsert = logs.map(log => ({
-      ...log,
-      teacherId
-    }));
+    const normalizedLogs = logs.map((log) => {
+      const timestamp = log.timestamp ? new Date(log.timestamp) : new Date();
+      const hasValidTimestamp = !Number.isNaN(timestamp.getTime());
+      const movementLevel = ['HIGH', 'MEDIUM', 'LOW', 'NONE'].includes(log.movementLevel)
+        ? log.movementLevel
+        : 'NONE';
+      const latitude = Number(log?.location?.latitude);
+      const longitude = Number(log?.location?.longitude);
+      const distanceFromSchool = Number(log.distanceFromSchool);
 
-    await DeviceActivityLog.insertMany(logsToInsert);
+      return {
+        teacherId,
+        timestamp: hasValidTimestamp ? timestamp : null,
+        steps: Number(log.steps) || 0,
+        tiltDetected: !!log.tiltDetected,
+        movementLevel,
+        internetStatus: log.internetStatus === 'offline' ? 'offline' : 'online',
+        stationaryState: typeof log.stationaryState === 'boolean'
+          ? log.stationaryState
+          : movementLevel === 'NONE',
+        location: log.location && typeof log.location === 'object'
+          ? {
+              latitude: Number.isFinite(latitude) ? latitude : undefined,
+              longitude: Number.isFinite(longitude) ? longitude : undefined
+            }
+          : undefined,
+        geofenceStatus: ['inside', 'radius', 'outside', null].includes(log.geofenceStatus)
+          ? log.geofenceStatus
+          : null,
+        distanceFromSchool: Number.isFinite(distanceFromSchool)
+          ? distanceFromSchool
+          : 0,
+        geofenceViolation: !!log.geofenceViolation,
+        verificationCompleted: !!log.verificationCompleted
+      };
+    }).filter(log => log.timestamp);
+
+    if (!normalizedLogs.length) {
+      return res.status(400).json({ success: false, message: 'No valid logs supplied' });
+    }
+
+    await DeviceActivityLog.bulkWrite(
+      normalizedLogs.map((log) => ({
+        updateOne: {
+          filter: { teacherId, timestamp: log.timestamp },
+          update: {
+            $setOnInsert: {
+              teacherId: log.teacherId,
+              timestamp: log.timestamp,
+              steps: log.steps,
+              tiltDetected: log.tiltDetected,
+              movementLevel: log.movementLevel,
+              internetStatus: log.internetStatus,
+              stationaryState: log.stationaryState,
+              location: log.location,
+              geofenceStatus: log.geofenceStatus,
+              distanceFromSchool: log.distanceFromSchool,
+              geofenceViolation: log.geofenceViolation
+            }
+          },
+          upsert: true
+        }
+      })),
+      { ordered: false }
+    );
     
     // 🔐 GEOFENCE ALERT CHECK: Trigger real-time alert if violation detected
-    const geofenceViolationLog = logs.find(l => l.geofenceViolation === true);
+    const geofenceViolationLog = normalizedLogs.find(log => log.geofenceViolation === true);
     if (geofenceViolationLog) {
       // Check if we already created a Geofence alert in the last hour to prevent spam
       const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
@@ -44,7 +102,7 @@ exports.syncLogs = async (req, res) => {
     }
 
     // Existing suspicion verification check
-    const isVerificationEvent = logs.some(l => l.verificationCompleted);
+    const isVerificationEvent = normalizedLogs.some(log => log.verificationCompleted);
     if (isVerificationEvent) {
        const stationaryMin = await DeviceMovementService.calculateStationaryDuration(teacherId, new Date());
        if (stationaryMin >= 120) {
