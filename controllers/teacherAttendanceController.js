@@ -385,7 +385,13 @@ const getTeacherDailyRecords = async (req, res) => {
       return res.status(404).json({ status: 'fail', message: 'Teacher is not assigned to a school.' });
     }
 
-    const records = await Attendance.find({ teacher: teacher._id })
+    const { termId } = req.query;
+    const match = { teacher: teacher._id };
+    if (termId) {
+      match.term = new mongoose.Types.ObjectId(termId);
+    }
+
+    const records = await Attendance.find(match)
       .sort({ date: -1 })
       .limit(30);
 
@@ -904,8 +910,14 @@ const getTeacherMonthlySummary = async (req, res) => {
       });
     }
 
+    const { termId } = req.query;
+    const match = { teacher: teacher._id };
+    if (termId) {
+      match.term = new mongoose.Types.ObjectId(termId);
+    }
+
     const summary = await Attendance.aggregate([
-      { $match: { teacher: teacher._id } },
+      { $match: match },
       {
         $group: {
           _id: {
