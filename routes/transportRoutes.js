@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const transportController = require('../controllers/transportController');
-const { protect, requirePrivateSchool } = require('../middlewares/authMiddleware');
+const { protect, requirePrivateSchool, requireAdmin } = require('../middlewares/authMiddleware');
 
 router.use(protect);
 // 🛑 Lock all Transport API endpoints to Private Schools strictly
@@ -26,6 +26,7 @@ router.put('/enrollments/:enrollmentId/fee', transportController.updateEnrollmen
 // Assignments
 router.post('/assignments', transportController.assignTeacher);
 router.get('/assignments', transportController.getAssignments);
+router.delete('/assignments/:id', requireAdmin, transportController.deleteAssignment);
 
 // Mobile Teacher API
 router.get('/teacher/today-assignment', transportController.getTodayAssignment);

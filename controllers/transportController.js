@@ -372,6 +372,33 @@ exports.getAssignments = async (req, res) => {
   }
 };
 
+exports.deleteAssignment = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({ message: 'Assignment id is required' });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Invalid assignment id' });
+    }
+
+    const deletedAssignment = await TransportAssignment.findOneAndDelete({
+      _id: id,
+      school: req.user.school,
+    });
+
+    if (!deletedAssignment) {
+      return res.status(404).json({ message: 'Assignment not found' });
+    }
+
+    res.status(200).json({ success: true, message: 'Assignment deleted' });
+  } catch (err) {
+    res.status(500).json({ message: 'Error deleting assignment', error: err.message });
+  }
+};
+
 // ==========================================
 // MOBILE APP ENDPOINTS (TEACHER)
 // ==========================================
