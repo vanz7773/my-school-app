@@ -1198,7 +1198,13 @@ const getTeacherAttendanceHistory = async (req, res) => {
       });
     }
 
-    const history = await Attendance.find({ teacher: teacher._id })
+    const { termId } = req.query;
+    const match = { teacher: teacher._id };
+    if (termId) {
+      match.term = new mongoose.Types.ObjectId(termId);
+    }
+
+    const history = await Attendance.find(match)
       .populate({
         path: 'term',
         select: 'term academicYear startDate endDate'
