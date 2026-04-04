@@ -1136,14 +1136,36 @@ const getMyAttendance = async (req, res) => {
 
 // -------------------- getClassTermAttendance --------------------
 const getClassTermAttendance = async (req, res) => {
-  const { classId, termId } = req.query;
+  const { classId, termId, academicYear, term } = req.query;
   const schoolId = req.user.school;
 
-  if (!classId || !termId) {
-    return res.status(400).json({ message: 'Missing classId or termId' });
+  if (!classId) {
+    return res.status(400).json({ message: 'Missing classId' });
   }
 
   try {
+    let resolvedTermId = termId;
+
+    if (!resolvedTermId) {
+      if (!academicYear || !term) {
+        return res.status(400).json({
+          message: 'Missing term selection. Provide termId or academicYear and term.',
+        });
+      }
+
+      const resolvedTerm = await Term.findOne({
+        school: schoolId,
+        academicYear,
+        term,
+      }).lean();
+
+      if (!resolvedTerm) {
+        return res.status(404).json({ message: 'Term not found' });
+      }
+
+      resolvedTermId = resolvedTerm._id;
+    }
+
     const students = await Student.find({ class: classId, school: schoolId }).populate('user', 'name').lean();
     if (!students || students.length === 0) {
       return res.json([]);
@@ -1152,7 +1174,7 @@ const getClassTermAttendance = async (req, res) => {
     const attendanceRecords = await StudentAttendance.find({
       school: schoolId,
       class: classId,
-      termId: termId
+      termId: resolvedTermId
     }).lean();
 
     // Group attendance by student
