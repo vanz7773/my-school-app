@@ -243,8 +243,8 @@ exports.updateStudent = async (req, res) => {
 
     const user = await User.findOne({ _id: student.user, school: req.user.school });
     if (user) {
-      user.name = name;
-      user.email = email;
+      if (name !== undefined) user.name = name;
+      if (email !== undefined) user.email = email;
       await user.save();
     }
 
