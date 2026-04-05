@@ -195,7 +195,15 @@ exports.updateStudent = async (req, res) => {
     fatherName,
     fatherOccupation,
     motherName,
-    motherOccupation
+    motherOccupation,
+    // Admission Register Fields
+    surname,
+    otherNames,
+    dateOfAdmission,
+    lastSchoolAttended,
+    dateOfLeaving,
+    causeForLeaving,
+    remarks
   } = req.body;
 
   try {
@@ -213,8 +221,16 @@ exports.updateStudent = async (req, res) => {
     student.languageSpoken = languageSpoken;
     student.fatherName = fatherName;
     student.fatherOccupation = fatherOccupation;
-    student.motherName = motherName;
     student.motherOccupation = motherOccupation;
+
+    // Admission Register Fields
+    if (surname !== undefined) student.surname = surname;
+    if (otherNames !== undefined) student.otherNames = otherNames;
+    if (dateOfAdmission !== undefined) student.dateOfAdmission = dateOfAdmission;
+    if (lastSchoolAttended !== undefined) student.lastSchoolAttended = lastSchoolAttended;
+    if (dateOfLeaving !== undefined) student.dateOfLeaving = dateOfLeaving;
+    if (causeForLeaving !== undefined) student.causeForLeaving = causeForLeaving;
+    if (remarks !== undefined) student.remarks = remarks;
 
     if (classId) {
       const selectedClass = await Class.findById(classId);

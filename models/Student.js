@@ -68,12 +68,20 @@ const studentSchema = new mongoose.Schema({
     default: {}
   },
 
-  // ⭐ NEW: Graduation / Active Status
   status: {
     type: String,
     enum: ['active', 'graduated', 'withdrawn'],
     default: 'active'
-  }
+  },
+
+  // ⭐ NEW: Admission Register Fields
+  surname: { type: String },
+  otherNames: { type: String },
+  dateOfAdmission: { type: Date },
+  lastSchoolAttended: { type: String },
+  dateOfLeaving: { type: Date },
+  causeForLeaving: { type: String },
+  remarks: { type: String }
 
 }, { timestamps: true });
 
