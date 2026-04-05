@@ -210,18 +210,19 @@ exports.updateStudent = async (req, res) => {
     const student = await Student.findOne({ _id: id, school: req.user.school });
     if (!student) return res.status(404).json({ message: 'Student not found' });
 
-    student.gender = gender;
-    student.dateOfBirth = dob;
-    student.guardianPhone = guardianPhone;
-    student.guardianPhone2 = guardianPhone2;
-    student.guardianOccupation = guardianOccupation;
-    student.academicYear = academicYear;
-    student.religion = religion;
-    student.hometown = hometown;
-    student.languageSpoken = languageSpoken;
-    student.fatherName = fatherName;
-    student.fatherOccupation = fatherOccupation;
-    student.motherOccupation = motherOccupation;
+    if (gender !== undefined) student.gender = gender;
+    if (dob !== undefined) student.dateOfBirth = dob;
+    if (guardianPhone !== undefined) student.guardianPhone = guardianPhone;
+    if (guardianPhone2 !== undefined) student.guardianPhone2 = guardianPhone2;
+    if (guardianOccupation !== undefined) student.guardianOccupation = guardianOccupation;
+    if (academicYear !== undefined) student.academicYear = academicYear;
+    if (religion !== undefined) student.religion = religion;
+    if (hometown !== undefined) student.hometown = hometown;
+    if (languageSpoken !== undefined) student.languageSpoken = languageSpoken;
+    if (fatherName !== undefined) student.fatherName = fatherName;
+    if (fatherOccupation !== undefined) student.fatherOccupation = fatherOccupation;
+    if (motherName !== undefined) student.motherName = motherName;
+    if (motherOccupation !== undefined) student.motherOccupation = motherOccupation;
 
     // Admission Register Fields
     if (surname !== undefined) student.surname = surname;
