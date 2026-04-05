@@ -155,7 +155,7 @@ exports.createStudent = async (req, res) => {
   }
 };
 
-// ✅ View all students (optionally filtered by class, academicYear)
+// ✅ View all students (optionally filtered by class, academicYear, search, and paginated)
 exports.getAllStudents = async (req, res) => {
   try {
     const filter = { school: req.user.school };
@@ -163,9 +163,67 @@ exports.getAllStudents = async (req, res) => {
     if (req.query.classId) filter.class = req.query.classId;
     if (req.query.academicYear) filter.academicYear = req.query.academicYear;
 
+    // Handle search query
+    if (req.query.search) {
+      const searchRegex = new RegExp(req.query.search, 'i');
+      const matchingUsers = await User.find({ school: req.user.school, name: searchRegex }).select('_id');
+      const userIds = matchingUsers.map(u => u._id);
+
+      filter.$or = [
+        { admissionNumber: searchRegex },
+        { user: { $in: userIds } }
+      ];
+    }
+
+    // If pagination is explicitly requested
+    if (req.query.page) {
+      const page = parseInt(req.query.page, 10) || 1;
+      const limit = parseInt(req.query.limit, 10) || 10;
+      const skip = (page - 1) * limit;
+
+      // Note: If an aggregation match filter includes ObjectIds, they must be cast properly.
+      // But Mongoose handles basic filters well. Note: inside aggregate filter, $or needs care, but standard filters work.
+      const matchFilter = { school: req.user.school };
+      if (req.query.classId) matchFilter.class = new mongoose.Types.ObjectId(req.query.classId);
+      if (req.query.academicYear) matchFilter.academicYear = req.query.academicYear;
+      if (filter.$or) matchFilter.$or = filter.$or;
+
+      const [students, totalStudents, statsData] = await Promise.all([
+        Student.find(filter)
+          .populate('user', 'name email')
+          .populate('class', 'name displayName stream')
+          .sort({ 'user.name': 1 })
+          .skip(skip)
+          .limit(limit),
+        Student.countDocuments(filter),
+        Student.aggregate([
+          { $match: matchFilter },
+          { $group: { _id: "$gender", count: { $sum: 1 } } }
+        ])
+      ]);
+
+      let maleCount = 0;
+      let femaleCount = 0;
+      statsData.forEach(stat => {
+        if (stat._id === 'Male') maleCount = stat.count;
+        if (stat._id === 'Female') femaleCount = stat.count;
+      });
+
+      return res.json({
+        students,
+        totalStudents,
+        maleCount,
+        femaleCount,
+        page,
+        totalPages: Math.ceil(totalStudents / limit),
+        limit
+      });
+    }
+
+    // Default: return all students (backward compatibility)
     const students = await Student.find(filter)
       .populate('user', 'name email')
-      .populate('class', 'name')
+      .populate('class', 'name displayName stream')
       .sort({ 'user.name': 1 }); // Sort by user.name in ascending order
 
     res.json(students);
