@@ -60,27 +60,14 @@ exports.createStudent = async (req, res) => {
     createdUserId = user._id;
     console.log('✅ Created user:', user._id);
 
-    let admissionNumber;
+    let admissionNumber = "";
 
     if (manualAdmissionNumber) {
-      // Check for uniqueness
+      // Check for uniqueness. If duplicate, we gracefully leave it blank instead of rejecting completely.
       const existing = await Student.findOne({ school: req.user.school, admissionNumber: String(manualAdmissionNumber).trim() });
-      if (existing) {
-        return res.status(400).json({ message: `Admission number ${manualAdmissionNumber} is already in use.` });
+      if (!existing) {
+        admissionNumber = String(manualAdmissionNumber).trim();
       }
-      admissionNumber = String(manualAdmissionNumber).trim();
-    } else {
-      // Generate sequential admission number
-      const existingStudents = await Student.find({ school: req.user.school }).select('admissionNumber');
-      const numericAdmNos = existingStudents
-        .map(s => parseInt(s.admissionNumber, 10))
-        .filter(n => !isNaN(n));
-
-      let nextNum = 1;
-      if (numericAdmNos.length > 0) {
-        nextNum = Math.max(...numericAdmNos) + 1;
-      }
-      admissionNumber = String(nextNum).padStart(3, '0');
     }
 
     const studentData = {
@@ -502,13 +489,8 @@ exports.bulkCreateStudents = async (req, res) => {
       return 'Male';
     };
 
-    // 1. Get starting admission number
-    const existingStudents = await Student.find({ school: req.user.school }).select('admissionNumber');
-    const numericAdmNos = existingStudents
-      .map(s => parseInt(s.admissionNumber, 10))
-      .filter(n => !isNaN(n));
-    
-    let nextNum = numericAdmNos.length > 0 ? Math.max(...numericAdmNos) + 1 : 1;
+    // Admission numbers are no longer auto-generated.
+    // We rely solely on the CSV provided data, leaving it blank if not provided or duplicate.
 
     // 1.5. Prepare Class mapping (Name -> ID) for easier lookup
     const allClasses = await Class.find({ school: req.user.school }).select('name _id displayName stream');
@@ -557,23 +539,16 @@ exports.bulkCreateStudents = async (req, res) => {
         }
 
         // Admission Number Handling
-        let studentAdmissionNumber;
+        let studentAdmissionNumber = "";
         if (data.admissionNumber) {
           const trimmedNo = String(data.admissionNumber).trim();
+          // Find if it exists
           const existingNo = await Student.findOne({ school: req.user.school, admissionNumber: trimmedNo });
-          if (existingNo) {
-            throw new Error(`Admission number ${trimmedNo} is already in use.`);
+          if (!existingNo) {
+            studentAdmissionNumber = trimmedNo;
+          } else {
+            console.warn(`⚠️ Bulk Creation: Admission number ${trimmedNo} already in use. Proceeding with blank.`);
           }
-          studentAdmissionNumber = trimmedNo;
-
-          // If manual number is numeric, update starting point for next auto-generated one
-          const numericVal = parseInt(trimmedNo, 10);
-          if (!isNaN(numericVal) && numericVal >= nextNum) {
-            nextNum = numericVal + 1;
-          }
-        } else {
-          studentAdmissionNumber = String(nextNum).padStart(3, '0');
-          nextNum++;
         }
 
         const formattedGender = formatGender(gender);
@@ -590,9 +565,7 @@ exports.bulkCreateStudents = async (req, res) => {
         await user.save();
         createdUserId = user._id;
 
-        // Assign Admission Number
-        const admissionNumber = String(nextNum).padStart(3, '0');
-        nextNum++;
+        // Removed buggy nextNum++ logic and unused admissionNumber local variable
 
         // Phone number formatting (Excel strips leading zeros from 10-digit numbers making them 9 digits)
         let formattedPhone = guardianPhone;
@@ -639,7 +612,7 @@ exports.bulkCreateStudents = async (req, res) => {
         const student = new Student(studentData);
         await student.save();
 
-        results.success.push({ name, email, admissionNumber });
+        results.success.push({ name, email, admissionNumber: studentAdmissionNumber });
 
         // Optional: Single notifications for student (async non-blocking)
         Notification.create({

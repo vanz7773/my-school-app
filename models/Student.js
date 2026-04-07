@@ -10,7 +10,7 @@ const studentSchema = new mongoose.Schema({
 
   admissionNumber: {
     type: String,
-    required: true
+    default: ""
   },
 
   class: {
@@ -86,7 +86,23 @@ const studentSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 studentSchema.index({ school: 1, class: 1 });
-studentSchema.index({ school: 1, admissionNumber: 1 }, { unique: true });
+studentSchema.index(
+  { school: 1, admissionNumber: 1 },
+  { 
+    unique: true, 
+    partialFilterExpression: { admissionNumber: { $type: "string", $ne: "" } }
+  }
+);
 
-module.exports =
-  mongoose.models.Student || mongoose.model('Student', studentSchema);
+const Student = mongoose.models.Student || mongoose.model('Student', studentSchema);
+
+// Safely attempt to drop the old strict index when connection is ready
+mongoose.connection.on('connected', () => {
+  if (Student.collection) {
+    Student.collection.dropIndex('school_1_admissionNumber_1').catch(err => {
+      // Ignore if index does not exist or already dropped
+    });
+  }
+});
+
+module.exports = Student;
