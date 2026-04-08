@@ -248,7 +248,8 @@ exports.updateStudent = async (req, res) => {
     lastSchoolAttended,
     dateOfLeaving,
     causeForLeaving,
-    remarks
+    remarks,
+    admissionNumber
   } = req.body;
 
   try {
@@ -277,6 +278,17 @@ exports.updateStudent = async (req, res) => {
     if (dateOfLeaving !== undefined) student.dateOfLeaving = dateOfLeaving;
     if (causeForLeaving !== undefined) student.causeForLeaving = causeForLeaving;
     if (remarks !== undefined) student.remarks = remarks;
+
+    if (admissionNumber !== undefined) {
+      const trimmedNo = String(admissionNumber).trim();
+      if (trimmedNo !== "" && trimmedNo !== student.admissionNumber) {
+        const existing = await Student.findOne({ school: req.user.school, admissionNumber: trimmedNo });
+        if (existing && existing._id.toString() !== student._id.toString()) {
+          return res.status(400).json({ message: 'Admission number already in use by another student' });
+        }
+      }
+      student.admissionNumber = trimmedNo;
+    }
 
     if (classId) {
       const selectedClass = await Class.findById(classId);
