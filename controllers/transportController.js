@@ -1063,7 +1063,7 @@ exports.markTransport = async (req, res) => {
         res.status(200).json({ success: true, message: 'Transport attendance processed successfully' });
     } catch (error) {
         console.error('Error queuing transport attendance:', error);
-        res.status(500).json({ success: false, message: 'Server error enqueueing transport attendance' });
+        res.status(500).json({ success: false, message: `Server error enqueueing transport attendance: ${error.message}`, errorObj: process.env.NODE_ENV === 'development' ? error.stack : undefined });
     }
 };
 
