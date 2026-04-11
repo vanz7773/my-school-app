@@ -518,7 +518,7 @@ exports.clearDashboardCache = async (req, res) => {
 // 💰 FEES COLLECTION CHART
 // ---------------------------------------------------------
 exports.getFeesCollectionDashboard = async (req, res) => {
-  const cacheKey = generateCacheKey('feesCollection', req);
+  const cacheKey = generateCacheKey('feesCollection', req) + (req.query.termId ? `:${req.query.termId}` : '');
   
   try {
     const cached = cache.get(cacheKey);
@@ -526,9 +526,20 @@ exports.getFeesCollectionDashboard = async (req, res) => {
     
     const schoolId = new mongoose.Types.ObjectId(req.user.school);
     const { TermBill } = require('../models/allModels');
+    const Term = require('../models/term');
+
+    const matchQuery = { school: schoolId };
+
+    if (req.query.termId && req.query.termId !== 'undefined' && req.query.termId !== 'null') {
+      const termObj = await Term.findById(req.query.termId).lean();
+      if (termObj) {
+        matchQuery.term = termObj.term;
+        matchQuery.academicYear = termObj.academicYear;
+      }
+    }
 
     const result = await TermBill.aggregate([
-      { $match: { school: schoolId } },
+      { $match: matchQuery },
       {
         $lookup: {
           from: 'classes',
