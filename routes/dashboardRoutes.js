@@ -5,7 +5,8 @@ const {
   getDashboard,
   getStudentsByClass,
   getAverageGrades,
-  getWeeklyAttendance
+  getWeeklyAttendance,
+  getFeesCollectionDashboard
 } = require('../controllers/dashboardController');
 
 // 👤 Dashboard summary based on user role
@@ -19,5 +20,8 @@ router.get('/average-grades', protect, getAverageGrades);
 
 // 📈 For "Weekly Attendance Trends" chart (Line)
 router.get('/weekly-attendance', protect, getWeeklyAttendance);
+
+// 💰 For "Fees Collection" chart (Bar)
+router.get('/fees-collection', protect, getFeesCollectionDashboard);
 
 module.exports = router;

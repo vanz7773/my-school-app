@@ -515,6 +515,64 @@ exports.clearDashboardCache = async (req, res) => {
 };
 
 // ---------------------------------------------------------
+// 💰 FEES COLLECTION CHART
+// ---------------------------------------------------------
+exports.getFeesCollectionDashboard = async (req, res) => {
+  const cacheKey = generateCacheKey('feesCollection', req);
+  
+  try {
+    const cached = cache.get(cacheKey);
+    if (cached) return res.json(JSON.parse(cached));
+    
+    const schoolId = new mongoose.Types.ObjectId(req.user.school);
+    const { TermBill } = require('../models/allModels');
+
+    const result = await TermBill.aggregate([
+      { $match: { school: schoolId } },
+      {
+        $lookup: {
+          from: 'classes',
+          localField: 'class',
+          foreignField: '_id',
+          as: 'classInfo'
+        }
+      },
+      { $unwind: { path: '$classInfo', preserveNullAndEmptyArrays: true } },
+      {
+        $group: {
+          _id: '$classInfo._id',
+          className: {
+            $first: {
+              $ifNull: [
+                "$classInfo.displayName",
+                { $concat: ["$classInfo.name", { $cond: [{ $ifNull: ["$classInfo.stream", false] }, { $concat: [" ", "$classInfo.stream"] }, ""] }] }
+              ]
+            }
+          },
+          totalFees: { $sum: '$totalAmount' },
+          collectedFees: { $sum: '$totalPaid' }
+        }
+      },
+      { $sort: { className: 1 } },
+      {
+        $project: {
+          className: { $ifNull: ["$className", "Unassigned"] },
+          totalFees: 1,
+          collectedFees: 1,
+          _id: 0
+        }
+      }
+    ]);
+
+    cache.setex(cacheKey, CACHE_TTL.CHARTS, JSON.stringify(result));
+    res.json(result);
+  } catch (err) {
+    console.error('Fees collection error:', err);
+    res.status(500).json({ message: 'Error fetching fees collection', error: err.message });
+  }
+};
+
+// ---------------------------------------------------------
 // 🧪 CACHE HEALTH ENDPOINT
 // ---------------------------------------------------------
 exports.getCacheHealth = async (req, res) => {
