@@ -40,6 +40,16 @@ exports.createTerm = async (req, res) => {
       });
     }
 
+    // ⭐ TEMPORARY PATCH: Drop stale legacy index from MongoDB if it exists.
+    // The previous schema used 'year' instead of 'academicYear', 
+    // leaving a stale unique index 'school_1_year_1_term_1' in the DB that blocks creation.
+    try {
+      await Term.collection.dropIndex('school_1_year_1_term_1');
+      console.log('Dropped legacy index school_1_year_1_term_1 successfully.');
+    } catch (err) {
+      // Quietly ignore if index doesn't exist
+    }
+
     // -------------------------------------------------------
     // ⭐ WEEK CALCULATIONS
     // -------------------------------------------------------
