@@ -176,6 +176,7 @@ async function sendPushNotifications(userIds, title, message, data = {}) {
     console.error("Error in sendPushNotifications:", error);
   }
 }
+exports.sendPushNotifications = sendPushNotifications;
 
 /* ------------------------------------------------------------------
    REAL-TIME BROADCAST FILTER & PUSH TRIGGER
