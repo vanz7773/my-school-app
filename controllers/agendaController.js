@@ -960,7 +960,8 @@ async function getAgendasCore(req, res, forcedRole = null) {
     // -----------------------------------------------------------------
     const agendas = await AgendaEvent.find(filter)
       .populate("class", "name")
-      .sort({ date: 1, time: 1 });
+      .sort({ date: 1, time: 1 })
+      .lean();
 
     return res.json({
       success: true,
