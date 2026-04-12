@@ -342,7 +342,7 @@ const clockAttendance = async (req, res) => {
       status: "success",
       data: {
         attendance,
-        message: type === "in" ? "Clock-in successful." : "Clock-out successful.",
+        message: type === "in" ? "Clock-in successful! Have a great day!" : "Clock-out successful.",
         teacherId: teacher._id,
         geofenceStatus: req.geofenceStatus || "validated",
         distanceFromCenter: req.geofenceData?.distanceFromCenter || null,
