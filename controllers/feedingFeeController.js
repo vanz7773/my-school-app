@@ -354,29 +354,24 @@ const getAccountedAmountForDay = (entry, targetDay, targetDate, amountPerDay = 0
       continue;
     }
 
-    // Case 2: Timestamp tracked. Does it physically map to this target targetDate?
-    let matchesTarget = isSameCalendarDay(paidAt, targetDate);
-
-    // Weekend Roll-over rule -> Map to Monday if adjacent
-    if (!matchesTarget && targetDay === 'M') {
-      const paymentDay = new Date(paidAt).getDay();
-      if (paymentDay === 0 || paymentDay === 6) {
-        const diffDays = Math.abs(new Date(paidAt) - new Date(targetDate)) / 86400000;
-        if (diffDays <= 3) {
-          matchesTarget = true;
-        }
-      }
+    // Case 2: Timestamp tracked. Map the payment to the correct UI Tab logically based on day of week.
+    // This avoids all strict timezone and term.startDate drifting bugs.
+    const paymentDayOfWeek = new Date(paidAt).getDay(); // 0(Sun) - 6(Sat)
+    let mappedTab;
+    
+    if (paymentDayOfWeek === 0 || paymentDayOfWeek === 1 || paymentDayOfWeek === 6) {
+      mappedTab = 'M'; // Weekend or Monday maps to 'M' tab
+    } else if (paymentDayOfWeek === 2) {
+      mappedTab = 'T';
+    } else if (paymentDayOfWeek === 3) {
+      mappedTab = 'W';
+    } else if (paymentDayOfWeek === 4) {
+      mappedTab = 'TH';
+    } else if (paymentDayOfWeek === 5) {
+      mappedTab = 'F';
     }
 
-    // Out-of-bounds safety rule -> Keep on its indigenous feeding day if outside current visible week
-    if (!matchesTarget) {
-      const diffDays = Math.abs(new Date(paidAt) - new Date(targetDate)) / 86400000;
-      if (diffDays > 6 && targetDay === dayKey) {
-        matchesTarget = true;
-      }
-    }
-
-    if (matchesTarget) {
+    if (mappedTab === targetDay) {
       amountForTargetDay += resolvedAmount;
     }
   }
