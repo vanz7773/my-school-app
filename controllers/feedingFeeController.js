@@ -197,7 +197,7 @@ async function createFeedingFeeNotification(req, {
 
       // Add all school admins so admins get notified
       const User = mongoose.model('User');
-      const adminUsers = await User.find({ school, role: { $in: ['admin', 'superadmin'] } }).select('_id').lean();
+      const adminUsers = await User.find({ school, role: 'admin' }).select('_id').lean();
       pushTargets.push(...adminUsers.map(a => String(a._id)));
     }
 
