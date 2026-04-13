@@ -1379,6 +1379,8 @@ const getFeedingFeeSummary = async (req, res) => {
     const debtRecoveryAmountByStudent = new Map();
 
     const WEEK_DAY_KEYS = ["M", "T", "W", "TH", "F"];
+    const dailyTotalsObj = { M: 0, T: 0, W: 0, TH: 0, F: 0 };
+    const dailyCountsObj = { M: 0, T: 0, W: 0, TH: 0, F: 0 };
 
     for (const record of manualFeedingRecords) {
       if (!record.breakdown || !Array.isArray(record.breakdown)) continue;
@@ -1403,12 +1405,27 @@ const getFeedingFeeSummary = async (req, res) => {
           const paidAt = entry.paidAt?.[dayKey];
 
           if (!paidAt) {
-            if (isNativeRecord) nativeAmountCaptured += resolvedAmount;
+            if (isNativeRecord) {
+              nativeAmountCaptured += resolvedAmount;
+              dailyTotalsObj[dayKey] += resolvedAmount;
+              dailyCountsObj[dayKey] += 1;
+            }
           } else {
             const paidDate = new Date(paidAt);
             if (paidDate >= weekBounds.windowStart && paidDate <= weekBounds.windowEnd) {
               if (isNativeRecord) nativeAmountCaptured += resolvedAmount;
               else debtAmountCaptured += resolvedAmount;
+              
+              // Map paidAt date to Day of Week
+              const paymentDayOfWeek = paidDate.getDay();
+              let mappedTab = 'M';
+              if (paymentDayOfWeek === 2) mappedTab = 'T';
+              else if (paymentDayOfWeek === 3) mappedTab = 'W';
+              else if (paymentDayOfWeek === 4) mappedTab = 'TH';
+              else if (paymentDayOfWeek === 5) mappedTab = 'F';
+              
+              dailyTotalsObj[mappedTab] += resolvedAmount;
+              dailyCountsObj[mappedTab] += 1;
             }
           }
         }
@@ -1455,11 +1472,28 @@ const getFeedingFeeSummary = async (req, res) => {
       });
     }
 
+    // Format dailyTotals to match UI expectations
+    const dailyTotals = WEEK_DAY_KEYS.map((key) => {
+      let label = 'Mon';
+      if (key === 'T') label = 'Tue';
+      else if (key === 'W') label = 'Wed';
+      else if (key === 'TH') label = 'Thu';
+      else if (key === 'F') label = 'Fri';
+      
+      return {
+        day: label,
+        key: key,
+        count: dailyCountsObj[key],
+        amount: dailyTotalsObj[key]
+      };
+    });
+
     return res.json({
       success: true,
       totalAmount,
       studentCount,
       breakdown,
+      dailyTotals,
       currency: feeConfig.currency || "GHS",
       configType: 'class-based'
     });
