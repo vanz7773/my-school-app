@@ -541,30 +541,6 @@ const processFeedingJob = async (jobData) => {
 };
 
 // --------------------------------------------------------------------
-// 🚦 In-Memory Lock for Synchronous Process Execution per Class
-// --------------------------------------------------------------------
-const classJobLocks = new Map();
-
-const enqueueFeedingJob = async (lockKey, jobData) => {
-  if (!classJobLocks.has(lockKey)) {
-    classJobLocks.set(lockKey, Promise.resolve());
-  }
-
-  const currentTask = classJobLocks.get(lockKey);
-  
-  let resolveNext;
-  const nextTask = new Promise((resolve) => { resolveNext = resolve; });
-  classJobLocks.set(lockKey, currentTask.then(() => nextTask));
-
-  try {
-    await currentTask;
-    return await processFeedingJob(jobData);
-  } finally {
-    resolveNext();
-  }
-};
-
-// --------------------------------------------------------------------
 // ✅ Mark feeding fee - SYNCHRONOUS PROCESSING
 // --------------------------------------------------------------------
 const markFeeding = async (req, res) => {
@@ -578,10 +554,8 @@ const markFeeding = async (req, res) => {
   }
 
   try {
-    const lockKey = `${classId}_${week}`;
-
-    // Process feeding fee marking directly, but sequentially for the same class+week
-    const result = await enqueueFeedingJob(lockKey, {
+    // Process feeding fee marking directly
+    const result = await processFeedingJob({
       student, termId, classId, week, fed, day,
       reqUser: { _id: req.user._id, school: req.user.school } // Pass along required parts of req.user
     });
