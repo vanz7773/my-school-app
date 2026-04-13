@@ -1828,6 +1828,8 @@ const getFeedingFeeAuditReport = async (req, res) => {
         if (resolvedAmount <= 0) continue;
 
         let amountPaidToday = 0;
+        const recoveredDays = [];
+        const FULL_DAY_NAMES = { "M": "Monday", "T": "Tuesday", "W": "Wednesday", "TH": "Thursday", "F": "Friday" };
 
         for (const dayKey of WEEK_DAY_KEYS) {
           const isPaidDay = entry.days?.[dayKey] === 'present';
@@ -1851,6 +1853,9 @@ const getFeedingFeeAuditReport = async (req, res) => {
 
               if (mappedTab === day) {
                 amountPaidToday += resolvedAmount;
+                if (!isNativeRecord) {
+                  recoveredDays.push(FULL_DAY_NAMES[dayKey]);
+                }
               }
             }
           }
@@ -1876,7 +1881,13 @@ const getFeedingFeeAuditReport = async (req, res) => {
         }
 
         const studentObj = entry.student || {};
-        const nativeStatus = isNativeRecord ? (entry.days?.[day] || 'notmarked') : `Debt Recovery (Week ${record.week})`;
+        let nativeStatus = 'notmarked';
+        if (isNativeRecord) {
+          nativeStatus = entry.days?.[day] || 'notmarked';
+        } else {
+          const joinedDays = recoveredDays.length > 0 ? `, ${recoveredDays.join(' & ')}` : '';
+          nativeStatus = `Debt Recovery (Week ${record.week}${joinedDays})`;
+        }
 
         studentsDetails.push({
           studentId: studentObj._id || entry.student,
