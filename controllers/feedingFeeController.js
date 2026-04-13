@@ -245,6 +245,7 @@ const normalizeWeekNumber = (week) => {
 const normalizeDayValue = (val) => {
   if (val === true || val === 'present') return 'present';
   if (val === false || val === 'absent') return 'absent';
+  if (val === 'unpaid') return 'unpaid'; // Explicit Feeding Fee page "Mark as Unpaid"
   return 'notmarked';
 };
 
@@ -1647,9 +1648,9 @@ const getDebtorsForWeek = async (req, res) => {
           const feedingStatus = entry.days?.[day];
           const attendanceStatus = attDays[day];
 
-          // A debtor is: explicitly marked 'absent' (unpaid) in Feeding Fee page
-          // AND was NOT physically absent from school (attendance page doesn't say absent)
-          if (feedingStatus === 'absent' && attendanceStatus !== 'absent') {
+          // A debtor is ONLY a student explicitly marked 'unpaid' from the Feeding Fee page.
+          // 'absent' is reserved for attendance-synced physical absence and is NOT a debt.
+          if (feedingStatus === 'unpaid') {
             debtorDays.push(day);
           }
         }
