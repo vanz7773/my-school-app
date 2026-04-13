@@ -4,25 +4,39 @@ const normalizeClassName = (s) => (s || '').toString().toLowerCase().trim();
 
 /**
  * 🧩 Get amount per day for a given student.
- * Class-specific fees are the only supported configuration.
+ * Handles both Map (live Mongoose doc) and plain Object (lean query) forms of classFeeBands.
  */
 function getAmountPerDay(student, feeConfig) {
   if (!student || !feeConfig) return 0;
 
-  const classId = student.class?._id ? String(student.class._id) : String(student.class);
+  const classId = student.class?._id ? String(student.class._id) : String(student.class || '');
   const className = normalizeClassName(student?.class?.name ?? student?.className ?? '');
 
-  // 🟢 1️⃣ Class-based fee lookup (Map structure)
-  if (feeConfig.classFeeBands instanceof Map && feeConfig.classFeeBands.has(classId)) {
-    const band = feeConfig.classFeeBands.get(classId);
-    if (band && typeof band === 'object') return Number(band.amount || 0);
+  const bands = feeConfig.classFeeBands;
+  if (!bands) return 0;
+
+  // ── Case 1: Mongoose Map (non-lean document) ──
+  if (bands instanceof Map) {
+    if (classId && bands.has(classId)) {
+      const band = bands.get(classId);
+      return Number(band?.amount || 0);
+    }
+    for (const [, value] of bands.entries()) {
+      if (normalizeClassName(value?.className) === className) {
+        return Number(value?.amount || 0);
+      }
+    }
+    return 0;
   }
 
-  // 🟢 2️⃣ Try to match by class name (case-insensitive)
-  if (feeConfig.classFeeBands instanceof Map) {
-    for (const [, value] of feeConfig.classFeeBands.entries()) {
-      if (normalizeClassName(value?.className) === className) {
-        return Number(value.amount || 0);
+  // ── Case 2: Plain Object (lean query result) ──
+  if (typeof bands === 'object') {
+    if (classId && bands[classId]) {
+      return Number(bands[classId]?.amount || 0);
+    }
+    for (const value of Object.values(bands)) {
+      if (typeof value === 'object' && normalizeClassName(value?.className) === className) {
+        return Number(value?.amount || 0);
       }
     }
   }
