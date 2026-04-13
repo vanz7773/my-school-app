@@ -11,6 +11,7 @@ router.post('/payments', protect, requirePrivateSchool, allcontrollers.recordPay
 router.put('/bills/update-or-create', protect, requirePrivateSchool, allcontrollers.updateOrCreateBill);
 router.get('/fee-templates', protect, requirePrivateSchool, allcontrollers.getFeeTemplates);
 router.get('/term-bills', protect, requirePrivateSchool, allcontrollers.getTermBills);
+router.get('/audit-report', protect, requirePrivateSchool, allcontrollers.getTermBillingAuditReport);
 
 // ----------------- Parent Portal Routes -----------------
 router.get('/parent/bills', protect, requirePrivateSchool, allcontrollers.getParentBills);

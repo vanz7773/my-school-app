@@ -1863,5 +1863,103 @@ module.exports = {
         error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
+  },
+
+  // Get daily term billing audit report
+  async getTermBillingAuditReport(req, res) {
+    try {
+      const { date } = req.query;
+      const schoolId = req.user.school;
+
+      if (!date) {
+        return res.status(400).json({ success: false, message: 'Date is required' });
+      }
+
+      const startOfDay = new Date(date);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(date);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      // Fetch payments for the given day
+      const payments = await Payment.find({
+        school: schoolId,
+        paymentDate: { $gte: startOfDay, $lte: endOfDay }
+      })
+        .populate({
+          path: 'student',
+          populate: [
+            { path: 'user', select: 'name' },
+            { path: 'class', select: 'name stream displayName' }
+          ]
+        })
+        .populate('recordedBy', 'name')
+        .lean();
+
+      let grandTotal = 0;
+      let totalPaid = payments.length;
+      const auditReport = [];
+      const classMap = new Map();
+
+      // Group payments by class
+      for (const payment of payments) {
+        const student = payment.student;
+        if (!student) continue;
+
+        const { className, classDisplayName } = resolveClassNames(student.class);
+        const classId = student.class?._id?.toString() || 'unassigned';
+        const display = classDisplayName || className;
+
+        if (!classMap.has(classId)) {
+          classMap.set(classId, {
+            classId,
+            className: display,
+            totalAmount: 0,
+            paidCount: 0,
+            students: []
+          });
+        }
+
+        const classData = classMap.get(classId);
+        const amount = Number(payment.amount) || 0;
+        
+        classData.totalAmount += amount;
+        classData.paidCount += 1;
+        grandTotal += amount;
+        
+        const studentName = student.user?.name || student.name || student.admissionNumber || 'Unknown Student';
+
+        classData.students.push({
+          studentId: student._id,
+          studentName,
+          amount,
+          method: payment.method || 'Cash',
+          status: 'paid',
+          time: new Date(payment.paymentDate).toLocaleTimeString()
+        });
+      }
+
+      classMap.forEach(classData => {
+        classData.students.sort((a, b) => a.studentName.localeCompare(b.studentName));
+        auditReport.push(classData);
+      });
+
+      auditReport.sort((a, b) => a.className.localeCompare(b.className));
+
+      res.json({
+        success: true,
+        date,
+        grandTotal,
+        totalPaid,
+        report: auditReport
+      });
+      
+    } catch (error) {
+      console.error('Term billing audit report error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Error fetching audit report',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
   }
 };
