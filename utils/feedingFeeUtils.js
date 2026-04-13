@@ -4,7 +4,7 @@ const normalizeClassName = (s) => (s || '').toString().toLowerCase().trim();
 
 /**
  * 🧩 Get amount per day for a given student.
- * Supports both class-based and legacy category-based fee configurations.
+ * Class-specific fees are the only supported configuration.
  */
 function getAmountPerDay(student, feeConfig) {
   if (!student || !feeConfig) return 0;
@@ -27,8 +27,7 @@ function getAmountPerDay(student, feeConfig) {
     }
   }
 
-  // 🟢 3️⃣ Fallback: use legacy category system
-  return getAmountPerDayByCategory(student, feeConfig);
+  return 0;
 }
 
 /**
@@ -98,39 +97,14 @@ function removeClassFeeBand(feeConfig, classId) {
   return feeConfig;
 }
 
-/**
- * 🟣 Legacy + universal system: category-based fee structure.
- * Supports BASIC / GRADE / PRIMARY / JHS / CRECHE naming conventions.
- */
 function getAmountPerDayByCategory(student, feeConfig) {
-  if (!student || !feeConfig) return 0;
-  const bands = getFeeBandsFromConfig(feeConfig);
-  const className = normalizeClassName(student?.class?.name ?? student?.className ?? '');
-
-  // 🧠 Group A: Crèche / Nursery / KG / Kindergarten
-  if (['crèche', 'creche', 'nursery', 'kg', 'kindergarten'].some(k => className.includes(k))) {
-    return Number(bands.crecheToKG2 || 0);
-  }
-
-  // 🧠 Group B: Basic / Grade / Primary 1–6
-  if (/(basic|grade|primary)\s*[1-6]/.test(className)) {
-    return Number(bands.basic1To6 || 0);
-  }
-
-  // 🧠 Group C: Basic / Grade / Primary 7–9 / JHS / Junior High
-  if (/(basic|grade|primary)\s*[7-9]|jhs|junior high/.test(className)) {
-    return Number(bands.basic7To9 || 0);
-  }
-
-  // Fallback
-  return Number(bands.default || 0);
+  return 0;
 }
 
 /**
  * 🔹 Get the correct fee bands structure (works for both old & new).
  */
 function getFeeBandsFromConfig(rawConfig = {}) {
-  // Map-based (modern)
   if (rawConfig.classFeeBands instanceof Map) {
     const obj = {};
     for (const [key, val] of rawConfig.classFeeBands.entries()) {
@@ -139,18 +113,11 @@ function getFeeBandsFromConfig(rawConfig = {}) {
     return obj;
   }
 
-  // Category-based (legacy)
-  if (rawConfig.feeBands && typeof rawConfig.feeBands === 'object') {
-    return rawConfig.feeBands;
+  if (rawConfig.classFeeBands && typeof rawConfig.classFeeBands === 'object') {
+    return rawConfig.classFeeBands;
   }
 
-  // Legacy flat structure fallback
-  return {
-    crecheToKG2: rawConfig.crecheToKG2 ?? rawConfig.credeToKG2 ?? rawConfig.creche ?? rawConfig.crede ?? 0,
-    basic1To6: rawConfig.basic1To6 ?? rawConfig.basic_1_to_6 ?? rawConfig.basic1 ?? 0,
-    basic7To9: rawConfig.basic7To9 ?? rawConfig.basic_7_to_9 ?? rawConfig.basic7 ?? 0,
-    default: rawConfig.default ?? 0,
-  };
+  return {};
 }
 
 /**
@@ -176,18 +143,8 @@ async function migrateToClassBands(feeConfig, classModel) {
     const name = normalizeClassName(cls.name);
     let amount = 0;
 
-    // 🧠 Group A: Crèche / Nursery / KG / Kindergarten
-    if (['crèche', 'creche', 'nursery', 'kg', 'kindergarten'].some(k => name.includes(k))) {
-      amount = legacyBands.crecheToKG2 || 0;
-    }
-    // 🧠 Group B: Basic / Grade / Primary 1–6
-    else if (/(basic|grade|primary)\s*[1-6]/.test(name)) {
-      amount = legacyBands.basic1To6 || 0;
-    }
-    // 🧠 Group C: Basic / Grade / Primary 7–9 / JHS / Junior High
-    else if (/(basic|grade|primary)\s*[7-9]|jhs|junior high/.test(name)) {
-      amount = legacyBands.basic7To9 || 0;
-    }
+    const matchingBand = legacyBands[String(cls._id)] || legacyBands[cls.name] || null;
+    amount = Number(matchingBand?.amount || matchingBand || 0);
 
     if (amount > 0) {
       classFeeMap.set(String(cls._id), {

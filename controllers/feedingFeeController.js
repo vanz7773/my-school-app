@@ -416,12 +416,23 @@ try {
   // Fallback to basic implementation
   getAmountPerDay = (student, config) => {
     if (!config) return 0;
-    const bands = getFeeBandsFromConfig(config);
     const className = (student?.class?.name || '').toLowerCase().trim();
     if (!className) return 0;
-    if (['crèche', 'creche', 'nursery 1', 'nursery 2', 'kg 1', 'kg1', 'kg 2', 'kg2'].some(k => className.includes(k))) return Number(bands.crecheToKG2 || 0);
-    if (/(basic|grade|primary)\s*[1-6]/.test(className)) return Number(bands.basic1To6 || 0);
-    if (/(basic|grade|primary)\s*[7-9]|jhs/.test(className)) return Number(bands.basic7To9 || 0);
+
+    if (config.classFeeBands && config.classFeeBands instanceof Map) {
+      const classId = student?.class?._id ? String(student.class._id) : String(student.class);
+      if (classId && config.classFeeBands.has(classId)) {
+        const band = config.classFeeBands.get(classId);
+        return Number(band?.amount || 0);
+      }
+
+      for (const [, value] of config.classFeeBands.entries()) {
+        if ((value?.className || '').toLowerCase().trim() === className) {
+          return Number(value?.amount || 0);
+        }
+      }
+    }
+
     return 0;
   };
 
@@ -431,8 +442,7 @@ try {
       const band = config.classFeeBands.get(String(classId));
       return Number(band?.amount || 0);
     }
-    const bands = getFeeBandsFromConfig(config);
-    return bands.default || 0;
+    return 0;
   };
 
   getClassFeeBands = (config) => {
@@ -441,15 +451,15 @@ try {
   };
 
   getFeeBandsFromConfig = (rawConfig = {}) => {
-    if (rawConfig.feeBands && typeof rawConfig.feeBands === 'object') {
-      return rawConfig.feeBands;
+    if (rawConfig.classFeeBands instanceof Map) {
+      return Object.fromEntries(rawConfig.classFeeBands);
     }
-    return {
-      crecheToKG2: rawConfig.crecheToKG2 ?? rawConfig.credeToKG2 ?? rawConfig.creche ?? rawConfig.crede ?? 0,
-      basic1To6: rawConfig.basic1To6 ?? rawConfig.basic_1_to_6 ?? rawConfig.basic1 ?? 0,
-      basic7To9: rawConfig.basic7To9 ?? rawConfig.basic_7_to_9 ?? rawConfig.basic7 ?? 0,
-      default: rawConfig.default ?? 0,
-    };
+
+    if (rawConfig.classFeeBands && typeof rawConfig.classFeeBands === 'object') {
+      return rawConfig.classFeeBands;
+    }
+
+    return {};
   };
 }
 
@@ -497,7 +507,7 @@ const processFeedingJob = async (jobData) => {
         amountCollected: 0,
         totalCollected: 0,
         breakdown: [],
-        configType: feeConfig.classFeeBands ? "class-based" : "category-based",
+        configType: "class-based",
         classFeeAmount: amountPerDay,
       });
     }
@@ -892,7 +902,7 @@ const calculateFeedingFeeCollection = async (req, res) => {
       breakdown,
       configUsed: getClassFeeBands(feeConfig),
       currency: feeConfig.currency || "GHS",
-      configType: feeConfig.classFeeBands ? "class-based" : "category-based",
+      configType: "class-based",
     });
   } catch (error) {
     console.error("❌ Error calculating feeding fee:", error);
@@ -935,7 +945,7 @@ const getFeedingFeeConfig = async (req, res) => {
 // --------------------------------------------------------------------
 const setFeedingFeeConfig = async (req, res) => {
   try {
-    const { classFeeBands, feeBands, currency } = req.body;
+    const { classFeeBands, currency } = req.body;
     const schoolId = req.user.school;
 
     const update = {
@@ -954,16 +964,6 @@ const setFeedingFeeConfig = async (req, res) => {
             amount: Number(bandData.amount),
             level: bandData.level || 'other'
           });
-        }
-      }
-    }
-
-    // Set category-based fee bands if provided
-    if (feeBands && typeof feeBands === 'object') {
-      const validGroups = ["crecheToKG2", "basic1To6", "basic7To9", "default"];
-      for (const [group, amount] of Object.entries(feeBands)) {
-        if (validGroups.includes(group) && typeof amount === 'number' && amount >= 0) {
-          update[`feeBands.${group}`] = amount;
         }
       }
     }
@@ -1002,7 +1002,7 @@ const setFeedingFeeConfig = async (req, res) => {
       success: true,
       message: "Feeding fee config updated",
       data: config,
-      configType: classFeeBands ? 'class-based' : 'category-based'
+      configType: 'class-based'
     });
   } catch (error) {
     console.error("Config update error:", error);
@@ -1035,22 +1035,8 @@ const getClassesWithFeeBands = async (req, res) => {
         const band = config.classFeeBands.get(classId);
         feeAmount = band.amount;
         configSource = 'class-specific';
-      } else if (config && config.feeBands) {
-        // Fallback to category-based
-        const className = cls.name.toLowerCase();
-        if (['crèche', 'creche', 'nursery', 'kg'].some(k => className.includes(k))) {
-          feeAmount = config.feeBands.crecheToKG2 || 0;
-          configSource = 'category-creche';
-        } else if (/basic\s*[1-6]|grade\s*[1-6]/.test(className)) {
-          feeAmount = config.feeBands.basic1To6 || 0;
-          configSource = 'category-basic1-6';
-        } else if (/basic\s*[7-9]|grade\s*[7-9]|jhs/.test(className)) {
-          feeAmount = config.feeBands.basic7To9 || 0;
-          configSource = 'category-basic7-9';
-        } else {
-          feeAmount = config.feeBands.default || 0;
-          configSource = 'category-default';
-        }
+      } else {
+        configSource = 'not set';
       }
 
       return {
@@ -1318,7 +1304,7 @@ const getFeedingFeeForStudent = async (req, res) => {
       week: weekNumber,
       term: termId,
       weekDates,
-      configType: feeConfig.classFeeBands ? "class-based" : "category-based",
+      configType: "class-based",
     };
 
     console.log(`✅ Returning feeding fee data for ${results.length} students`);
@@ -1490,7 +1476,7 @@ const getFeedingFeeSummary = async (req, res) => {
       studentCount,
       breakdown,
       currency: feeConfig.currency || "GHS",
-      configType: feeConfig.classFeeBands ? 'class-based' : 'category-based'
+      configType: 'class-based'
     });
   } catch (err) {
     console.error("❌ Error in getFeedingFeeSummary:", err);

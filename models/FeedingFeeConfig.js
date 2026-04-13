@@ -4,14 +4,6 @@ const mongoose = require('mongoose');
 const feedingFeeConfigSchema = new mongoose.Schema({
   school: { type: mongoose.Schema.Types.ObjectId, ref: 'School', required: true },
 
-  // Category-based (legacy fallback)
-  feeBands: {
-    crecheToKG2: { type: Number, default: 0 },
-    basic1To6: { type: Number, default: 0 },
-    basic7To9: { type: Number, default: 0 },
-    default: { type: Number, default: 0 },
-  },
-
   // Class-based fee bands (modern structure)
   classFeeBands: {
     type: Map,
@@ -30,23 +22,20 @@ const feedingFeeConfigSchema = new mongoose.Schema({
 // --------------------- Utility Functions ---------------------
 const normalizeClassName = (s) => (s || '').toString().toLowerCase().trim();
 
+const normalizeClassFeeBands = (bands = {}) => {
+  if (bands instanceof Map) {
+    return Object.fromEntries(bands);
+  }
+
+  if (bands && typeof bands === 'object') {
+    return bands;
+  }
+
+  return {};
+};
+
 function getFeeBandsFromConfig(rawConfig = {}) {
-  // 1️⃣ Prefer class-based structure
-  if (rawConfig.classFeeBands && typeof rawConfig.classFeeBands === 'object') {
-    return rawConfig.classFeeBands;
-  }
-
-  // 2️⃣ Fallback: category-based
-  if (rawConfig.feeBands && typeof rawConfig.feeBands === 'object') {
-    return rawConfig.feeBands;
-  }
-
-  // 3️⃣ Legacy flat structure
-  return {
-    crecheToKG2: rawConfig.crecheToKG2 ?? rawConfig.credeToKG2 ?? rawConfig.creche ?? rawConfig.crede ?? 0,
-    basic1To6: rawConfig.basic1To6 ?? rawConfig.basic_1_to_6 ?? rawConfig.basic1 ?? 0,
-    basic7To9: rawConfig.basic7To9 ?? rawConfig.basic_7_to_9 ?? rawConfig.basic7 ?? 0,
-  };
+  return normalizeClassFeeBands(rawConfig.classFeeBands);
 }
 
 function getAmountPerDay(student, feeConfig) {
@@ -71,36 +60,12 @@ function getAmountPerDay(student, feeConfig) {
     }
   }
 
-  // 3️⃣ Category-based fallback
-  const bands = getFeeBandsFromConfig(feeConfig);
-
-  if (['crèche', 'creche', 'nursery 1', 'nursery2', 'nursery 2', 'kg 1', 'kg1', 'kg 2', 'kg2']
-    .some(k => className.includes(k))) {
-    return Number(bands.crecheToKG2 || 0);
-  }
-
-  if (/basic\s*[1-6]|grade\s*[1-6]/.test(className)) {
-    return Number(bands.basic1To6 || 0);
-  }
-
-  if (/basic\s*[7-9]|grade\s*[7-9]|jhs|junior high/.test(className)) {
-    return Number(bands.basic7To9 || 0);
-  }
-
-  return Number(bands.default || 0);
+  return 0;
 }
 
 function getClassFeeBands(feeConfig) {
   if (!feeConfig) return {};
-  if (feeConfig.classFeeBands && typeof feeConfig.classFeeBands === 'object') {
-    return Object.fromEntries(feeConfig.classFeeBands);
-  }
-  const bands = getFeeBandsFromConfig(feeConfig);
-  return {
-    crecheToKG2: bands.crecheToKG2,
-    basic1To6: bands.basic1To6,
-    basic7To9: bands.basic7To9
-  };
+  return normalizeClassFeeBands(feeConfig.classFeeBands);
 }
 
 // --------------------- Model Export ---------------------
