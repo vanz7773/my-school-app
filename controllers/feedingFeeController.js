@@ -331,20 +331,22 @@ const isSameCalendarDay = (left, right) => {
   );
 };
 
-const getAccountedAmountForDay = (entry, targetDay, targetDate) => {
+const getAccountedAmountForDay = (entry, targetDay, targetDate, amountPerDay = 0) => {
   const hasAnyTimestamps = WEEK_DAY_KEYS.some(dayKey => entry.paidAt?.[dayKey]);
+  const fallbackAmount = Number(entry?.perDayFee?.[targetDay]) || 0;
+  const resolvedAmount = Number(amountPerDay) || fallbackAmount;
+  const dayIsPaid = entry?.days?.[targetDay] === 'present';
 
   if (!hasAnyTimestamps) {
-    return Number(entry.perDayFee?.[targetDay]) || 0;
+    return fallbackAmount > 0 ? fallbackAmount : (dayIsPaid ? resolvedAmount : 0);
   }
 
   let amountForTargetDay = 0;
 
   for (const dayKey of WEEK_DAY_KEYS) {
     const paidAt = entry.paidAt?.[dayKey];
-    const amountForDay = Number(entry.perDayFee?.[dayKey]) || 0;
 
-    if (!paidAt || amountForDay <= 0) continue;
+    if (!paidAt || resolvedAmount <= 0) continue;
 
     let matchesTarget = isSameCalendarDay(paidAt, targetDate);
 
@@ -356,11 +358,35 @@ const getAccountedAmountForDay = (entry, targetDay, targetDate) => {
     }
 
     if (matchesTarget) {
-      amountForTargetDay += amountForDay;
+      amountForTargetDay += resolvedAmount;
     }
   }
 
   return amountForTargetDay;
+};
+
+const resolveEntryAmountPerDay = (entry, record, feeConfig) => {
+  if (entry?.student && feeConfig) {
+    const liveAmount = getAmountPerDay(entry.student, feeConfig);
+    if (liveAmount > 0) return Number(liveAmount) || 0;
+  }
+
+  const directAmount = Number(entry?.classFeeAmount || record?.classFeeAmount || entry?.amountPerDay || 0);
+  if (directAmount > 0) return directAmount;
+
+  if (entry?.perDayFee) {
+    const legacyAmount = Number(
+      entry.perDayFee.M ||
+      entry.perDayFee.T ||
+      entry.perDayFee.W ||
+      entry.perDayFee.TH ||
+      entry.perDayFee.F ||
+      0
+    );
+    if (legacyAmount > 0) return legacyAmount;
+  }
+
+  return 0;
 };
 
 // Import updated utility functions
@@ -457,7 +483,7 @@ const processFeedingJob = async (jobData) => {
         totalCollected: 0,
         breakdown: [],
         configType: feeConfig.classFeeBands ? "class-based" : "category-based",
-        classFeeAmount: getAmountPerDayForClass(classId, feeConfig),
+        classFeeAmount: amountPerDay,
       });
     }
 
@@ -1586,6 +1612,11 @@ const getDailyTotalSummary = async (req, res) => {
       return res.status(404).json({ message: 'Term not found' });
     }
 
+    const feeConfig = await getFeeConfigWithCache(schoolId);
+    if (!feeConfig) {
+      return res.status(404).json({ message: 'Fee configuration not found' });
+    }
+
     const weekDates = getWeekDayDates(termDoc, weekNumber);
 
     // Find records for ALL classes in this school for this term/week
@@ -1593,15 +1624,26 @@ const getDailyTotalSummary = async (req, res) => {
       school: schoolId,
       termId,
       week: weekNumber
-    }).lean();
+    })
+      .populate({
+        path: 'breakdown.student',
+        select: 'name firstName lastName class user',
+        populate: {
+          path: 'class',
+          select: 'name displayName level'
+        }
+      })
+      .populate('classId', 'name displayName level')
+      .lean();
 
     const totals = { M: 0, T: 0, W: 0, TH: 0, F: 0 };
 
     for (const record of records) {
       if (!record.breakdown) continue;
       for (const entry of record.breakdown) {
+        const amountPerDay = resolveEntryAmountPerDay(entry, record, feeConfig);
         for (const dayKey of WEEK_DAY_KEYS) {
-          totals[dayKey] += getAccountedAmountForDay(entry, dayKey, weekDates[dayKey]);
+          totals[dayKey] += getAccountedAmountForDay(entry, dayKey, weekDates[dayKey], amountPerDay);
         }
       }
     }
@@ -1639,6 +1681,11 @@ const getFeedingFeeAuditReport = async (req, res) => {
       return res.status(404).json({ success: false, message: "Term not found" });
     }
 
+    const feeConfig = await getFeeConfigWithCache(schoolId);
+    if (!feeConfig) {
+      return res.status(404).json({ success: false, message: "Fee configuration not found" });
+    }
+
     const weekDates = getWeekDayDates(termDoc, weekNumber);
 
     // Fetch all records for the school/term/week
@@ -1647,8 +1694,15 @@ const getFeedingFeeAuditReport = async (req, res) => {
       termId,
       week: weekNumber
     })
-      .populate('breakdown.student', 'guardianName guardianPhone')
-      .populate('classId', 'name displayName')
+      .populate({
+        path: 'breakdown.student',
+        select: 'guardianName guardianPhone name firstName lastName class user',
+        populate: {
+          path: 'class',
+          select: 'name displayName level'
+        }
+      })
+      .populate('classId', 'name displayName level')
       .lean();
 
     const auditReport = [];
@@ -1669,7 +1723,8 @@ const getFeedingFeeAuditReport = async (req, res) => {
 
       for (const entry of record.breakdown) {
         const status = entry.days?.[day];
-        const amount = getAccountedAmountForDay(entry, day, weekDates[day]);
+        const amountPerDay = resolveEntryAmountPerDay(entry, record, feeConfig);
+        const amount = getAccountedAmountForDay(entry, day, weekDates[day], amountPerDay);
         const isPaid = amount > 0;
         
         if (isPaid) {
