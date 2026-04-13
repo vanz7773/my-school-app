@@ -1555,7 +1555,6 @@ const getAbsenteesForWeek = async (req, res) => {
       .populate('class', 'name displayName')
       .lean();
 
-    const DAY_KEY_MAP = { monday: 'M', tuesday: 'T', wednesday: 'W', thursday: 'TH', friday: 'F' };
     const absentees = [];
 
     for (const attRecord of attendanceRecords) {
@@ -1564,9 +1563,9 @@ const getAbsenteesForWeek = async (req, res) => {
       const days = attRecord.days || {};
       const absentDays = [];
 
-      for (const [dayName, status] of Object.entries(days)) {
-        const key = DAY_KEY_MAP[dayName.toLowerCase()];
-        if (key && status === 'absent') absentDays.push(key);
+      // StudentAttendance schema uses M, T, W, TH, F directly
+      for (const [dayKey, status] of Object.entries(days)) {
+        if (status === 'absent') absentDays.push(dayKey);
       }
 
       if (absentDays.length > 0) {
