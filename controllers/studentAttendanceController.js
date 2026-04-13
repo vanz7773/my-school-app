@@ -509,6 +509,7 @@ const processAttendanceJob = async (jobData) => {
             .find(b => String(b.student) === String(studentId));
 
           if (!existingStudentEntry) {
+            // Brand new entry — default to 'present' for all days the student attended
             feedingRecord.breakdown.push({
               student: studentId,
               studentName: student.user?.name || "Student",
@@ -526,13 +527,29 @@ const processAttendanceJob = async (jobData) => {
               source: 'attendance-sync'
             });
           } else {
+            // Existing entry — respect any explicit teacher overrides from the feeding fee page.
+            // Rule: 'unpaid' means teacher explicitly said "came to school but didn't pay".
+            //       Attendance sync must NOT overwrite 'unpaid' with 'present'.
             existingStudentEntry.classFeeAmount = amountPerDay;
             for (const [key] of Object.entries(DEFAULT_DAYS)) {
-              if (fedDays.includes(key)) existingStudentEntry.days[key] = 'present';
-              else if (changedDays.has(key)) existingStudentEntry.days[key] = 'absent';
+              const currentFeedingStatus = existingStudentEntry.days[key];
+              if (fedDays.includes(key)) {
+                // Student was present in attendance — only set to 'present' if NOT already 'unpaid'
+                if (currentFeedingStatus !== 'unpaid') {
+                  existingStudentEntry.days[key] = 'present';
+                }
+                // If 'unpaid', leave it alone — teacher explicitly said no payment for this day
+              } else if (changedDays.has(key)) {
+                // Attendance changed this day to absent — always update (physical absence overrides)
+                existingStudentEntry.days[key] = 'absent';
+              }
             }
-            existingStudentEntry.daysPaid = fedDays.length;
-            existingStudentEntry.total = fedDays.length * amountPerDay;
+
+            // Recalculate daysPaid and total based on actual paid days (only 'present', not 'unpaid')
+            const actualPaidDays = Object.values(existingStudentEntry.days)
+              .filter(s => s === 'present').length;
+            existingStudentEntry.daysPaid = actualPaidDays;
+            existingStudentEntry.total = actualPaidDays * amountPerDay;
           }
         }
       }
