@@ -583,16 +583,19 @@ const processFeedingJob = async (jobData) => {
         school: schoolId,
       }).lean();
 
-      if (currentTermInfo) {
-        const startDate = new Date(currentTermInfo.startDate);
-        const diffInDays = Math.floor((today - startDate) / (1000 * 60 * 60 * 24));
-        const currentWeek = Math.min(
-          Math.floor(diffInDays / 7) + 1,
-          currentTermInfo.weeks
-        );
+      if (currentTermInfo && currentTermInfo.startDate) {
+        const termStartDate = new Date(currentTermInfo.startDate);
+        
+        // Calculate the exact Friday of the week the teacher is mutating
+        const paymentWeekStart = new Date(termStartDate);
+        paymentWeekStart.setDate(termStartDate.getDate() + (weekNumber - 1) * 7);
+        
+        const weekEndFriday = new Date(paymentWeekStart);
+        weekEndFriday.setDate(paymentWeekStart.getDate() + 4); // Add 4 days to get to Friday
+        weekEndFriday.setHours(23, 59, 59, 999); // End of the day Friday
 
-        // If the week they are marking is less than the current week of the school term
-        if (weekNumber < currentWeek) {
+        // If today is mathematically past the Friday of this designated week, then it's a retroactive Debt Recovery!
+        if (today > weekEndFriday) {
           isRecoveredDebt = true;
           breakdownEntry.isRecoveredDebt = true; // save permanently
         }
