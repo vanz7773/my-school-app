@@ -334,9 +334,9 @@ const isSameCalendarDay = (left, right) => {
 const getAccountedAmountForDay = (entry, targetDay, targetDate, amountPerDay = 0) => {
   const fallbackAmount = Number(entry?.perDayFee?.[targetDay]) || 0;
   const resolvedAmount = Number(amountPerDay) > 0 ? Number(amountPerDay) : fallbackAmount;
-  
+
   if (resolvedAmount <= 0) return 0; // Quick exit safety
-  
+
   let amountForTargetDay = 0;
 
   for (const dayKey of WEEK_DAY_KEYS) {
@@ -1405,29 +1405,29 @@ const getFeedingFeeSummary = async (req, res) => {
         let debtAmountCaptured = 0;
 
         for (const dayKey of WEEK_DAY_KEYS) {
-           const isPaid = entry.days?.[dayKey] === 'present';
-           if (!isPaid) continue;
+          const isPaid = entry.days?.[dayKey] === 'present';
+          if (!isPaid) continue;
 
-           const paidAt = entry.paidAt?.[dayKey];
+          const paidAt = entry.paidAt?.[dayKey];
 
-           if (!paidAt) {
+          if (!paidAt) {
+            if (isNativeRecord) nativeAmountCaptured += resolvedAmount;
+          } else {
+            const paidDate = new Date(paidAt);
+            if (paidDate >= weekBounds.windowStart && paidDate <= weekBounds.windowEnd) {
               if (isNativeRecord) nativeAmountCaptured += resolvedAmount;
-           } else {
-              const paidDate = new Date(paidAt);
-              if (paidDate >= weekBounds.windowStart && paidDate <= weekBounds.windowEnd) {
-                 if (isNativeRecord) nativeAmountCaptured += resolvedAmount;
-                 else debtAmountCaptured += resolvedAmount;
-              }
-           }
+              else debtAmountCaptured += resolvedAmount;
+            }
+          }
         }
 
         if (nativeAmountCaptured > 0) {
-           const currentNative = nativeManualAmountByStudent.get(sid) || 0;
-           nativeManualAmountByStudent.set(sid, currentNative + nativeAmountCaptured);
+          const currentNative = nativeManualAmountByStudent.get(sid) || 0;
+          nativeManualAmountByStudent.set(sid, currentNative + nativeAmountCaptured);
         }
         if (debtAmountCaptured > 0) {
-           const currentDebt = debtRecoveryAmountByStudent.get(sid) || 0;
-           debtRecoveryAmountByStudent.set(sid, currentDebt + debtAmountCaptured);
+          const currentDebt = debtRecoveryAmountByStudent.get(sid) || 0;
+          debtRecoveryAmountByStudent.set(sid, currentDebt + debtAmountCaptured);
         }
       }
     }
@@ -1453,7 +1453,7 @@ const getFeedingFeeSummary = async (req, res) => {
       const attendanceNativeAmount = attendanceDays * amountPerDay;
 
       const nativeManualAmount = nativeManualAmountByStudent.get(studentId) || 0;
-      
+
       // Calculate true native payment volume for the week, taking max to resolve duplicate un-timestamped overlaps
       const resolvedNativeAmount = Math.max(attendanceNativeAmount, nativeManualAmount);
 
@@ -1543,36 +1543,45 @@ const getAbsenteesForWeek = async (req, res) => {
     const schoolId = req.user.school;
     const weekNumber = normalizeWeekNumber(week);
 
-    // Find all feeding records for this school/term/week
-    const records = await FeedingFeeRecord.find({
+    // ONLY use StudentAttendance as the source of truth for physical school absentees.
+    // A student can be present in school but not pay feeding fee — that student belongs
+    // in the Debtors list, NOT the Absentees list.
+    const attendanceRecords = await StudentAttendance.find({
       school: schoolId,
       termId,
-      week: weekNumber
-    }).lean();
+      weekNumber
+    })
+      .populate('student', 'name firstName lastName')
+      .populate('class', 'name displayName')
+      .lean();
 
+    const DAY_KEY_MAP = { monday: 'M', tuesday: 'T', wednesday: 'W', thursday: 'TH', friday: 'F' };
     const absentees = [];
 
-    for (const record of records) {
-      if (!record.breakdown) continue;
+    for (const attRecord of attendanceRecords) {
+      if (!attRecord.student) continue;
 
-      for (const entry of record.breakdown) {
-        // Check if student has any day marked as 'absent'
-        const absentDays = [];
-        for (const [day, status] of Object.entries(entry.days || {})) {
-          if (status === 'absent') {
-            absentDays.push(day);
-          }
-        }
+      const days = attRecord.days || {};
+      const absentDays = [];
 
-        if (absentDays.length > 0) {
-          absentees.push({
-            studentId: entry.student,
-            studentName: entry.studentName,
-            classId: record.classId,
-            className: entry.className,
-            absentDays // ['M', 'T'] etc.
-          });
-        }
+      for (const [dayName, status] of Object.entries(days)) {
+        const key = DAY_KEY_MAP[dayName.toLowerCase()];
+        if (key && status === 'absent') absentDays.push(key);
+      }
+
+      if (absentDays.length > 0) {
+        const studentName = attRecord.student.firstName
+          ? `${attRecord.student.firstName} ${attRecord.student.lastName || ''}`.trim()
+          : attRecord.student.name || 'Unknown';
+        const cls = attRecord.class || {};
+
+        absentees.push({
+          studentId: attRecord.student._id || attRecord.student,
+          studentName,
+          classId: cls._id || attRecord.class,
+          className: cls.displayName || cls.name || '',
+          absentDays
+        });
       }
     }
 
@@ -1754,13 +1763,13 @@ const getTargetWeekBounds = (termDoc, weekNumber) => {
   startDate.setHours(0, 0, 0, 0);
   const weekStart = new Date(startDate);
   weekStart.setDate(startDate.getDate() + (weekNumber - 1) * 7);
-  
+
   const windowStart = new Date(weekStart);
   windowStart.setDate(windowStart.getDate() - 2); // Expand to previous weekend
-  
+
   const windowEnd = new Date(weekStart);
   windowEnd.setDate(windowStart.getDate() + 8); // Cover the whole week up to next weekend
-  
+
   return { windowStart, windowEnd };
 };
 
@@ -1814,7 +1823,7 @@ const getFeedingFeeAuditReport = async (req, res) => {
 
       const classId = record.classId?._id || record.classId;
       const className = record.classId?.displayName || record.classId?.name || 'Unknown Class';
-      
+
       let classTotalAmount = 0;
       let classPaidCount = 0;
       let classUnpaidCount = 0;
@@ -1865,7 +1874,7 @@ const getFeedingFeeAuditReport = async (req, res) => {
         if (!isNativeRecord && amountPaidToday === 0) continue;
 
         const isPaid = amountPaidToday > 0;
-        
+
         if (isNativeRecord) {
           if (isPaid) {
             classPaidCount++; totalPaid++; classTotalAmount += amountPaidToday; grandTotal += amountPaidToday;
