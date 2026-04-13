@@ -332,27 +332,46 @@ const isSameCalendarDay = (left, right) => {
 };
 
 const getAccountedAmountForDay = (entry, targetDay, targetDate, amountPerDay = 0) => {
-  const hasAnyTimestamps = WEEK_DAY_KEYS.some(dayKey => entry.paidAt?.[dayKey]);
   const fallbackAmount = Number(entry?.perDayFee?.[targetDay]) || 0;
   const resolvedAmount = Number(amountPerDay) > 0 ? Number(amountPerDay) : fallbackAmount;
-  const dayIsPaid = entry?.days?.[targetDay] === 'present';
-
-  if (!hasAnyTimestamps) {
-    return dayIsPaid ? resolvedAmount : 0;
-  }
-
+  
+  if (resolvedAmount <= 0) return 0; // Quick exit safety
+  
   let amountForTargetDay = 0;
 
   for (const dayKey of WEEK_DAY_KEYS) {
+    // Only process days that are actually paid
+    const isPaidDay = entry?.days?.[dayKey] === 'present';
+    if (!isPaidDay) continue;
+
     const paidAt = entry.paidAt?.[dayKey];
 
-    if (!paidAt || resolvedAmount <= 0) continue;
+    // Case 1: No timestamp tracking (e.g. from Student Attendance page or legacy records)
+    if (!paidAt) {
+      if (targetDay === dayKey) {
+        amountForTargetDay += resolvedAmount;
+      }
+      continue;
+    }
 
+    // Case 2: Timestamp tracked. Does it physically map to this target targetDate?
     let matchesTarget = isSameCalendarDay(paidAt, targetDate);
 
+    // Weekend Roll-over rule -> Map to Monday if adjacent
     if (!matchesTarget && targetDay === 'M') {
       const paymentDay = new Date(paidAt).getDay();
       if (paymentDay === 0 || paymentDay === 6) {
+        const diffDays = Math.abs(new Date(paidAt) - new Date(targetDate)) / 86400000;
+        if (diffDays <= 3) {
+          matchesTarget = true;
+        }
+      }
+    }
+
+    // Out-of-bounds safety rule -> Keep on its indigenous feeding day if outside current visible week
+    if (!matchesTarget) {
+      const diffDays = Math.abs(new Date(paidAt) - new Date(targetDate)) / 86400000;
+      if (diffDays > 6 && targetDay === dayKey) {
         matchesTarget = true;
       }
     }
@@ -496,6 +515,7 @@ const processFeedingJob = async (jobData) => {
         student,
         studentName: getFullStudentName(studentDoc),
         className: studentDoc.class?.name || "Unknown Class",
+        classFeeAmount: amountPerDay,
         amount: 0,
         perDayFee: { M: 0, T: 0, W: 0, TH: 0, F: 0 },
         days: { M: "notmarked", T: "notmarked", W: "notmarked", TH: "notmarked", F: "notmarked" },
@@ -504,6 +524,8 @@ const processFeedingJob = async (jobData) => {
         currency: feeConfig.currency || "GHS",
       };
       record.breakdown.push(breakdownEntry);
+    } else {
+      breakdownEntry.classFeeAmount = amountPerDay;
     }
 
     // 6️⃣ Validate day key
