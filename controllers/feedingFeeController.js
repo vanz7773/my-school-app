@@ -249,11 +249,19 @@ const normalizeDayValue = (val) => {
 };
 
 const ensureDefaultDays = (days = {}) => ({
-  M: normalizeDayValue(days.M),
-  T: normalizeDayValue(days.T),
-  W: normalizeDayValue(days.W),
-  TH: normalizeDayValue(days.TH),
-  F: normalizeDayValue(days.F),
+  M: days.M || 'notmarked',
+  T: days.T || 'notmarked',
+  W: days.W || 'notmarked',
+  TH: days.TH || 'notmarked',
+  F: days.F || 'notmarked',
+});
+
+const ensureDefaultPaidAt = (paidAt = {}) => ({
+  M: paidAt.M || null,
+  T: paidAt.T || null,
+  W: paidAt.W || null,
+  TH: paidAt.TH || null,
+  F: paidAt.F || null,
 });
 
 // Helper to get full student name
@@ -409,6 +417,7 @@ const processFeedingJob = async (jobData) => {
         amount: 0,
         perDayFee: { M: 0, T: 0, W: 0, TH: 0, F: 0 },
         days: { M: "notmarked", T: "notmarked", W: "notmarked", TH: "notmarked", F: "notmarked" },
+        paidAt: { M: null, T: null, W: null, TH: null, F: null },
         daysPaid: 0,
         currency: feeConfig.currency || "GHS",
       };
@@ -424,6 +433,19 @@ const processFeedingJob = async (jobData) => {
     const normalizedValue = normalizeDayValue(fed);
     breakdownEntry.days[day] = normalizedValue;
     breakdownEntry.days = ensureDefaultDays(breakdownEntry.days);
+
+    // 🟢 Record actual date of marking for audit/accounting
+    if (!breakdownEntry.paidAt) {
+      breakdownEntry.paidAt = { M: null, T: null, W: null, TH: null, F: null };
+    }
+    
+    if (normalizedValue === 'present') {
+      breakdownEntry.paidAt[day] = new Date();
+    } else {
+      // Clear payment date if unmarked or marked as absent
+      breakdownEntry.paidAt[day] = null;
+    }
+    breakdownEntry.paidAt = ensureDefaultPaidAt(breakdownEntry.paidAt);
 
     // 7️⃣ Recalculate paid days and per-day fee map
     breakdownEntry.daysPaid = Object.values(breakdownEntry.days).filter(
@@ -1122,6 +1144,8 @@ const getFeedingFeeForStudent = async (req, res) => {
 
       console.log(`📊 Found attendance: ${!!attendance}, feedingRecord: ${!!feedingRecord}`);
 
+
+
       let days = {
         M: "notmarked",
         T: "notmarked",
@@ -1564,6 +1588,29 @@ const getFeedingFeeAuditReport = async (req, res) => {
 
     const weekNumber = normalizeWeekNumber(week);
 
+    // 1️⃣ Fetch the Term to determine calendar dates for the requested week
+    const termDoc = await Term.findById(termId).lean();
+    if (!termDoc) {
+      return res.status(404).json({ success: false, message: "Term not found" });
+    }
+
+    // Helper to check if two dates are the same day (ignoring time)
+    const isSameDay = (d1, d2) => {
+      if (!d1 || !d2) return false;
+      const date1 = new Date(d1);
+      const date2 = new Date(d2);
+      return (
+        date1.getFullYear() === date2.getFullYear() &&
+        date1.getMonth() === date2.getMonth() &&
+        date1.getDate() === date2.getDate()
+      );
+    };
+
+    // Calculate the target calendar date for the requested 'day' key in 'weekNumber'
+    const daysOffset = { M: 0, T: 1, W: 2, TH: 3, F: 4 };
+    const baseDate = new Date(termDoc.startDate);
+    const targetCalendarDate = new Date(baseDate.getTime() + (weekNumber - 1) * 7 * 24 * 60 * 60 * 1000 + (daysOffset[day] || 0) * 24 * 60 * 60 * 1000);
+
     // Fetch all records for the school/term/week
     const records = await FeedingFeeRecord.find({
       school: schoolId,
@@ -1576,8 +1623,8 @@ const getFeedingFeeAuditReport = async (req, res) => {
 
     const auditReport = [];
     let grandTotal = 0;
-    let totalPaid = 0;
-    let totalUnpaid = 0;
+    let totalPaidCount = 0;
+    let totalUnpaidCount = 0;
 
     for (const record of records) {
       if (!record.breakdown || record.breakdown.length === 0) continue;
@@ -1591,19 +1638,49 @@ const getFeedingFeeAuditReport = async (req, res) => {
       const studentsDetails = [];
 
       for (const entry of record.breakdown) {
-        const status = entry.days?.[day];
-        // Ensure accurate status matching logic where present = paid
-        const isPaid = status === 'present';
-        const amount = isPaid ? (Number(entry.perDayFee?.[day]) || 0) : 0;
-        
-        if (isPaid) {
+        let studentAuditAmount = 0;
+        let isIdeallyPaidForRequestedDay = entry.days?.[day] === 'present';
+        let foundAnyPaymentThisDay = false;
+
+        // 🟢 ACCOUNTING LOGIC: Check all feeding days for payments made on target date
+        const feedingDays = ['M', 'T', 'W', 'TH', 'F'];
+        for (const dKey of feedingDays) {
+          const paidAt = entry.paidAt?.[dKey];
+          const amountForDay = Number(entry.perDayFee?.[dKey]) || 0;
+
+          if (paidAt && amountForDay > 0) {
+            // Check if payment was made on target date
+            let matchesTarget = isSameDay(paidAt, targetCalendarDate);
+            
+            // 🏷️ SPECIAL CASE: If requested day is Monday, include weekend payments
+            if (!matchesTarget && day === 'M' && (new Date(paidAt).getDay() === 0 || new Date(paidAt).getDay() === 6)) {
+                matchesTarget = true; 
+            }
+
+            if (matchesTarget) {
+              studentAuditAmount += amountForDay;
+              foundAnyPaymentThisDay = true;
+            }
+          }
+        }
+
+        // 🚦 FALLBACK: For old records OR if no payment timestamps found, use original logic
+        if (!foundAnyPaymentThisDay && isIdeallyPaidForRequestedDay) {
+          const hasAnyTimestamps = feedingDays.some(dk => entry.paidAt?.[dk]);
+          if (!hasAnyTimestamps) {
+            studentAuditAmount = Number(entry.perDayFee?.[day]) || 0;
+            foundAnyPaymentThisDay = studentAuditAmount > 0;
+          }
+        }
+
+        if (studentAuditAmount > 0) {
           classPaidCount++;
-          classTotalAmount += amount;
-          grandTotal += amount;
-          totalPaid++;
-        } else {
+          classTotalAmount += studentAuditAmount;
+          grandTotal += studentAuditAmount;
+          totalPaidCount++;
+        } else if (entry.days?.[day] === 'absent' || entry.days?.[day] === 'notmarked') {
           classUnpaidCount++;
-          totalUnpaid++;
+          totalUnpaidCount++;
         }
 
         const studentObj = entry.student || {};
@@ -1611,19 +1688,14 @@ const getFeedingFeeAuditReport = async (req, res) => {
         studentsDetails.push({
           studentId: studentObj._id || entry.student,
           studentName: entry.studentName,
-          status: status || 'notmarked',
-          amount,
+          status: entry.days?.[day] || 'notmarked',
+          amount: studentAuditAmount,
           guardianName: studentObj.guardianName || '',
           guardianPhone: studentObj.guardianPhone || ''
         });
       }
 
-      // Sort students alphabetically
-      studentsDetails.sort((a, b) => {
-        if (!a.studentName) return 1;
-        if (!b.studentName) return -1;
-        return a.studentName.localeCompare(b.studentName);
-      });
+      studentsDetails.sort((a, b) => (a.studentName || '').localeCompare(b.studentName || ''));
 
       auditReport.push({
         classId,
@@ -1635,20 +1707,15 @@ const getFeedingFeeAuditReport = async (req, res) => {
       });
     }
 
-    // Sort classes alphabetically
-    auditReport.sort((a, b) => {
-      if (!a.className) return 1;
-      if (!b.className) return -1;
-      return a.className.localeCompare(b.className);
-    });
+    auditReport.sort((a, b) => (a.className || '').localeCompare(b.className || ''));
 
     return res.json({
       success: true,
       day,
       week: weekNumber,
       grandTotal,
-      totalPaid,
-      totalUnpaid,
+      totalPaid: totalPaidCount,
+      totalUnpaid: totalUnpaidCount,
       report: auditReport
     });
 
