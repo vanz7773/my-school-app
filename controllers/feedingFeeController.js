@@ -1245,7 +1245,7 @@ const getFeedingFeeForStudent = async (req, res) => {
       if (manualEntry?.days) {
         for (const key of ["M", "T", "W", "TH", "F"]) {
           const manualVal = manualEntry.days[key];
-          if (manualVal === "present" || manualVal === "absent") {
+          if (manualVal === "present" || manualVal === "absent" || manualVal === "unpaid") {
             days[key] = manualVal;
           }
         }
