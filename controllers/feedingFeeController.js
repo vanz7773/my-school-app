@@ -1612,13 +1612,23 @@ const getDebtorsForWeek = async (req, res) => {
 
     const schoolId = req.user.school;
 
-    // Find all feeding records for this school/term
-    const records = await FeedingFeeRecord.find({
-      school: schoolId,
-      termId
-    })
-      .populate('breakdown.student', 'guardianName guardianPhone')
-      .lean();
+    // Fetch all FeedingFeeRecords AND all StudentAttendance records for the term in parallel
+    const [records, attendanceRecords] = await Promise.all([
+      FeedingFeeRecord.find({ school: schoolId, termId })
+        .populate('breakdown.student', 'guardianName guardianPhone')
+        .lean(),
+      StudentAttendance.find({ school: schoolId, termId }).lean()
+    ]);
+
+    // Build a lookup: studentId + week -> { M: 'absent'|'present'|... }
+    // This tells us what the Attendance page says about each student per week
+    const attendanceLookup = new Map();
+    for (const att of attendanceRecords) {
+      const sid = String(att.student);
+      const week = att.weekNumber;
+      const key = `${sid}_${week}`;
+      attendanceLookup.set(key, att.days || {});
+    }
 
     const debtors = [];
 
@@ -1626,26 +1636,32 @@ const getDebtorsForWeek = async (req, res) => {
       if (!record.breakdown) continue;
 
       for (const entry of record.breakdown) {
-        // Debtor implies they haven't paid, so any status other than 'present'
+        const studentObj = entry.student || {};
+        const studentId = String(studentObj._id || studentObj);
+        const week = record.week;
+        const attKey = `${studentId}_${week}`;
+        const attDays = attendanceLookup.get(attKey) || {};
+
         const debtorDays = [];
         for (const day of ['M', 'T', 'W', 'TH', 'F']) {
-          const status = entry.days?.[day];
-          if (status !== 'present') {
+          const feedingStatus = entry.days?.[day];
+          const attendanceStatus = attDays[day];
+
+          // A debtor is: explicitly marked 'absent' (unpaid) in Feeding Fee page
+          // AND was NOT physically absent from school (attendance page doesn't say absent)
+          if (feedingStatus === 'absent' && attendanceStatus !== 'absent') {
             debtorDays.push(day);
           }
         }
 
         if (debtorDays.length > 0) {
-          const studentObj = entry.student || {};
-          const studentId = studentObj._id ? studentObj._id : studentObj;
-
           debtors.push({
             studentId,
             studentName: entry.studentName,
             classId: record.classId,
             className: entry.className,
             week: record.week,
-            debtorDays, // ['M', 'T'] etc.
+            debtorDays,
             guardianName: studentObj.guardianName || '',
             guardianPhone: studentObj.guardianPhone || ''
           });
