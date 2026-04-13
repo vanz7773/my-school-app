@@ -256,6 +256,14 @@ const ensureDefaultDays = (days = {}) => ({
   F: normalizeDayValue(days.F),
 });
 
+const ensureDefaultPaidAt = (paidAt = {}) => ({
+  M: paidAt.M || null,
+  T: paidAt.T || null,
+  W: paidAt.W || null,
+  TH: paidAt.TH || null,
+  F: paidAt.F || null,
+});
+
 // Helper to get full student name
 const getFullStudentName = (student) => {
   if (!student) return "Unknown Student";
@@ -297,6 +305,62 @@ const getWeekStartDate = (term, weekNumber) => {
   const weekStart = new Date(startDate);
   weekStart.setDate(startDate.getDate() + (weekNumber - 1) * 7);
   return weekStart;
+};
+
+const WEEK_DAY_KEYS = ['M', 'T', 'W', 'TH', 'F'];
+
+const getWeekDayDates = (term, weekNumber) => {
+  const weekStart = getWeekStartDate(term, weekNumber);
+  return {
+    M: new Date(weekStart),
+    T: new Date(weekStart.getTime() + 1 * 86400000),
+    W: new Date(weekStart.getTime() + 2 * 86400000),
+    TH: new Date(weekStart.getTime() + 3 * 86400000),
+    F: new Date(weekStart.getTime() + 4 * 86400000),
+  };
+};
+
+const isSameCalendarDay = (left, right) => {
+  if (!left || !right) return false;
+  const leftDate = new Date(left);
+  const rightDate = new Date(right);
+  return (
+    leftDate.getFullYear() === rightDate.getFullYear() &&
+    leftDate.getMonth() === rightDate.getMonth() &&
+    leftDate.getDate() === rightDate.getDate()
+  );
+};
+
+const getAccountedAmountForDay = (entry, targetDay, targetDate) => {
+  const hasAnyTimestamps = WEEK_DAY_KEYS.some(dayKey => entry.paidAt?.[dayKey]);
+
+  if (!hasAnyTimestamps) {
+    return Number(entry.perDayFee?.[targetDay]) || 0;
+  }
+
+  let amountForTargetDay = 0;
+
+  for (const dayKey of WEEK_DAY_KEYS) {
+    const paidAt = entry.paidAt?.[dayKey];
+    const amountForDay = Number(entry.perDayFee?.[dayKey]) || 0;
+
+    if (!paidAt || amountForDay <= 0) continue;
+
+    let matchesTarget = isSameCalendarDay(paidAt, targetDate);
+
+    if (!matchesTarget && targetDay === 'M') {
+      const paymentDay = new Date(paidAt).getDay();
+      if (paymentDay === 0 || paymentDay === 6) {
+        matchesTarget = true;
+      }
+    }
+
+    if (matchesTarget) {
+      amountForTargetDay += amountForDay;
+    }
+  }
+
+  return amountForTargetDay;
 };
 
 // Import updated utility functions
@@ -409,6 +473,7 @@ const processFeedingJob = async (jobData) => {
         amount: 0,
         perDayFee: { M: 0, T: 0, W: 0, TH: 0, F: 0 },
         days: { M: "notmarked", T: "notmarked", W: "notmarked", TH: "notmarked", F: "notmarked" },
+        paidAt: { M: null, T: null, W: null, TH: null, F: null },
         daysPaid: 0,
         currency: feeConfig.currency || "GHS",
       };
@@ -424,6 +489,10 @@ const processFeedingJob = async (jobData) => {
     const normalizedValue = normalizeDayValue(fed);
     breakdownEntry.days[day] = normalizedValue;
     breakdownEntry.days = ensureDefaultDays(breakdownEntry.days);
+
+    // Preserve the actual day the payment was recorded for daily reporting.
+    breakdownEntry.paidAt = ensureDefaultPaidAt(breakdownEntry.paidAt);
+    breakdownEntry.paidAt[day] = normalizedValue === 'present' ? new Date() : null;
 
     // 7️⃣ Recalculate paid days and per-day fee map
     breakdownEntry.daysPaid = Object.values(breakdownEntry.days).filter(
@@ -1512,6 +1581,13 @@ const getDailyTotalSummary = async (req, res) => {
 
     const weekNumber = normalizeWeekNumber(week);
 
+    const termDoc = await Term.findById(termId).lean();
+    if (!termDoc) {
+      return res.status(404).json({ message: 'Term not found' });
+    }
+
+    const weekDates = getWeekDayDates(termDoc, weekNumber);
+
     // Find records for ALL classes in this school for this term/week
     const records = await FeedingFeeRecord.find({
       school: schoolId,
@@ -1520,23 +1596,17 @@ const getDailyTotalSummary = async (req, res) => {
     }).lean();
 
     const totals = { M: 0, T: 0, W: 0, TH: 0, F: 0 };
-    let grandTotal = 0;
 
     for (const record of records) {
       if (!record.breakdown) continue;
       for (const entry of record.breakdown) {
-        // entry.perDayFee is { M: amount, T: amount, ... }
-        if (entry.perDayFee) {
-          totals.M += (Number(entry.perDayFee.M) || 0);
-          totals.T += (Number(entry.perDayFee.T) || 0);
-          totals.W += (Number(entry.perDayFee.W) || 0);
-          totals.TH += (Number(entry.perDayFee.TH) || 0);
-          totals.F += (Number(entry.perDayFee.F) || 0);
+        for (const dayKey of WEEK_DAY_KEYS) {
+          totals[dayKey] += getAccountedAmountForDay(entry, dayKey, weekDates[dayKey]);
         }
       }
     }
 
-    grandTotal = totals.M + totals.T + totals.W + totals.TH + totals.F;
+    const grandTotal = totals.M + totals.T + totals.W + totals.TH + totals.F;
 
     res.json({
       success: true,
@@ -1563,6 +1633,13 @@ const getFeedingFeeAuditReport = async (req, res) => {
     }
 
     const weekNumber = normalizeWeekNumber(week);
+
+    const termDoc = await Term.findById(termId).lean();
+    if (!termDoc) {
+      return res.status(404).json({ success: false, message: "Term not found" });
+    }
+
+    const weekDates = getWeekDayDates(termDoc, weekNumber);
 
     // Fetch all records for the school/term/week
     const records = await FeedingFeeRecord.find({
@@ -1592,9 +1669,8 @@ const getFeedingFeeAuditReport = async (req, res) => {
 
       for (const entry of record.breakdown) {
         const status = entry.days?.[day];
-        // Ensure accurate status matching logic where present = paid
-        const isPaid = status === 'present';
-        const amount = isPaid ? (Number(entry.perDayFee?.[day]) || 0) : 0;
+        const amount = getAccountedAmountForDay(entry, day, weekDates[day]);
+        const isPaid = amount > 0;
         
         if (isPaid) {
           classPaidCount++;

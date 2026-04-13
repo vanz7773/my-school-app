@@ -100,6 +100,15 @@ const feedingFeeRecordSchema = new mongoose.Schema(
           F: { type: Number, default: 0 }
         },
 
+        // Track the day each payment was recorded for daily accountability
+        paidAt: {
+          M: { type: Date, default: null },
+          T: { type: Date, default: null },
+          W: { type: Date, default: null },
+          TH: { type: Date, default: null },
+          F: { type: Date, default: null }
+        },
+
         // Replace 'amount' with 'total' for clarity
         total: {
           type: Number,

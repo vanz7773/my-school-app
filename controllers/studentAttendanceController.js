@@ -513,6 +513,7 @@ const processAttendanceJob = async (jobData) => {
               student: studentId,
               studentName: student.user?.name || "Student",
               className: getClassDisplayName(classDoc),
+              classFeeAmount: amountPerDay,
               daysPaid: fedDays.length,
               days: Object.fromEntries(
                 Object.entries(DEFAULT_DAYS).map(([key]) => [
@@ -525,6 +526,7 @@ const processAttendanceJob = async (jobData) => {
               source: 'attendance-sync'
             });
           } else {
+            existingStudentEntry.classFeeAmount = amountPerDay;
             for (const [key] of Object.entries(DEFAULT_DAYS)) {
               if (fedDays.includes(key)) existingStudentEntry.days[key] = 'present';
               else if (changedDays.has(key)) existingStudentEntry.days[key] = 'absent';
