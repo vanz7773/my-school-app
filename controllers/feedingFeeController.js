@@ -795,6 +795,8 @@ const calculateFeedingFeeCollection = async (req, res) => {
       const manual = feedingMap.get(studentId);
       if (manual?.days) {
         const manualValues = Object.values(manual.days);
+        // isLikelyAutoSync: record has both 'present' AND 'absent' from attendance page
+        // Ignore 'unpaid' in this check — it's always an explicit manual action
         const hasPresent = manualValues.includes("present");
         const hasAbsent = manualValues.includes("absent");
         const isLikelyAutoSync = hasPresent && hasAbsent;
@@ -803,7 +805,10 @@ const calculateFeedingFeeCollection = async (req, res) => {
           const manualVal = manual.days[dayKey];
           const currentVal = mergedDays[dayKey];
 
-          if (isLikelyAutoSync) {
+          // 'unpaid' is ALWAYS an explicit teacher action — always wins
+          if (manualVal === "unpaid") {
+            mergedDays[dayKey] = "unpaid";
+          } else if (isLikelyAutoSync) {
             if (manualVal === "present") mergedDays[dayKey] = "present";
             else if (manualVal === "absent" && (attendance?.days?.[dayKey] === "absent" || attendance?.days?.[dayKey] === "present")) {
               mergedDays[dayKey] = "absent";
