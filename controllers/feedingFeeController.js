@@ -1551,7 +1551,11 @@ const getAbsenteesForWeek = async (req, res) => {
       termId,
       weekNumber
     })
-      .populate('student', 'name firstName lastName')
+      .populate({
+        path: 'student',
+        select: 'name firstName lastName user',
+        populate: { path: 'user', select: 'name' }
+      })
       .populate('class', 'name displayName')
       .lean();
 
@@ -1569,9 +1573,8 @@ const getAbsenteesForWeek = async (req, res) => {
       }
 
       if (absentDays.length > 0) {
-        const studentName = attRecord.student.firstName
-          ? `${attRecord.student.firstName} ${attRecord.student.lastName || ''}`.trim()
-          : attRecord.student.name || 'Unknown';
+        // Use getFullStudentName which resolves: user.name → name → firstName+lastName
+        const studentName = getFullStudentName(attRecord.student);
         const cls = attRecord.class || {};
 
         absentees.push({
