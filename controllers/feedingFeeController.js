@@ -353,8 +353,6 @@ try {
 // --------------------------------------------------------------------
 const processFeedingJob = async (jobData) => {
   const { student, termId, classId, week, fed, day, reqUser } = jobData;
-  const session = await mongoose.startSession();
-  session.startTransaction();
 
   try {
     const schoolId = reqUser.school;
@@ -363,15 +361,13 @@ const processFeedingJob = async (jobData) => {
     // 1️⃣ Config (cached)
     const feeConfig = await getFeeConfigWithCache(schoolId);
     if (!feeConfig) {
-      await session.abortTransaction();
-      return res.status(404).json({ message: "Feeding fee config not found" });
+      return { success: false, status: 404, message: "Feeding fee config not found" };
     }
 
     // 2️⃣ Student + class (cached)
     const studentDoc = await getStudentWithCache(student, schoolId);
     if (!studentDoc) {
-      await session.abortTransaction();
-      return res.status(404).json({ message: "Student not found" });
+      return { success: false, status: 404, message: "Student not found" };
     }
 
     // 3️⃣ Determine category + daily rate
@@ -384,7 +380,7 @@ const processFeedingJob = async (jobData) => {
       termId,
       school: schoolId,
       week: weekNumber,
-    }).session(session);
+    });
 
     if (!record) {
       record = new FeedingFeeRecord({
@@ -421,8 +417,7 @@ const processFeedingJob = async (jobData) => {
 
     // 6️⃣ Validate day key
     if (!["M", "T", "W", "TH", "F"].includes(day)) {
-      await session.abortTransaction();
-      return res.status(400).json({ message: "Invalid day key. Must be one of M, T, W, TH, F" });
+      return { success: false, status: 400, message: "Invalid day key. Must be one of M, T, W, TH, F" };
     }
 
     // 🟢 Normalize and update the specific day
@@ -483,9 +478,7 @@ const processFeedingJob = async (jobData) => {
 
     // 9️⃣ Save
     record.markModified("breakdown");
-    await record.save({ session });
-
-    await session.commitTransaction();
+    await record.save();
 
     // 🔔 Send notification in background
     if (normalizedValue === "present") {
@@ -542,11 +535,32 @@ const processFeedingJob = async (jobData) => {
       week: weekNumber,
     };
   } catch (error) {
-    await session.abortTransaction();
     console.error("❌ Error in processFeedingJob:", error);
     throw error;
+  }
+};
+
+// --------------------------------------------------------------------
+// 🚦 In-Memory Lock for Synchronous Process Execution per Class
+// --------------------------------------------------------------------
+const classJobLocks = new Map();
+
+const enqueueFeedingJob = async (lockKey, jobData) => {
+  if (!classJobLocks.has(lockKey)) {
+    classJobLocks.set(lockKey, Promise.resolve());
+  }
+
+  const currentTask = classJobLocks.get(lockKey);
+  
+  let resolveNext;
+  const nextTask = new Promise((resolve) => { resolveNext = resolve; });
+  classJobLocks.set(lockKey, currentTask.then(() => nextTask));
+
+  try {
+    await currentTask;
+    return await processFeedingJob(jobData);
   } finally {
-    session.endSession();
+    resolveNext();
   }
 };
 
@@ -558,16 +572,23 @@ const markFeeding = async (req, res) => {
 
   if (!student || !termId || !classId || !week || !day) {
     return res.status(400).json({
+      success: false,
       message: "Missing required fields: student, termId, classId, week, or day",
     });
   }
 
   try {
-    // Process feeding fee marking directly
-    const result = await processFeedingJob({
+    const lockKey = `${classId}_${week}`;
+
+    // Process feeding fee marking directly, but sequentially for the same class+week
+    const result = await enqueueFeedingJob(lockKey, {
       student, termId, classId, week, fed, day,
       reqUser: { _id: req.user._id, school: req.user.school } // Pass along required parts of req.user
     });
+
+    if (result && result.success === false) {
+      return res.status(result.status || 400).json(result);
+    }
 
     res.json(result);
   } catch (err) {
