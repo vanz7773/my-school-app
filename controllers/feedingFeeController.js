@@ -1424,32 +1424,15 @@ const getFeedingFeeSummary = async (req, res) => {
       }
     }
 
-    // Map attendance occurrences independently for the native week
-    const attendanceByStudent = new Map();
-    for (const record of attendanceRecords) {
-      const sid = record.student?._id ? String(record.student._id) : null;
-      if (!sid) continue;
-      const attendanceDaysPaid = Object.values(record.days || {}).filter(v => v === "present").length;
-      attendanceByStudent.set(sid, attendanceDaysPaid);
-    }
-
     let totalAmount = 0;
     let studentCount = 0;
     const breakdown = [];
 
     for (const student of students) {
       const studentId = String(student._id);
-
-      const attendanceDays = attendanceByStudent.get(studentId) || 0;
       const amountPerDay = getAmountPerDay(student, feeConfig);
-      const attendanceNativeAmount = attendanceDays * amountPerDay;
 
-      const nativeManualAmount = nativeManualAmountByStudent.get(studentId) || 0;
-
-      // Calculate true native payment volume for the week, taking max to resolve duplicate un-timestamped overlaps
-      const resolvedNativeAmount = Math.max(attendanceNativeAmount, nativeManualAmount);
-
-      // Raw cash injection from cross-week debt recoveries handled during this exact physical week
+      const resolvedNativeAmount = nativeManualAmountByStudent.get(studentId) || 0;
       const debtAmount = debtRecoveryAmountByStudent.get(studentId) || 0;
 
       const studentTotal = resolvedNativeAmount + debtAmount;
@@ -1463,16 +1446,13 @@ const getFeedingFeeSummary = async (req, res) => {
       breakdown.push({
         studentId,
         studentName: getFullStudentName(student),
-
         className,
         classDisplayName,
-
         daysPaid: studentTotal / (amountPerDay || 1), // Logical days equivalent
         amountPerDay,
         total: studentTotal,
         isRecoveredDebt: debtAmount > 0
       });
-
     }
 
     return res.json({
