@@ -66,27 +66,27 @@ const feedingFeeRecordSchema = new mongoose.Schema(
         days: {
           M: {
             type: String,
-            enum: ['present', 'absent', 'notmarked'],
+            enum: ['present', 'absent', 'notmarked', 'unpaid'],
             default: 'notmarked',
           },
           T: {
             type: String,
-            enum: ['present', 'absent', 'notmarked'],
+            enum: ['present', 'absent', 'notmarked', 'unpaid'],
             default: 'notmarked',
           },
           W: {
             type: String,
-            enum: ['present', 'absent', 'notmarked'],
+            enum: ['present', 'absent', 'notmarked', 'unpaid'],
             default: 'notmarked',
           },
           TH: {
             type: String,
-            enum: ['present', 'absent', 'notmarked'],
+            enum: ['present', 'absent', 'notmarked', 'unpaid'],
             default: 'notmarked',
           },
           F: {
             type: String,
-            enum: ['present', 'absent', 'notmarked'],
+            enum: ['present', 'absent', 'notmarked', 'unpaid'],
             default: 'notmarked',
           },
         },
