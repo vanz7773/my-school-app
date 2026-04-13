@@ -551,7 +551,7 @@ const processFeedingJob = async (jobData) => {
 };
 
 // --------------------------------------------------------------------
-// ✅ Mark feeding fee - FAST API WRAPPER
+// ✅ Mark feeding fee - SYNCHRONOUS PROCESSING
 // --------------------------------------------------------------------
 const markFeeding = async (req, res) => {
   const { student, termId, classId, week, fed, day } = req.body;
@@ -563,23 +563,16 @@ const markFeeding = async (req, res) => {
   }
 
   try {
-    // Add lightweight job to queue using the entire payload
-    await attendanceQueue.add('markFeeding', {
+    // Process feeding fee marking directly
+    const result = await processFeedingJob({
       student, termId, classId, week, fed, day,
       reqUser: { _id: req.user._id, school: req.user.school } // Pass along required parts of req.user
     });
 
-    // Return instant success so the UI renders immediately
-    res.json({
-      success: true,
-      message: 'Feeding fee marking queued for processing',
-      student,
-      day,
-      fed
-    });
+    res.json(result);
   } catch (err) {
-    console.error("❌ Failed to queue markFeeding job:", err);
-    res.status(500).json({ message: "Internal Server Error while queueing" });
+    console.error("❌ Failed to process markFeeding:", err);
+    res.status(500).json({ message: "Internal Server Error while marking feeding fee" });
   }
 };
 
