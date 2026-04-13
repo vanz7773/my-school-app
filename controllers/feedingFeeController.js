@@ -334,11 +334,11 @@ const isSameCalendarDay = (left, right) => {
 const getAccountedAmountForDay = (entry, targetDay, targetDate, amountPerDay = 0) => {
   const hasAnyTimestamps = WEEK_DAY_KEYS.some(dayKey => entry.paidAt?.[dayKey]);
   const fallbackAmount = Number(entry?.perDayFee?.[targetDay]) || 0;
-  const resolvedAmount = Number(amountPerDay) || fallbackAmount;
+  const resolvedAmount = Number(amountPerDay) > 0 ? Number(amountPerDay) : fallbackAmount;
   const dayIsPaid = entry?.days?.[targetDay] === 'present';
 
   if (!hasAnyTimestamps) {
-    return fallbackAmount > 0 ? fallbackAmount : (dayIsPaid ? resolvedAmount : 0);
+    return dayIsPaid ? resolvedAmount : 0;
   }
 
   let amountForTargetDay = 0;
