@@ -466,7 +466,7 @@ try {
 // --------------------------------------------------------------------
 // ⚙️ Process Background Feeding Job 
 // --------------------------------------------------------------------
-const processFeedingJob = async (jobData) => {
+const processFeedingJob = async (jobData, attempt = 1) => {
   const { student, termId, classId, week, fed, day, reqUser } = jobData;
 
   try {
@@ -630,22 +630,18 @@ const processFeedingJob = async (jobData) => {
 
           // Send Standard Parent Update (Optional, keeping existing logic)
           await createFeedingFeeNotification(null, {
-            title: "Feeding Fee Updated",
-            sender: reqUser._id,
-            school: schoolId,
-            studentId: student,
-            studentName: getFullStudentName(studentDoc),
-            action: "updated",
+             title: "Feeding Fee Updated",
+             sender: reqUser._id,
+             school: schoolId,
+             studentId: student,
+             studentName: getFullStudentName(studentDoc),
+             action: "updated",
           });
         } catch (notifErr) {
           console.error("⚠️ markFeeding notification failed:", notifErr);
         }
       });
     }
-
-    // 🔟 Clear relevant caches
-    studentCache.delete(`student_${student}_${schoolId}_none`);
-    feeConfigCache.delete(`feeConfig_${schoolId}`);
 
     // 🔟 Clear relevant caches
     studentCache.delete(`student_${student}_${schoolId}_none`);
@@ -667,6 +663,12 @@ const processFeedingJob = async (jobData) => {
       week: weekNumber,
     };
   } catch (error) {
+    if (error.name === 'VersionError' && attempt <= 4) {
+      console.log(`🔄 VersionError encountered (concurrency collision). Retrying processFeedingJob (attempt ${attempt + 1}) for student ${student}`);
+      // Apply jitter backoff to stagger concurrent retries
+      await new Promise(r => setTimeout(r, Math.random() * 100 + 50 * attempt));
+      return processFeedingJob(jobData, attempt + 1);
+    }
     console.error("❌ Error in processFeedingJob:", error);
     throw error;
   }
