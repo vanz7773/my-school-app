@@ -516,7 +516,9 @@ const processFeedingJob = async (jobData) => {
     let breakdownEntry = record.breakdown.find(
       (b) => b.student.toString() === student
     );
+    let isNewEntry = false;
     if (!breakdownEntry) {
+      isNewEntry = true;
       breakdownEntry = {
         student,
         studentName: getFullStudentName(studentDoc),
@@ -529,7 +531,6 @@ const processFeedingJob = async (jobData) => {
         daysPaid: 0,
         currency: feeConfig.currency || "GHS",
       };
-      record.breakdown.push(breakdownEntry);
     } else {
       breakdownEntry.classFeeAmount = amountPerDay;
     }
@@ -565,15 +566,6 @@ const processFeedingJob = async (jobData) => {
     breakdownEntry.currency = feeConfig.currency || "GHS";
     breakdownEntry.lastUpdatedAt = new Date();
 
-    // 8️⃣ Update record totals
-    record.classFeeAmount = amountPerDay;
-    record.totalCollected = record.breakdown.reduce(
-      (sum, b) => sum + (b.amount || 0),
-      0
-    );
-    record.amountCollected = record.totalCollected;
-    record.lastUpdatedAt = new Date();
-
     // 🚦 Debt recovery detection: Check if we are updating a PAST week
     let isRecoveredDebt = false;
     if (normalizedValue === "present") {
@@ -601,6 +593,20 @@ const processFeedingJob = async (jobData) => {
         }
       }
     }
+
+    // 👉 Finally, push now that ALL mutations (including isRecoveredDebt) have been completed!
+    if (isNewEntry) {
+      record.breakdown.push(breakdownEntry);
+    }
+
+    // 8️⃣ Update record totals
+    record.classFeeAmount = amountPerDay;
+    record.totalCollected = record.breakdown.reduce(
+      (sum, b) => sum + (b.amount || 0),
+      0
+    );
+    record.amountCollected = record.totalCollected;
+    record.lastUpdatedAt = new Date();
 
     // 9️⃣ Save
     record.markModified("breakdown");
