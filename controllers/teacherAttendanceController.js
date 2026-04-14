@@ -101,7 +101,7 @@ const markAbsenteesForTodayIfNeeded = async () => {
   const now = new Date();
 
   // 🕔 School closing time
-  const SCHOOL_END_HOUR = 15;
+  const SCHOOL_END_HOUR = 19;
   const SCHOOL_END_MINUTE = 30;
 
   const cutoff = new Date(now);
@@ -444,11 +444,11 @@ const getAdminDailyRecords = async (req, res) => {
     // 1️⃣ Fetch all teachers for this school to ensure "Always list all teachers"
     const teacherQuery = { school: req.user.school };
     if (teacherId) teacherQuery._id = new mongoose.Types.ObjectId(teacherId);
-    
+
     const allTeachers = await Teacher.find(teacherQuery)
       .populate({ path: 'user', select: 'name' })
       .lean();
-      
+
     // Sort teachers alphabetically by name
     allTeachers.sort((a, b) => (a.user?.name || '').localeCompare(b.user?.name || ''));
 
@@ -459,11 +459,11 @@ const getAdminDailyRecords = async (req, res) => {
 
     // 3️⃣ Generate the full list with placeholders
     let finalRecords = [];
-    
+
     if (from && to) {
       const startDate = startOfDay(new Date(from));
       const endDate = startOfDay(new Date(to));
-      
+
       // Generate array of all dates in range (ascending order - as requested)
       const dates = [];
       let current = new Date(startDate);
@@ -480,7 +480,7 @@ const getAdminDailyRecords = async (req, res) => {
         const dayRecords = [];
 
         for (const teacher of allTeachers) {
-          const existing = records.find(r => 
+          const existing = records.find(r =>
             r.teacher?._id?.toString() === teacher._id.toString() &&
             startOfDay(new Date(r.date)).getTime() === date.getTime()
           );
