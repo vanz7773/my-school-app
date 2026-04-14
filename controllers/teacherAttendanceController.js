@@ -101,7 +101,7 @@ const markAbsenteesForTodayIfNeeded = async () => {
   const now = new Date();
 
   // 🕔 School closing time
-  const SCHOOL_END_HOUR = 19;
+  const SCHOOL_END_HOUR = 15;
   const SCHOOL_END_MINUTE = 30;
 
   const cutoff = new Date(now);
