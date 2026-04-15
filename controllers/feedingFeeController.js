@@ -550,7 +550,10 @@ const processFeedingJob = async (jobData) => {
       return sum + (b.amount || 0);
     }, 0);
 
-    // Single atomic write — updates the student entry AND class totals together
+    // ⚠️  CRITICAL FIX: Write ONLY the specific day field, not the whole days object.
+    // Before: `"breakdown.$.days": { M:"present", T:"notmarked"... }` — last writer KILLS other days
+    // After:  `"breakdown.$.days.M": "present"` — each day is its own independent MongoDB field
+    // Concurrent M and T taps now write to separate paths and NEVER overwrite each other.
     await FeedingFeeRecord.findOneAndUpdate(
       {
         classId, termId, school: schoolId, week: weekNumber,
@@ -558,8 +561,8 @@ const processFeedingJob = async (jobData) => {
       },
       {
         $set: {
-          "breakdown.$.days": mergedDays,
-          "breakdown.$.paidAt": mergedPaidAt,
+          [`breakdown.$.days.${day}`]: normalizedValue,
+          [`breakdown.$.paidAt.${day}`]: normalizedValue === "present" ? new Date() : null,
           "breakdown.$.daysPaid": daysPaid,
           "breakdown.$.perDayFee": perDayFee,
           "breakdown.$.amount": amount,
