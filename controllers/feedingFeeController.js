@@ -1502,6 +1502,17 @@ const getFeedingFeeSummary = async (req, res) => {
     const dailyTotalsObj = { M: 0, T: 0, W: 0, TH: 0, F: 0 };
     const dailyCountsObj = { M: 0, T: 0, W: 0, TH: 0, F: 0 };
 
+    // Map a JS Date to the M/T/W/TH/F week-column key
+    const dateToDayKey = (d) => {
+      const dow = d.getDay(); // 0=Sun,1=Mon,2=Tue,3=Wed,4=Thu,5=Fri,6=Sat
+      if (dow === 2) return 'T';
+      if (dow === 3) return 'W';
+      if (dow === 4) return 'TH';
+      if (dow === 5) return 'F';
+      return 'M'; // Mon and weekend → Monday bucket
+    };
+    const todayKey = dateToDayKey(new Date()); // collection day for records without paidAt
+
     for (const record of manualFeedingRecords) {
       if (!record.breakdown || !Array.isArray(record.breakdown)) continue;
       const isNativeRecord = record.week === normalizedWeek;
@@ -1524,11 +1535,17 @@ const getFeedingFeeSummary = async (req, res) => {
 
           const paidAt = entry.paidAt?.[dayKey];
 
+          // Helper: map a Date to the M/T/W/TH/F bucket key
+          // (defined above the loop — kept here as a no-op reference)
+
           if (!paidAt) {
+            // No paidAt stored (old record or same-day mark before timestamp was added).
+            // Use TODAY as the effective collection day so "mark Monday on Wednesday"
+            // still appears in Wednesday's column, not Monday's.
             if (isNativeRecord) {
               nativeAmountCaptured += resolvedAmount;
-              dailyTotalsObj[dayKey] += resolvedAmount;
-              dailyCountsObj[dayKey] += 1;
+              dailyTotalsObj[todayKey] += resolvedAmount;
+              dailyCountsObj[todayKey] += 1;
             }
           } else {
             const paidDate = new Date(paidAt);
@@ -1536,16 +1553,9 @@ const getFeedingFeeSummary = async (req, res) => {
               if (isNativeRecord) nativeAmountCaptured += resolvedAmount;
               else debtAmountCaptured += resolvedAmount;
               
-              // Map paidAt date to Day of Week
-              const paymentDayOfWeek = paidDate.getDay();
-              let mappedTab = 'M';
-              if (paymentDayOfWeek === 2) mappedTab = 'T';
-              else if (paymentDayOfWeek === 3) mappedTab = 'W';
-              else if (paymentDayOfWeek === 4) mappedTab = 'TH';
-              else if (paymentDayOfWeek === 5) mappedTab = 'F';
-              
-              dailyTotalsObj[mappedTab] += resolvedAmount;
-              dailyCountsObj[mappedTab] += 1;
+              // Map paidAt date to Day of Week (reuse same helper)
+              dailyTotalsObj[dateToDayKey(paidDate)] += resolvedAmount;
+              dailyCountsObj[dateToDayKey(paidDate)] += 1;
             }
           }
         }
