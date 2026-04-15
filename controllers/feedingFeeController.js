@@ -725,7 +725,7 @@ const calculateFeedingFeeCollection = async (req, res) => {
     if (!feeConfig)
       return res.status(404).json({ message: "Feeding fee config not found" });
 
-    // 🟢 Fetch class students (cached)
+    // 🟢 Fetch class students
     const classStudents = await Student.find({ class: toObjectId(classId) })
       .populate({
         path: "class",
@@ -738,7 +738,7 @@ const calculateFeedingFeeCollection = async (req, res) => {
 
     console.log(`🟡 Found ${classStudents.length} students in class`);
 
-    // 🧩 Fetch attendance + manual feeding records in parallel
+    // 🧩 Fetch attendance + manual feeding records in parallel (READ ONLY)
     const [attendanceRecords, manualFeedingRecords] = await Promise.all([
       StudentAttendance.find({
         termId: toObjectId(termId),
@@ -756,10 +756,10 @@ const calculateFeedingFeeCollection = async (req, res) => {
         termId: toObjectId(termId),
         classId: toObjectId(classId),
         week: weekNumber,
-      }),
+      }).lean(), // ← .lean() enforces read-only: plain JS objects, no Mongoose save() possible
     ]);
 
-    // 🟢 Create map of manual feeding data
+    // 🟢 Create map of manual feeding data (read from DB, no writes)
     const feedingMap = new Map();
     for (const record of manualFeedingRecords || []) {
       for (const entry of record.breakdown || []) {
@@ -777,7 +777,7 @@ const calculateFeedingFeeCollection = async (req, res) => {
     let totalAmount = 0;
     const breakdown = [];
 
-    // Process all students
+    // Process all students — all calculations happen in memory only
     for (const student of classStudents) {
       const studentId = String(student._id);
       const studentName = getFullStudentName(student);
@@ -788,7 +788,7 @@ const calculateFeedingFeeCollection = async (req, res) => {
 
       let mergedDays = { M: "notmarked", T: "notmarked", W: "notmarked", TH: "notmarked", F: "notmarked" };
 
-      // Attendance
+      // Step 1: Seed from attendance records
       const attendance = attendanceRecords.find(
         (a) => a.student && String(a.student._id) === studentId
       );
@@ -802,7 +802,7 @@ const calculateFeedingFeeCollection = async (req, res) => {
         }
       }
 
-      // Manual overrides
+      // Step 2: Apply manual feeding overrides (manual teacher marks always win)
       const manual = feedingMap.get(studentId);
       if (manual?.days) {
         const manualValues = Object.values(manual.days);
@@ -831,8 +831,7 @@ const calculateFeedingFeeCollection = async (req, res) => {
         }
       }
 
-
-
+      // Step 3: Count paid days and compute amount — pure in-memory math
       const daysPaid = Object.values(mergedDays).filter((v) => v === "present").length;
       const calculatedAmount = daysPaid * amountPerDay;
       totalAmount += calculatedAmount;
@@ -840,72 +839,20 @@ const calculateFeedingFeeCollection = async (req, res) => {
       breakdown.push({
         studentId,
         studentName,
-
         className,
         classDisplayName,
-
         daysPaid,
         amountPerDay,
         total: calculatedAmount,
         days: ensureDefaultDays(mergedDays),
         isRecoveredDebt: manual?.isRecoveredDebt || false,
       });
-
     }
 
-    // 🧩 Recalculate manual records safely
-    if (manualFeedingRecords.length > 0) {
-      console.log("🧩 Syncing manual feeding records...");
-      for (const record of manualFeedingRecords) {
-        let recordNeedsUpdate = false;
-        let recalculatedTotal = 0;
-
-        for (const entry of record.breakdown) {
-          const student = classStudents.find((s) => String(s._id) === String(entry.student));
-          if (student) {
-            const amountPerDay = getAmountPerDay(student, feeConfig);
-            const daysPresent = Object.values(entry.days).filter((v) => v === "present").length;
-            const correctAmount = daysPresent * amountPerDay;
-
-            const perDayFee = {};
-            for (const dayKey of ["M", "T", "W", "TH", "F"]) {
-              perDayFee[dayKey] = entry.days?.[dayKey] === "present" ? amountPerDay : 0;
-            }
-
-            const hasChange =
-              entry.amount !== correctAmount ||
-              JSON.stringify(entry.perDayFee || {}) !== JSON.stringify(perDayFee);
-
-            if (hasChange) {
-              entry.amount = correctAmount;
-              entry.total = correctAmount;
-              entry.perDayFee = perDayFee;
-              entry.daysPaid = daysPresent;
-              entry.currency = feeConfig.currency || "GHS";
-              entry.lastUpdatedAt = new Date();
-              recordNeedsUpdate = true;
-            }
-
-            recalculatedTotal += correctAmount;
-          }
-        }
-
-        if (
-          record.totalCollected !== recalculatedTotal ||
-          record.amountCollected !== recalculatedTotal
-        ) {
-          record.totalCollected = recalculatedTotal;
-          record.amountCollected = recalculatedTotal;
-          record.lastUpdatedAt = new Date();
-          recordNeedsUpdate = true;
-        }
-
-        if (recordNeedsUpdate) {
-          record.markModified("breakdown");
-          await record.save();
-        }
-      }
-    }
+    // ✅ NOTE: No database writes occur here.
+    // All recalculation and saving of FeedingFeeRecord documents is handled
+    // exclusively by processFeedingJob() when a teacher marks a student.
+    // This function is a pure read + compute endpoint to eliminate VersionErrors.
 
     // ✅ Final response
     return res.json({
@@ -929,6 +876,7 @@ const calculateFeedingFeeCollection = async (req, res) => {
     });
   }
 };
+
 
 // --------------------------------------------------------------------
 // ⚙️ Get feeding fee config WITH CACHING
@@ -955,6 +903,86 @@ const getFeedingFeeConfig = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Server error', error: error.message });
   }
 };
+
+// --------------------------------------------------------------------
+// 🔄 Background: Atomically reconcile stale record amounts after fee change
+// Uses bulkWrite + $set — no Mongoose .save(), no VersionError possible
+// --------------------------------------------------------------------
+async function reconcileAmountsAfterConfigChange(schoolId, newConfig) {
+  try {
+    console.log("🔄 Starting background fee reconciliation for school:", schoolId);
+
+    // Fetch all students for this school with their class populated (for getAmountPerDay)
+    const allStudents = await Student.find({ school: schoolId })
+      .populate({ path: "class", select: "name level" })
+      .populate({ path: "user", select: "name" })
+      .lean();
+
+    // Build a studentId → amountPerDay lookup map
+    const studentRateMap = new Map();
+    for (const student of allStudents) {
+      const rate = getAmountPerDay(student, newConfig);
+      studentRateMap.set(String(student._id), rate);
+    }
+
+    // Fetch all FeedingFeeRecords for this school in one shot (lean = plain objects)
+    const allRecords = await FeedingFeeRecord.find({ school: schoolId }).lean();
+
+    if (allRecords.length === 0) {
+      console.log("✅ No records to reconcile.");
+      return;
+    }
+
+    const bulkOps = [];
+
+    for (const record of allRecords) {
+      const updatedBreakdown = (record.breakdown || []).map((entry) => {
+        const amountPerDay = studentRateMap.get(String(entry.student)) || 0;
+        const daysPresent = Object.values(entry.days || {}).filter((v) => v === "present").length;
+        const correctAmount = daysPresent * amountPerDay;
+
+        const perDayFee = {};
+        for (const dayKey of ["M", "T", "W", "TH", "F"]) {
+          perDayFee[dayKey] = entry.days?.[dayKey] === "present" ? amountPerDay : 0;
+        }
+
+        return {
+          ...entry,
+          amount: correctAmount,
+          total: correctAmount,
+          perDayFee,
+          daysPaid: daysPresent,
+          lastUpdatedAt: new Date(),
+        };
+      });
+
+      const newTotal = updatedBreakdown.reduce((sum, e) => sum + (e.amount || 0), 0);
+
+      // ✅ Use $set directly — bypasses Mongoose __v version check entirely
+      bulkOps.push({
+        updateOne: {
+          filter: { _id: record._id },
+          update: {
+            $set: {
+              breakdown: updatedBreakdown,
+              totalCollected: newTotal,
+              amountCollected: newTotal,
+              lastUpdatedAt: new Date(),
+            },
+          },
+        },
+      });
+    }
+
+    if (bulkOps.length > 0) {
+      const result = await FeedingFeeRecord.bulkWrite(bulkOps, { ordered: false });
+      console.log(`✅ Fee reconciliation complete: ${result.modifiedCount}/${allRecords.length} records updated.`);
+    }
+  } catch (err) {
+    // Background job — log but never crash the server
+    console.error("⚠️ Background fee reconciliation failed:", err.message);
+  }
+}
 
 // --------------------------------------------------------------------
 // ⚙️ Set feeding fee config WITH NOTIFICATION
@@ -997,7 +1025,11 @@ const setFeedingFeeConfig = async (req, res) => {
     // Clear config cache
     feeConfigCache.delete(`feeConfig_${schoolId}`);
 
-    // 🔔 Send notification in background
+    // 🔄 Background: Atomically fix all stale record amounts with the new rate
+    // Uses bulkWrite + $set — NO Mongoose .save(), NO VersionError possible
+    setImmediate(() => reconcileAmountsAfterConfigChange(schoolId, config));
+
+    // 🔔 Background: Send notification to teachers
     setImmediate(async () => {
       try {
         await Notification.create({
@@ -1029,6 +1061,7 @@ const setFeedingFeeConfig = async (req, res) => {
     });
   }
 };
+
 
 // --------------------------------------------------------------------
 // 📊 Get classes with fee bands WITH CACHING
