@@ -464,215 +464,238 @@ try {
 }
 
 // --------------------------------------------------------------------
-// ⚙️ Process Background Feeding Job 
+// ⚙️ Process Background Feeding Job — ATOMIC (no VersionError possible)
+// Uses findOneAndUpdate + $set instead of record.save()
+// Multiple concurrent taps for the same student are handled safely.
 // --------------------------------------------------------------------
-const processFeedingJob = async (jobData, attempt = 1) => {
+const processFeedingJob = async (jobData) => {
   const { student, termId, classId, week, fed, day, reqUser } = jobData;
+  const schoolId = reqUser.school;
+  const weekNumber = normalizeWeekNumber(week);
 
-  try {
-    const schoolId = reqUser.school;
-    const weekNumber = normalizeWeekNumber(week);
+  // 1️⃣ Validate inputs early
+  if (!["M", "T", "W", "TH", "F"].includes(day)) {
+    return { success: false, status: 400, message: "Invalid day key. Must be one of M, T, W, TH, F" };
+  }
 
-    // 1️⃣ Config (cached)
-    const feeConfig = await getFeeConfigWithCache(schoolId);
-    if (!feeConfig) {
-      return { success: false, status: 404, message: "Feeding fee config not found" };
+  // 2️⃣ Config + student (both cached)
+  const feeConfig = await getFeeConfigWithCache(schoolId);
+  if (!feeConfig) return { success: false, status: 404, message: "Feeding fee config not found" };
+
+  const studentDoc = await getStudentWithCache(student, schoolId);
+  if (!studentDoc) return { success: false, status: 404, message: "Student not found" };
+
+  const amountPerDay = getAmountPerDay(studentDoc, feeConfig);
+  const category = getStudentCategory(studentDoc);
+  const normalizedValue = normalizeDayValue(fed);
+  const studentObjId = toObjectId(student);
+
+  // 3️⃣ 🚦 Debt recovery detection
+  let isRecoveredDebt = false;
+  if (normalizedValue === "present") {
+    const today = new Date();
+    const termInfo = await Term.findOne({ _id: termId, school: schoolId }).lean();
+    if (termInfo?.startDate) {
+      const weekStart = new Date(termInfo.startDate);
+      weekStart.setDate(weekStart.getDate() + (weekNumber - 1) * 7);
+      const weekFriday = new Date(weekStart);
+      weekFriday.setDate(weekStart.getDate() + 4);
+      weekFriday.setHours(23, 59, 59, 999);
+      if (today > weekFriday) isRecoveredDebt = true;
     }
+  }
 
-    // 2️⃣ Student + class (cached)
-    const studentDoc = await getStudentWithCache(student, schoolId);
-    if (!studentDoc) {
-      return { success: false, status: 404, message: "Student not found" };
+  // 4️⃣ Ensure the week record exists — atomic upsert, no VersionError
+  await FeedingFeeRecord.findOneAndUpdate(
+    { classId, termId, school: schoolId, week: weekNumber },
+    {
+      $setOnInsert: {
+        school: schoolId, classId, termId, week: weekNumber, category,
+        breakdown: [], totalCollected: 0, amountCollected: 0,
+        configType: "class-based", classFeeAmount: amountPerDay,
+        lastUpdatedAt: new Date(),
+      },
+    },
+    { upsert: true }
+  );
+
+  // 5️⃣ Read current state for this student's breakdown entry
+  const currentRecord = await FeedingFeeRecord.findOne(
+    { classId, termId, school: schoolId, week: weekNumber }
+  ).lean();
+
+  const existingEntry = currentRecord?.breakdown?.find(
+    (b) => b.student.toString() === student
+  );
+
+  if (existingEntry) {
+    // ── EXISTING entry: update the specific day field atomically ──────────
+    // Uses positional $ operator — bypasses __v entirely, zero VersionError
+    const mergedDays = ensureDefaultDays({ ...existingEntry.days, [day]: normalizedValue });
+    const mergedPaidAt = {
+      ...(existingEntry.paidAt || { M: null, T: null, W: null, TH: null, F: null }),
+      [day]: normalizedValue === "present" ? new Date() : null,
+    };
+
+    const daysPaid = Object.values(mergedDays).filter((v) => v === "present").length;
+    const perDayFee = {};
+    for (const dk of ["M", "T", "W", "TH", "F"]) {
+      perDayFee[dk] = mergedDays[dk] === "present" ? amountPerDay : 0;
     }
+    const amount = daysPaid * amountPerDay;
 
-    // 3️⃣ Determine category + daily rate
-    const category = getStudentCategory(studentDoc);
-    const amountPerDay = getAmountPerDay(studentDoc, feeConfig);
+    // Compute new class total using all OTHER students' existing amounts
+    const newClassTotal = (currentRecord.breakdown || []).reduce((sum, b) => {
+      if (b.student.toString() === student) return sum + amount; // use newly computed amount
+      return sum + (b.amount || 0);
+    }, 0);
 
-    // 4️⃣ Find or create record for the week
-    let record = await FeedingFeeRecord.findOne({
-      classId,
-      termId,
-      school: schoolId,
-      week: weekNumber,
-    });
-
-    if (!record) {
-      record = new FeedingFeeRecord({
-        school: schoolId,
-        classId,
-        termId,
-        week: weekNumber,
-        category,
-        amountCollected: 0,
-        totalCollected: 0,
-        breakdown: [],
-        configType: "class-based",
-        classFeeAmount: amountPerDay,
-      });
-    }
-
-    // 5️⃣ Find or create breakdown entry
-    let breakdownEntry = record.breakdown.find(
-      (b) => b.student.toString() === student
-    );
-    let isNewEntry = false;
-    if (!breakdownEntry) {
-      isNewEntry = true;
-      breakdownEntry = {
-        student,
-        studentName: getFullStudentName(studentDoc),
-        className: studentDoc.class?.name || "Unknown Class",
-        classFeeAmount: amountPerDay,
-        amount: 0,
-        perDayFee: { M: 0, T: 0, W: 0, TH: 0, F: 0 },
-        days: { M: "notmarked", T: "notmarked", W: "notmarked", TH: "notmarked", F: "notmarked" },
-        paidAt: { M: null, T: null, W: null, TH: null, F: null },
-        daysPaid: 0,
-        currency: feeConfig.currency || "GHS",
-      };
-    } else {
-      breakdownEntry.classFeeAmount = amountPerDay;
-    }
-
-    // 6️⃣ Validate day key
-    if (!["M", "T", "W", "TH", "F"].includes(day)) {
-      return { success: false, status: 400, message: "Invalid day key. Must be one of M, T, W, TH, F" };
-    }
-
-    // 🟢 Normalize and update the specific day
-    const normalizedValue = normalizeDayValue(fed);
-    breakdownEntry.days[day] = normalizedValue;
-    breakdownEntry.days = ensureDefaultDays(breakdownEntry.days);
-
-    // Preserve the actual day the payment was recorded for daily reporting.
-    breakdownEntry.paidAt = ensureDefaultPaidAt(breakdownEntry.paidAt);
-    breakdownEntry.paidAt[day] = normalizedValue === 'present' ? new Date() : null;
-
-    // 7️⃣ Recalculate paid days and per-day fee map
-    breakdownEntry.daysPaid = Object.values(breakdownEntry.days).filter(
-      (v) => v === "present"
-    ).length;
-
-    const newPerDayFee = {};
-    for (const dayKey of ["M", "T", "W", "TH", "F"]) {
-      newPerDayFee[dayKey] =
-        breakdownEntry.days[dayKey] === "present" ? amountPerDay : 0;
-    }
-
-    breakdownEntry.perDayFee = newPerDayFee;
-    breakdownEntry.amount = breakdownEntry.daysPaid * amountPerDay;
-    breakdownEntry.total = breakdownEntry.amount;
-    breakdownEntry.currency = feeConfig.currency || "GHS";
-    breakdownEntry.lastUpdatedAt = new Date();
-
-    // 🚦 Debt recovery detection: Check if we are updating a PAST week
-    let isRecoveredDebt = false;
-    if (normalizedValue === "present") {
-      const today = new Date();
-      const currentTermInfo = await Term.findOne({
-        _id: termId,
-        school: schoolId,
-      }).lean();
-
-      if (currentTermInfo && currentTermInfo.startDate) {
-        const termStartDate = new Date(currentTermInfo.startDate);
-        
-        // Calculate the exact Friday of the week the teacher is mutating
-        const paymentWeekStart = new Date(termStartDate);
-        paymentWeekStart.setDate(termStartDate.getDate() + (weekNumber - 1) * 7);
-        
-        const weekEndFriday = new Date(paymentWeekStart);
-        weekEndFriday.setDate(paymentWeekStart.getDate() + 4); // Add 4 days to get to Friday
-        weekEndFriday.setHours(23, 59, 59, 999); // End of the day Friday
-
-        // If today is mathematically past the Friday of this designated week, then it's a retroactive Debt Recovery!
-        if (today > weekEndFriday) {
-          isRecoveredDebt = true;
-          breakdownEntry.isRecoveredDebt = true; // save permanently
-        }
+    // Single atomic write — updates the student entry AND class totals together
+    await FeedingFeeRecord.findOneAndUpdate(
+      {
+        classId, termId, school: schoolId, week: weekNumber,
+        "breakdown.student": studentObjId,
+      },
+      {
+        $set: {
+          "breakdown.$.days": mergedDays,
+          "breakdown.$.paidAt": mergedPaidAt,
+          "breakdown.$.daysPaid": daysPaid,
+          "breakdown.$.perDayFee": perDayFee,
+          "breakdown.$.amount": amount,
+          "breakdown.$.total": amount,
+          "breakdown.$.classFeeAmount": amountPerDay,
+          "breakdown.$.currency": feeConfig.currency || "GHS",
+          "breakdown.$.lastUpdatedAt": new Date(),
+          ...(isRecoveredDebt && { "breakdown.$.isRecoveredDebt": true }),
+          totalCollected: newClassTotal,
+          amountCollected: newClassTotal,
+          classFeeAmount: amountPerDay,
+          lastUpdatedAt: new Date(),
+        },
       }
-    }
-
-    // 👉 Finally, push now that ALL mutations (including isRecoveredDebt) have been completed!
-    if (isNewEntry) {
-      record.breakdown.push(breakdownEntry);
-    }
-
-    // 8️⃣ Update record totals
-    record.classFeeAmount = amountPerDay;
-    record.totalCollected = record.breakdown.reduce(
-      (sum, b) => sum + (b.amount || 0),
-      0
     );
-    record.amountCollected = record.totalCollected;
-    record.lastUpdatedAt = new Date();
 
-    // 9️⃣ Save
-    record.markModified("breakdown");
-    await record.save();
-
-    // 🔔 Send notification in background
+    // 🔔 Notification in background
     if (normalizedValue === "present") {
-      setImmediate(async () => {
-        try {
-          if (isRecoveredDebt) {
-            // Send Alert to Admin & Parent & Student
-            await createFeedingFeeNotification(null, {
-              title: "💰 Recovered Feeding Fee Debt",
-              sender: reqUser._id,
-              school: schoolId,
-              studentId: student,
-              studentName: getFullStudentName(studentDoc),
-              action: `recovered for Week ${weekNumber} (${day})`,
-            });
-          }
-
-          // Send Standard Parent Update (Optional, keeping existing logic)
-          await createFeedingFeeNotification(null, {
-             title: "Feeding Fee Updated",
-             sender: reqUser._id,
-             school: schoolId,
-             studentId: student,
-             studentName: getFullStudentName(studentDoc),
-             action: "updated",
-          });
-        } catch (notifErr) {
-          console.error("⚠️ markFeeding notification failed:", notifErr);
-        }
-      });
+      setImmediate(() => sendFeedingNotification({ isRecoveredDebt, reqUser, schoolId, student, studentDoc, weekNumber, day }));
     }
 
-    // 🔟 Clear relevant caches
+    // 🔟 Clear caches
     studentCache.delete(`student_${student}_${schoolId}_none`);
     feeConfigCache.delete(`feeConfig_${schoolId}`);
 
     return {
       success: true,
-      message: `${getFullStudentName(studentDoc)} marked as ${normalizedValue === "present"
-        ? "fed (present)"
-        : normalizedValue === "absent"
-          ? "not fed (absent)"
-          : "not marked"
-        } for ${day} (Week ${weekNumber})`,
-      updatedDays: breakdownEntry.days,
-      perDayFee: breakdownEntry.perDayFee,
+      message: formatMarkMessage(getFullStudentName(studentDoc), normalizedValue, day, weekNumber),
+      updatedDays: mergedDays,
+      perDayFee,
       amountPerDay,
-      totalAmount: breakdownEntry.amount,
-      daysPaid: breakdownEntry.daysPaid,
+      totalAmount: amount,
+      daysPaid,
       week: weekNumber,
     };
-  } catch (error) {
-    if (error.name === 'VersionError' && attempt <= 4) {
-      console.log(`🔄 VersionError encountered (concurrency collision). Retrying processFeedingJob (attempt ${attempt + 1}) for student ${student}`);
-      // Apply jitter backoff to stagger concurrent retries
-      await new Promise(r => setTimeout(r, Math.random() * 100 + 50 * attempt));
-      return processFeedingJob(jobData, attempt + 1);
+
+  } else {
+    // ── NEW entry: push a brand new breakdown entry atomically ─────────────
+    const newDays = ensureDefaultDays({ [day]: normalizedValue });
+    const newPaidAt = { M: null, T: null, W: null, TH: null, F: null };
+    newPaidAt[day] = normalizedValue === "present" ? new Date() : null;
+
+    const daysPaid = normalizedValue === "present" ? 1 : 0;
+    const perDayFee = {};
+    for (const dk of ["M", "T", "W", "TH", "F"]) {
+      perDayFee[dk] = newDays[dk] === "present" ? amountPerDay : 0;
     }
-    console.error("❌ Error in processFeedingJob:", error);
-    throw error;
+    const amount = daysPaid * amountPerDay;
+
+    const newEntry = {
+      student: studentObjId,
+      studentName: getFullStudentName(studentDoc),
+      className: studentDoc.class?.name || "Unknown Class",
+      classFeeAmount: amountPerDay,
+      amount,
+      total: amount,
+      daysPaid,
+      perDayFee,
+      days: newDays,
+      paidAt: newPaidAt,
+      currency: feeConfig.currency || "GHS",
+      lastUpdatedAt: new Date(),
+      ...(isRecoveredDebt && { isRecoveredDebt: true }),
+    };
+
+    const newClassTotal = (currentRecord?.breakdown || []).reduce((sum, b) => sum + (b.amount || 0), amount);
+
+    // Atomic $push — no version check, no conflict
+    await FeedingFeeRecord.findOneAndUpdate(
+      { classId, termId, school: schoolId, week: weekNumber },
+      {
+        $push: { breakdown: newEntry },
+        $set: {
+          totalCollected: newClassTotal,
+          amountCollected: newClassTotal,
+          classFeeAmount: amountPerDay,
+          lastUpdatedAt: new Date(),
+        },
+      }
+    );
+
+    // 🔔 Notification in background
+    if (normalizedValue === "present") {
+      setImmediate(() => sendFeedingNotification({ isRecoveredDebt, reqUser, schoolId, student, studentDoc, weekNumber, day }));
+    }
+
+    // 🔟 Clear caches
+    studentCache.delete(`student_${student}_${schoolId}_none`);
+    feeConfigCache.delete(`feeConfig_${schoolId}`);
+
+    return {
+      success: true,
+      message: formatMarkMessage(getFullStudentName(studentDoc), normalizedValue, day, weekNumber),
+      updatedDays: newDays,
+      perDayFee,
+      amountPerDay,
+      totalAmount: amount,
+      daysPaid,
+      week: weekNumber,
+    };
   }
 };
+
+// ── Small helpers to keep processFeedingJob clean ──────────────────────────
+
+function formatMarkMessage(name, status, day, week) {
+  const label = status === "present" ? "fed (present)" : status === "absent" ? "not fed (absent)" : "not marked";
+  return `${name} marked as ${label} for ${day} (Week ${week})`;
+}
+
+async function sendFeedingNotification({ isRecoveredDebt, reqUser, schoolId, student, studentDoc, weekNumber, day }) {
+  try {
+    if (isRecoveredDebt) {
+      await createFeedingFeeNotification(null, {
+        title: "💰 Recovered Feeding Fee Debt",
+        sender: reqUser._id,
+        school: schoolId,
+        studentId: student,
+        studentName: getFullStudentName(studentDoc),
+        action: `recovered for Week ${weekNumber} (${day})`,
+      });
+    }
+    await createFeedingFeeNotification(null, {
+      title: "Feeding Fee Updated",
+      sender: reqUser._id,
+      school: schoolId,
+      studentId: student,
+      studentName: getFullStudentName(studentDoc),
+      action: "updated",
+    });
+  } catch (err) {
+    console.error("⚠️ markFeeding notification failed:", err);
+  }
+}
+
+
 
 // --------------------------------------------------------------------
 // ✅ Mark feeding fee - SYNCHRONOUS PROCESSING
