@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const {
   markFeeding,
+  markFeedingBulk,
   calculateFeedingFeeCollection,
   getFeedingFeeConfig,
   setFeedingFeeConfig,
@@ -38,5 +39,6 @@ router.get('/audit-report', protect, requirePrivateSchool, getFeedingFeeAuditRep
 
 // ----------------- Manual Marking Routes -----------------
 router.post("/mark", protect, requirePrivateSchool, markFeeding);
+router.post("/mark-bulk", protect, requirePrivateSchool, markFeedingBulk);
 
 module.exports = router;

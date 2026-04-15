@@ -714,10 +714,9 @@ const markFeeding = async (req, res) => {
   }
 
   try {
-    // Process feeding fee marking directly
     const result = await processFeedingJob({
       student, termId, classId, week, fed, day,
-      reqUser: { _id: req.user._id, school: req.user.school } // Pass along required parts of req.user
+      reqUser: { _id: req.user._id, school: req.user.school }
     });
 
     if (result && result.success === false) {
@@ -730,6 +729,57 @@ const markFeeding = async (req, res) => {
     res.status(500).json({ message: "Internal Server Error while marking feeding fee" });
   }
 };
+
+// --------------------------------------------------------------------
+// ✅ Bulk Mark feeding fee — processes all queued taps in ONE request
+// Same pattern as /attendance/mark — eliminates all concurrent write conflicts
+// --------------------------------------------------------------------
+const markFeedingBulk = async (req, res) => {
+  const { termId, classId, week, marks } = req.body;
+  // marks = [{ student, day, fed }, ...]
+
+  if (!termId || !classId || !week || !Array.isArray(marks) || marks.length === 0) {
+    return res.status(400).json({
+      success: false,
+      message: "Missing required fields: termId, classId, week, or marks[]",
+    });
+  }
+
+  const reqUser = { _id: req.user._id, school: req.user.school };
+  const results = [];
+  const errors = [];
+
+  // Process marks sequentially — no concurrency, no version conflicts
+  for (const mark of marks) {
+    const { student, day, fed } = mark;
+    if (!student || !day) {
+      errors.push({ student, day, error: "Missing student or day" });
+      continue;
+    }
+
+    try {
+      const result = await processFeedingJob({ student, termId, classId, week, fed, day, reqUser });
+      if (result?.success === false) {
+        errors.push({ student, day, error: result.message });
+      } else {
+        results.push({ student, day, fed, success: true });
+      }
+    } catch (err) {
+      console.error(`❌ Bulk mark failed for student ${student}, day ${day}:`, err.message);
+      errors.push({ student, day, error: err.message });
+    }
+  }
+
+  res.json({
+    success: errors.length === 0,
+    processed: results.length,
+    failed: errors.length,
+    results,
+    errors: errors.length > 0 ? errors : undefined,
+  });
+};
+
+
 
 // --------------------------------------------------------------------
 // ✅ Calculate feeding fee collection WITH CACHING
@@ -2045,6 +2095,7 @@ const getFeedingFeeAuditReport = async (req, res) => {
 
 module.exports = {
   markFeeding,
+  markFeedingBulk,
   processFeedingJob, // Added processFeedingJob
   calculateFeedingFeeCollection,
   getFeedingFeeConfig,
