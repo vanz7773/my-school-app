@@ -2042,6 +2042,17 @@ const getFeedingFeeAuditReport = async (req, res) => {
           nativeStatus = `Debt Recovery (Week ${record.week}${joinedDays})`;
         }
 
+        // ── Audit report is a PAYMENT audit, not an attendance report ────────────
+        // Skip students whose day status is 'absent' and who paid nothing.
+        // FeedingFeeRecord.breakdown.days can hold stale 'absent' values from
+        // earlier teacher-app syncs even after the attendance record is corrected.
+        // Absent students are already visible in the dedicated Absentees view.
+        if (isNativeRecord && nativeStatus === 'absent' && amountPaidToday === 0) continue;
+
+        // Also skip entries that are completely unmarked with no payment —
+        // they add noise to the report without meaningful payment information.
+        if (isNativeRecord && nativeStatus === 'notmarked' && amountPaidToday === 0) continue;
+
         studentsDetails.push({
           studentId: studentObj._id || entry.student,
           studentName: entry.studentName,
