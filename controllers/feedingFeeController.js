@@ -12,6 +12,17 @@ const { Expo } = require("expo-server-sdk");
 const expo = new Expo();
 const { attendanceQueue } = require('../queue/attendanceQueue');
 
+// 🔧 Helper: map a JS Date to the M/T/W/TH/F week-column key
+const dateToDayKey = (d) => {
+  const dow = new Date(d).getDay(); // 0=Sun,1=Mon,2=Tue,3=Wed,4=Thu,5=Fri,6=Sat
+  if (dow === 2) return 'T';
+  if (dow === 3) return 'W';
+  if (dow === 4) return 'TH';
+  if (dow === 5) return 'F';
+  return 'M'; // Mon and weekend → Monday bucket
+};
+
+const WEEK_DAY_KEYS = ["M", "T", "W", "TH", "F"];
 
 // 🔔 Reusable Push Sender (same as announcements)
 async function sendPush(userIds, title, body, data = {}) {
@@ -308,7 +319,7 @@ const getWeekStartDate = (term, weekNumber) => {
   return weekStart;
 };
 
-const WEEK_DAY_KEYS = ['M', 'T', 'W', 'TH', 'F'];
+
 
 const getWeekDayDates = (term, weekNumber) => {
   const weekStart = getWeekStartDate(term, weekNumber);
@@ -1498,19 +1509,9 @@ const getFeedingFeeSummary = async (req, res) => {
     const nativeManualAmountByStudent = new Map();
     const debtRecoveryAmountByStudent = new Map();
 
-    const WEEK_DAY_KEYS = ["M", "T", "W", "TH", "F"];
     const dailyTotalsObj = { M: 0, T: 0, W: 0, TH: 0, F: 0 };
     const dailyCountsObj = { M: 0, T: 0, W: 0, TH: 0, F: 0 };
 
-    // Map a JS Date to the M/T/W/TH/F week-column key
-    const dateToDayKey = (d) => {
-      const dow = d.getDay(); // 0=Sun,1=Mon,2=Tue,3=Wed,4=Thu,5=Fri,6=Sat
-      if (dow === 2) return 'T';
-      if (dow === 3) return 'W';
-      if (dow === 4) return 'TH';
-      if (dow === 5) return 'F';
-      return 'M'; // Mon and weekend → Monday bucket
-    };
     const todayKey = dateToDayKey(new Date()); // collection day for records without paidAt
 
     for (const record of manualFeedingRecords) {
@@ -1535,8 +1536,7 @@ const getFeedingFeeSummary = async (req, res) => {
 
           const paidAt = entry.paidAt?.[dayKey];
 
-          // Helper: map a Date to the M/T/W/TH/F bucket key
-          // (defined above the loop — kept here as a no-op reference)
+          // (dateToDayKey defined globally now)
 
           if (!paidAt) {
             // No paidAt stored (old record or same-day mark before timestamp was added).
@@ -1873,22 +1873,16 @@ const getDailyTotalSummary = async (req, res) => {
           if (!isPaid) continue;
 
           const paidAt = entry.paidAt?.[dayKey];
+          const todayKey = dateToDayKey(new Date());
 
           if (!paidAt) {
             if (isNativeRecord) {
-              totals[dayKey] += resolvedAmount;
+              totals[todayKey] += resolvedAmount;
             }
           } else {
             const paidDate = new Date(paidAt);
             if (paidDate >= weekBounds.windowStart && paidDate <= weekBounds.windowEnd) {
-              const paymentDayOfWeek = paidDate.getDay();
-              let mappedTab = 'M';
-              if (paymentDayOfWeek === 2) mappedTab = 'T';
-              else if (paymentDayOfWeek === 3) mappedTab = 'W';
-              else if (paymentDayOfWeek === 4) mappedTab = 'TH';
-              else if (paymentDayOfWeek === 5) mappedTab = 'F';
-
-              totals[mappedTab] += resolvedAmount;
+              totals[dateToDayKey(paidDate)] += resolvedAmount;
             }
           }
         }
@@ -1999,22 +1993,17 @@ const getFeedingFeeAuditReport = async (req, res) => {
           if (!isPaidDay) continue;
 
           const paidAt = entry.paidAt?.[dayKey];
+          const todayKey = dateToDayKey(new Date());
 
           if (!paidAt) {
-            if (isNativeRecord && dayKey === day) {
+            // Meal was at dayKey (e.g. Monday), but if teachers mark NOW, collection is today (e.g. Wednesday)
+            if (isNativeRecord && todayKey === day) {
               amountPaidToday += resolvedAmount;
             }
           } else {
             const paidDate = new Date(paidAt);
             if (paidDate >= weekBounds.windowStart && paidDate <= weekBounds.windowEnd) {
-              const paymentDayOfWeek = paidDate.getDay();
-              let mappedTab = 'M';
-              if (paymentDayOfWeek === 2) mappedTab = 'T';
-              else if (paymentDayOfWeek === 3) mappedTab = 'W';
-              else if (paymentDayOfWeek === 4) mappedTab = 'TH';
-              else if (paymentDayOfWeek === 5) mappedTab = 'F';
-
-              if (mappedTab === day) {
+              if (dateToDayKey(paidAt) === day) {
                 amountPaidToday += resolvedAmount;
                 if (!isNativeRecord) {
                   recoveredDays.push(FULL_DAY_NAMES[dayKey]);
