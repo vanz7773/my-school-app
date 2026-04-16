@@ -1946,20 +1946,26 @@ const getFeedingFeeAuditReport = async (req, res) => {
     const weekBounds = getTargetWeekBounds(termDoc, weekNumber);
 
     // Fetch ALL records for the school/term to capture cross-week Debt Recoveries
-    const records = await FeedingFeeRecord.find({
-      school: schoolId,
-      termId
-    })
-      .populate({
-        path: 'breakdown.student',
-        select: 'guardianName guardianPhone name firstName lastName class user',
-        populate: {
-          path: 'class',
-          select: 'name displayName level'
-        }
-      })
-      .populate('classId', 'name displayName level')
-      .lean();
+    // Also fetch StudentAttendance as the authoritative source for absence status.
+    // FeedingFeeRecord.breakdown.days can hold stale 'absent' from old syncs — we
+    // cross-check with StudentAttendance before trusting it.
+    const [records, attendanceRecords] = await Promise.all([
+      FeedingFeeRecord.find({ school: schoolId, termId })
+        .populate({
+          path: 'breakdown.student',
+          select: 'guardianName guardianPhone name firstName lastName class user',
+          populate: { path: 'class', select: 'name displayName level' }
+        })
+        .populate('classId', 'name displayName level')
+        .lean(),
+      StudentAttendance.find({ school: schoolId, termId, weekNumber }).lean()
+    ]);
+
+    // Build lookup: studentId → { M: 'present'|'absent'|..., T: ..., ... }
+    const attendanceLookup = new Map();
+    for (const att of attendanceRecords) {
+      attendanceLookup.set(String(att.student), att.days || {});
+    }
 
     const auditReport = [];
     let grandTotal = 0;
@@ -2036,22 +2042,26 @@ const getFeedingFeeAuditReport = async (req, res) => {
         const studentObj = entry.student || {};
         let nativeStatus = 'notmarked';
         if (isNativeRecord) {
-          nativeStatus = entry.days?.[day] || 'notmarked';
+          const rawStatus = entry.days?.[day] || 'notmarked';
+
+          if (rawStatus === 'absent') {
+            // Cross-check with StudentAttendance — the authoritative absent source.
+            // FeedingFeeRecord can hold stale 'absent' values that were never cleared
+            // when attendance was corrected. Only treat as truly absent if attendance confirms it.
+            const studentIdStr = String(studentObj._id || entry.student);
+            const attDays = attendanceLookup.get(studentIdStr) || {};
+            nativeStatus = attDays[day] === 'absent' ? 'absent' : 'notmarked';
+          } else {
+            nativeStatus = rawStatus;
+          }
         } else {
           const joinedDays = recoveredDays.length > 0 ? `, ${recoveredDays.join(' & ')}` : '';
           nativeStatus = `Debt Recovery (Week ${record.week}${joinedDays})`;
         }
 
-        // ── Audit report is a PAYMENT audit, not an attendance report ────────────
-        // Skip students whose day status is 'absent' and who paid nothing.
-        // FeedingFeeRecord.breakdown.days can hold stale 'absent' values from
-        // earlier teacher-app syncs even after the attendance record is corrected.
-        // Absent students are already visible in the dedicated Absentees view.
+        // Genuinely absent students (confirmed by StudentAttendance) with no payment
+        // belong in the Absentees view, not the payment audit.
         if (isNativeRecord && nativeStatus === 'absent' && amountPaidToday === 0) continue;
-
-        // Also skip entries that are completely unmarked with no payment —
-        // they add noise to the report without meaningful payment information.
-        if (isNativeRecord && nativeStatus === 'notmarked' && amountPaidToday === 0) continue;
 
         studentsDetails.push({
           studentId: studentObj._id || entry.student,
