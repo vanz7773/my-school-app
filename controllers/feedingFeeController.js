@@ -2023,7 +2023,8 @@ const getFeedingFeeAuditReport = async (req, res) => {
             classPaidCount++; totalPaid++; classTotalAmount += amountPaidToday; grandTotal += amountPaidToday;
           } else {
             const nativeDayStatus = entry.days?.[day];
-            if (nativeDayStatus === 'notmarked' || nativeDayStatus === 'present' || nativeDayStatus === 'absent') {
+            // Only count as unpaid when explicitly marked 'unpaid' — never count 'notmarked' days
+            if (nativeDayStatus === 'unpaid') {
               classUnpaidCount++; totalUnpaid++;
             }
           }
