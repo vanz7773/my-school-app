@@ -1023,6 +1023,11 @@ exports.markTransport = async (req, res) => {
 
         // Sync with TransportAttendance for backward compatibility with Daily Attendance reports
         if (date) {
+            // Check previous state
+            const existing = await TransportAttendance.findOne({ student, date, school: req.user.school });
+            const wasPicked = existing ? !!existing.picked : false;
+            const wasDropped = existing ? !!existing.dropped : false;
+
             const updateObj = {
                 student,
                 school: req.user.school,
@@ -1058,6 +1063,56 @@ exports.markTransport = async (req, res) => {
                 { $set: updateObj },
                 { upsert: true, new: true }
             );
+
+            // Trigger Push Notification to Parent
+            const picked = !!updateObj.picked;
+            const dropped = !!updateObj.dropped;
+
+            if ((picked && !wasPicked) || (dropped && !wasDropped)) {
+                const studentInfo = await Student.findById(student).populate('user', 'name');
+                if (studentInfo) {
+                    const parentRecipients = new Set();
+                    if (studentInfo.parent) parentRecipients.add(String(studentInfo.parent));
+                    if (Array.isArray(studentInfo.parentIds)) {
+                        studentInfo.parentIds.forEach(p => parentRecipients.add(String(p._id || p)));
+                    }
+
+                    if (parentRecipients.size > 0) {
+                        const userList = [...parentRecipients];
+                        const studentName = studentInfo.user?.name || studentInfo.name || "Your child";
+                        
+                        let title = '';
+                        let message = '';
+                        
+                        if (dropped && !wasDropped) {
+                            title = "Student Dropped Off";
+                            message = `${studentName} has safely been dropped off by the school bus.`;
+                        } else if (picked && !wasPicked) {
+                            title = "Student Boarded Bus";
+                            message = `${studentName} has boarded the school bus.`;
+                        }
+
+                        if (title && message) {
+                            const notif = new Notification({
+                                sender: req.user._id,
+                                school: req.user.school,
+                                title: title,
+                                message: message,
+                                type: "parent-transport",
+                                audience: "parent",
+                                recipientRoles: [],
+                                recipientUsers: userList,
+                                studentId: studentInfo._id,
+                                createdAt: new Date()
+                            });
+
+                            notif.save()
+                              .then(saved => broadcastNotification(req, saved))
+                              .catch(err => console.error("Error sending transport push notification:", err));
+                        }
+                    }
+                }
+            }
         }
 
         res.status(200).json({ success: true, message: 'Transport attendance processed successfully' });

@@ -11,6 +11,7 @@ const VALID_TYPES = [
   'teacher-attendance',   // ✅ ADDED
   'assignment',
   'feedingfee',
+  'parent-transport',  // ✅ ADDED for transport tracking
   'fee',
   'agenda',
   'online-quiz',
