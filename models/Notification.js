@@ -123,6 +123,7 @@ const notificationSchema = new mongoose.Schema(
         'User',
         'AgendaEvent',
         'QuizSession',  // ✅ ADDED
+        'Movement',
       ],
     },
 
