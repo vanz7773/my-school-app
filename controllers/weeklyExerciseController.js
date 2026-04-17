@@ -84,11 +84,13 @@ exports.addOrUpdateExercise = async (req, res) => {
     }
 
     // Check teacher assignment to class
-    const teacherAssigned = cls.teachers.some(
+    const isSubjectTeacher = cls.teachers?.some(
       t => t.toString() === teacher.user.toString()
     );
+    const isClassTeacher = cls.classTeacher && cls.classTeacher.toString() === teacher.user.toString();
+    const isCoClassTeacher = cls.coClassTeacher && cls.coClassTeacher.toString() === teacher.user.toString();
 
-    if (!teacherAssigned) {
+    if (!isSubjectTeacher && !isClassTeacher && !isCoClassTeacher) {
       return res.status(403).json({
         success: false,
         message: 'Teacher not assigned to this class'
