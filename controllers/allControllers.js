@@ -788,7 +788,7 @@ module.exports = {
       const students = await Student.find({
         class: classObjectId,
         school: req.user.school,
-        status: 'active'
+        status: { $ne: 'Withdrawn' } // Ensure all non-withdrawn students are retrieved, matching frontend logic
       })
       .populate({ path: 'user', select: 'name' })
       .populate({ path: 'class', select: 'name stream displayName' })
