@@ -905,6 +905,74 @@ module.exports = {
     }
   },
 
+  async getSchoolWideTermBillingSummary(req, res) {
+    try {
+      const { term, academicYear } = req.query;
+
+      if (!term || !academicYear) {
+        return res.status(400).json({
+          success: false,
+          message: 'Both term and academicYear are required'
+        });
+      }
+
+      const bills = await TermBill.find({
+        school: req.user.school,
+        term: term.trim(),
+        academicYear: academicYear.trim()
+      }).lean();
+
+      let totalExpected = 0;
+      let totalPaid = 0;
+      let totalBalance = 0;
+      let studentsBilled = bills.length;
+      let fullyPaidCount = 0;
+      let partialPaidCount = 0;
+
+      bills.forEach(bill => {
+        const transformNumber = (value) => {
+          if (!value) return 0;
+          if (typeof value === 'object') {
+            return value.$numberInt ? parseInt(value.$numberInt) :
+                   value.$numberDouble ? parseFloat(value.$numberDouble) : 0;
+          }
+          return typeof value === 'number' ? value : 0;
+        };
+
+        const expected = transformNumber(bill.totalAmount);
+        const paid = transformNumber(bill.totalPaid);
+        const explicitBalance = transformNumber(bill.balance);
+        const actualBalance = (explicitBalance !== undefined && explicitBalance !== null && explicitBalance !== 0) ? explicitBalance : (expected - paid);
+
+        totalExpected += expected;
+        totalPaid += paid;
+        totalBalance += actualBalance;
+
+        if (actualBalance <= 0 && expected > 0) fullyPaidCount++;
+        else if (paid > 0 && actualBalance > 0) partialPaidCount++;
+      });
+
+      return res.status(200).json({
+        success: true,
+        summary: {
+          totalExpected,
+          totalPaid,
+          totalBalance,
+          studentsBilled,
+          fullyPaidCount,
+          partialPaidCount
+        }
+      });
+    } catch (error) {
+      console.error('getSchoolWideTermBillingSummary error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch school-wide term billing summary',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  },
+
   // Add this to your controllers
   async recordPayment(req, res) {
     const session = await mongoose.startSession();
