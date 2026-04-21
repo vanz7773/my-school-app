@@ -188,4 +188,8 @@ const PORT = process.env.PORT || 5001;
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   require('./workers/attendanceWorker'); // Initialize BullMQ background workers
+  
+  // Initialize remote CRON Push Notifications
+  const initCronJobs = require('./jobs/cronJobs');
+  initCronJobs();
 });
