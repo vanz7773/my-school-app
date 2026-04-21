@@ -892,28 +892,18 @@ const calculateFeedingFeeCollection = async (req, res) => {
       // Step 2: Apply manual feeding overrides (manual teacher marks always win)
       const manual = feedingMap.get(studentId);
       if (manual?.days) {
-        const manualValues = Object.values(manual.days);
-        // isLikelyAutoSync: record has both 'present' AND 'absent' from attendance page
-        // Ignore 'unpaid' in this check — it's always an explicit manual action
-        const hasPresent = manualValues.includes("present");
-        const hasAbsent = manualValues.includes("absent");
-        const isLikelyAutoSync = hasPresent && hasAbsent;
-
         for (const dayKey of ["M", "T", "W", "TH", "F"]) {
           const manualVal = manual.days[dayKey];
-          const currentVal = mergedDays[dayKey];
+          const attendanceVal = attendance?.days?.[dayKey];
 
-          // 'unpaid' is ALWAYS an explicit teacher action — always wins
-          if (manualVal === "unpaid") {
-            mergedDays[dayKey] = "unpaid";
-          } else if (isLikelyAutoSync) {
-            if (manualVal === "present") mergedDays[dayKey] = "present";
-            else if (manualVal === "absent" && (attendance?.days?.[dayKey] === "absent" || attendance?.days?.[dayKey] === "present")) {
-              mergedDays[dayKey] = "absent";
-            }
+          // Correct the 'absent' bug from old sync logic: 
+          // If manual has 'absent' but actual attendance is NOT absent, fall back to attendance.
+          // (Since 'absent' can only ever come from attendance sync, never from a manual UI toggle).
+          if (manualVal === "absent" && attendanceVal !== "absent") {
+            mergedDays[dayKey] = normalizeDayValue(attendanceVal);
           } else {
-            if (manualVal === "present") mergedDays[dayKey] = "present";
-            else if (manualVal === "absent" && currentVal !== "present") mergedDays[dayKey] = "absent";
+            // Otherwise, trust manual.days completely. It safely holds teacher toggles like 'unpaid' or 'notmarked'.
+            mergedDays[dayKey] = manualVal;
           }
         }
       }

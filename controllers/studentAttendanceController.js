@@ -463,7 +463,7 @@ const processAttendanceJob = async (jobData) => {
         const changedDays = new Set();
         for (const [dayKey, status] of Object.entries(days)) {
           if (!['M', 'T', 'W', 'TH', 'F'].includes(dayKey)) continue;
-          if (!['present', 'absent'].includes(status)) continue;
+          if (!['present', 'absent', 'notmarked'].includes(status)) continue;
 
           if (attendanceData.days[dayKey] !== status) {
             changedDays.add(dayKey);
@@ -519,7 +519,8 @@ const processAttendanceJob = async (jobData) => {
               days: Object.fromEntries(
                 Object.entries(DEFAULT_DAYS).map(([key]) => [
                   key,
-                  fedDays.includes(key) ? 'present' : 'absent'
+                  attendanceData.days[key] === 'present' ? 'present' : 
+                  attendanceData.days[key] === 'absent' ? 'absent' : 'notmarked'
                 ])
               ),
               amountPerDay,
@@ -540,8 +541,13 @@ const processAttendanceJob = async (jobData) => {
                 }
                 // If 'unpaid', leave it alone — teacher explicitly said no payment for this day
               } else if (changedDays.has(key)) {
-                // Attendance changed this day to absent — always update (physical absence overrides)
-                existingStudentEntry.days[key] = 'absent';
+                // Attendance changed for this day
+                const newStatus = attendanceData.days[key];
+                if (newStatus === 'absent') {
+                  existingStudentEntry.days[key] = 'absent';
+                } else if (newStatus === 'notmarked' && currentFeedingStatus !== 'unpaid') {
+                  existingStudentEntry.days[key] = 'notmarked';
+                }
               }
             }
 
