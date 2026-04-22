@@ -2,7 +2,8 @@ const cron = require('node-cron');
 const mongoose = require('mongoose');
 const Teacher = require('../models/Teacher');
 const Term = require('../models/term');
-const Attendance = require('../models/Attendance');
+const Attendance = require('../models/TeacherAttendance');
+const PushToken = require('../models/PushToken');
 const { sendPushNotifications } = require('../controllers/notificationController');
 
 /**
@@ -29,25 +30,29 @@ async function getEligibleTeacherTokens() {
     }).select('school').lean();
     const schoolsOnHoliday = [...new Set(holidayAttendances.map(a => String(a.school)))];
 
-    // 3. Find all teachers with a push token
-    const teachers = await Teacher.find()
-      .populate('user', 'pushToken')
-      .lean();
+    // 3. Find all teachers
+    const teachers = await Teacher.find().lean();
 
-    const validTokens = [];
+    const eligibleUserIds = [];
     for (const t of teachers) {
       const schoolStr = String(t.school);
-
+      
       // Skip if school is not currently in an active term
       if (!activeSchools.includes(schoolStr)) continue;
-
+      
       // Skip if school is marked as a Holiday today
       if (schoolsOnHoliday.includes(schoolStr)) continue;
 
-      if (t.user && t.user.pushToken) {
-        validTokens.push(t.user.pushToken);
+      if (t.user) {
+        eligibleUserIds.push(t.user);
       }
     }
+
+    // 4. Look up their push tokens
+    const pushTokenDocs = await PushToken.find({ userId: { $in: eligibleUserIds } }).lean();
+    const validTokens = pushTokenDocs
+      .filter(doc => doc.token)
+      .map(doc => doc.token);
 
     return validTokens;
   } catch (err) {
