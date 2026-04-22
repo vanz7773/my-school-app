@@ -82,7 +82,7 @@ function initCronJobs() {
     } else {
       console.log('ℹ️ No eligible teachers to notify (Holidays/No Active Term).');
     }
-  });
+  }, { timezone: 'UTC' });
 
   // ⏰ Afternoon Clock-Out Reminder (Mon-Fri at 3:30 PM)
   cron.schedule('30 15 * * 1-5', async () => {
@@ -99,7 +99,7 @@ function initCronJobs() {
     } else {
       console.log('ℹ️ No eligible teachers to notify.');
     }
-  });
+  }, { timezone: 'UTC' });
 
   // 📚 Friday Weekly Exercise Reminder (Friday at 2:00 PM)
   cron.schedule('0 14 * * 5', async () => {
@@ -116,7 +116,7 @@ function initCronJobs() {
     } else {
       console.log('ℹ️ No eligible teachers to notify.');
     }
-  });
+  }, { timezone: 'UTC' });
 
   console.log('✅ CRON Jobs Registered.');
 }
