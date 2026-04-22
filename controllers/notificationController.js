@@ -119,20 +119,42 @@ async function sendPushNotifications(userIds, title, message, data = {}) {
     if (!userIds || userIds.length === 0) return;
 
     // --- 1. Mobile Push (Expo) ---
-    const users = await User.find({
-      _id: { $in: userIds },
-      pushToken: { $exists: true, $ne: null }
-    }).select('pushToken');
+    const [users, mobileTokenDocs] = await Promise.all([
+      User.find({
+        _id: { $in: userIds },
+        pushToken: { $exists: true, $ne: null }
+      }).select('pushToken').lean(),
+      PushToken.find({
+        userId: { $in: userIds },
+        platform: { $in: ['ios', 'android'] },
+        disabled: { $ne: true },
+        token: { $exists: true, $ne: null }
+      }).select('token').lean()
+    ]);
 
     let messages = [];
-    for (let user of users) {
-      if (!Expo.isExpoPushToken(user.pushToken)) {
-        console.error(`Push token ${user.pushToken} is not a valid Expo push token`);
+    const mobileTokens = new Set();
+
+    for (const user of users) {
+      if (user.pushToken) {
+        mobileTokens.add(user.pushToken);
+      }
+    }
+
+    for (const tokenDoc of mobileTokenDocs) {
+      if (tokenDoc.token) {
+        mobileTokens.add(tokenDoc.token);
+      }
+    }
+
+    for (const token of mobileTokens) {
+      if (!Expo.isExpoPushToken(token)) {
+        console.error(`Push token ${token} is not a valid Expo push token`);
         continue;
       }
 
       messages.push({
-        to: user.pushToken,
+        to: token,
         sound: 'default',
         title: title,
         body: message,
