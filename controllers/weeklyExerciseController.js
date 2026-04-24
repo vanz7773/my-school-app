@@ -484,6 +484,14 @@ exports.getExerciseSummary = async (req, res) => {
       query.finalized = finalized === "true";
     }
 
+    // Restrict query to the logged-in teacher's own exercises if the user is a teacher
+    if (req.user && req.user.role === "teacher") {
+      const teacher = await Teacher.findOne({ user: req.user._id, school: req.user.school });
+      if (teacher) {
+        query.teacher = teacher._id;
+      }
+    }
+
     // Populate teacher with subjects[]
     const exercises = await WeeklyExercise.find(query)
       .populate({
