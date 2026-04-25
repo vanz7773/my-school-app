@@ -613,12 +613,17 @@ exports.bulkCreateStudents = async (req, res) => {
           studentData.class = classId;
         } else if (className) {
           const lookupName = String(className).toLowerCase().trim();
-          if (classMap[lookupName]) {
+          // Remove multiple internal spaces just in case (e.g. "BASIC   9" -> "basic 9")
+          const normalizedLookup = lookupName.replace(/\s+/g, ' ');
+          if (classMap[normalizedLookup]) {
+            studentData.class = classMap[normalizedLookup];
+          } else if (classMap[lookupName]) {
             studentData.class = classMap[lookupName];
           } else {
-            console.warn(`⚠️ Bulk Creation: Class name "${className}" not found for student ${name}`);
-            // We still proceed, but the student won't have a class assigned
+            throw new Error(`Class name "${className}" not found in your school. Please create it first or check spelling.`);
           }
+        } else {
+            throw new Error(`Class is required for student ${name}.`);
         }
 
         const student = new Student(studentData);
