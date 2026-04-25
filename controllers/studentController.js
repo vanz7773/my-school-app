@@ -541,8 +541,8 @@ exports.bulkCreateStudents = async (req, res) => {
           }
         }
         // Validation basic
-        if (!name || !email) {
-          throw new Error(`Missing required fields for student: ${name || 'Unknown'}`);
+        if (!name || !email || !password || !className || !gender || !academicYear) {
+          throw new Error(`Missing required fields (Name, Email, Password, Class, Gender, Academic Year) for student: ${name || 'Unknown'}`);
         }
 
         const existingUser = await User.findOne({ email });
