@@ -174,6 +174,106 @@ exports.createTeacher = async (req, res) => {
 
 
 // ====================================================================================
+//  BULK CREATE TEACHERS
+// ====================================================================================
+exports.bulkCreateTeachers = async (req, res) => {
+  try {
+    const { teachers } = req.body;
+    const currentSchool = req.user.school;
+
+    if (!Array.isArray(teachers) || teachers.length === 0) {
+      return res.status(400).json({ message: 'No teachers provided for bulk enrollment' });
+    }
+
+    const results = {
+      errors: [],
+    };
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (let i = 0; i < teachers.length; i++) {
+      const t = teachers[i];
+      try {
+        if (!t.name || !t.email || !t.password) {
+          throw new Error('Name, email, and password are required');
+        }
+
+        // Check if email already exists in the same school
+        const existingUser = await User.findOne({ email: t.email.toLowerCase().trim(), school: currentSchool });
+        if (existingUser) {
+          throw new Error(`Email ${t.email} already exists`);
+        }
+
+        // Create User
+        const user = new User({
+          name: t.name,
+          email: t.email.toLowerCase().trim(),
+          password: t.password,
+          role: "teacher",
+          gender: t.gender || null,
+          school: currentSchool,
+        });
+        await user.save();
+
+        // Create Teacher Profile
+        const teacher = new Teacher({
+          user: user._id,
+          assignedClasses: [], // Not mandatory for bulk
+          subjects: [], // Not mandatory for bulk
+          phone: t.phone || "",
+          bio: t.bio || "",
+          school: currentSchool,
+        });
+        await teacher.save();
+
+        successCount++;
+      } catch (error) {
+        errorCount++;
+        results.errors.push({
+          row: i + 1,
+          name: t.name || 'Unknown',
+          email: t.email || 'Unknown',
+          message: error.message
+        });
+      }
+    }
+
+    // Send a single notification if at least one teacher was created
+    if (successCount > 0) {
+      try {
+        const admins = await User.find({ role: "admin", school: currentSchool });
+        if (admins.length > 0) {
+          await Notification.create({
+            sender: req.user._id,
+            recipientUsers: admins.map(a => a._id),
+            message: `📢 ${successCount} new teachers were added via bulk upload.`,
+            school: currentSchool,
+          });
+        }
+      } catch (err) {
+        console.error("Bulk upload admin notification failed:", err);
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      summary: {
+        successCount,
+        errorCount,
+        totalProcessed: teachers.length
+      },
+      results
+    });
+
+  } catch (err) {
+    console.error('❌ Error in bulkCreateTeachers:', err);
+    res.status(500).json({ message: 'Error in bulk teacher creation', error: err.message });
+  }
+};
+
+
+
+// ====================================================================================
 //  GET ALL TEACHERS
 // ====================================================================================
 exports.getAllTeachers = async (req, res) => {

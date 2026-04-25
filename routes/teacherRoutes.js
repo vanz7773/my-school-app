@@ -3,6 +3,7 @@ const router = express.Router();
 const { protect, restrictTo } = require('../middlewares/authMiddleware');
 const {
   createTeacher,
+  bulkCreateTeachers,
   getAllTeachers,
   getTeacherById,
   updateTeacher,
@@ -16,6 +17,7 @@ const {
 
 // Admin creates teacher
 router.post('/', protect, restrictTo('admin'), createTeacher);
+router.post('/bulk', protect, restrictTo('admin'), bulkCreateTeachers);
 
 // Teacher-specific routes (must be before :id routes)
 router.get('/me', protect, restrictTo('teacher'), getMyProfile);
