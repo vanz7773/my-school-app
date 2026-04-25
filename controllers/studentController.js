@@ -680,3 +680,43 @@ exports.bulkCreateStudents = async (req, res) => {
 };
 
 
+// ✅ Delete all students in a specific class
+exports.deleteStudentsByClass = async (req, res) => {
+  try {
+    const { classId } = req.params;
+    const currentSchool = req.user.school;
+
+    if (!classId) {
+      return res.status(400).json({ message: 'Class ID is required' });
+    }
+
+    // 1. Find all students in this class for this school
+    const students = await Student.find({ currentClass: classId, school: currentSchool });
+    
+    if (students.length === 0) {
+      return res.status(404).json({ message: 'No students found in this class' });
+    }
+
+    // Extract user IDs to delete their accounts
+    const userIds = students.map(s => s.user).filter(id => id);
+    const studentIds = students.map(s => s._id);
+
+    // 2. Delete the associated User documents
+    if (userIds.length > 0) {
+      await User.deleteMany({ _id: { $in: userIds }, school: currentSchool });
+    }
+
+    // 3. Delete the Student documents
+    await Student.deleteMany({ _id: { $in: studentIds }, school: currentSchool });
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully deleted ${students.length} students from the class.`,
+      deletedCount: students.length
+    });
+
+  } catch (error) {
+    console.error('❌ Error deleting students by class:', error);
+    res.status(500).json({ message: 'Error deleting students', error: error.message });
+  }
+};
