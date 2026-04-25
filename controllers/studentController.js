@@ -507,15 +507,23 @@ exports.bulkCreateStudents = async (req, res) => {
     // 1.5. Prepare Class mapping (Name -> ID) for easier lookup
     const allClasses = await Class.find({ school: req.user.school }).select('name _id displayName stream');
     const classMap = {};
+    
+    const addToMap = (str, id) => {
+      if (!str) return;
+      const lower = str.toLowerCase().trim();
+      const normalized = lower.replace(/\s+/g, ' ');
+      classMap[lower] = id;
+      classMap[normalized] = id;
+    };
+
     allClasses.forEach(c => {
       // Map both name (e.g. "BASIC 1") and displayName (e.g. "BASIC 1A")
-      if (c.name) classMap[c.name.toLowerCase().trim()] = c._id;
-      if (c.displayName) classMap[c.displayName.toLowerCase().trim()] = c._id;
+      addToMap(c.name, c._id);
+      addToMap(c.displayName, c._id);
       
       // Also handle "Name Stream" combinations if relevant
       if (c.name && c.stream) {
-        const full = `${c.name} ${c.stream}`.toLowerCase().trim();
-        classMap[full] = c._id;
+        addToMap(`${c.name} ${c.stream}`, c._id);
       }
     });
 
