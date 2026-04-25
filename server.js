@@ -72,8 +72,9 @@ app.use(cookieParser());
 
 
 
-// Parse JSON requests
-app.use(express.json());
+// Parse JSON requests with increased limit for bulk uploads
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // MongoDB connection
 mongoose.connect(process.env.MONGO_URI)
