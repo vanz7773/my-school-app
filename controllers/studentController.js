@@ -691,7 +691,7 @@ exports.deleteStudentsByClass = async (req, res) => {
     }
 
     // 1. Find all students in this class for this school
-    const students = await Student.find({ currentClass: classId, school: currentSchool });
+    const students = await Student.find({ class: classId, school: currentSchool });
     
     if (students.length === 0) {
       return res.status(404).json({ message: 'No students found in this class' });
