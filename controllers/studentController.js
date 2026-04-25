@@ -555,7 +555,47 @@ exports.bulkCreateStudents = async (req, res) => {
 
         const existingUser = await User.findOne({ email });
         if (existingUser) {
-          throw new Error(`Email already exists: ${email}`);
+          // Instead of throwing an error, we treat this as a BULK UPDATE for optional fields
+          const studentProfile = await Student.findOne({ user: existingUser._id });
+          if (!studentProfile) {
+            throw new Error(`Email already exists for a non-student user: ${email}`);
+          }
+
+          // Phone number formatting
+          let formattedPhone = guardianPhone;
+          if (formattedPhone && String(formattedPhone).trim().length === 9) {
+              formattedPhone = '0' + String(formattedPhone).trim();
+          }
+          let formattedPhone2 = guardianPhone2;
+          if (formattedPhone2 && String(formattedPhone2).trim().length === 9) {
+              formattedPhone2 = '0' + String(formattedPhone2).trim();
+          }
+
+          // Update only provided optional fields (Do NOT overwrite name, email, password, class, gender, academicYear)
+          if (formattedPhone) studentProfile.guardianPhone = formattedPhone;
+          if (formattedPhone2) studentProfile.guardianPhone2 = formattedPhone2;
+          if (guardianOccupation) studentProfile.guardianOccupation = guardianOccupation;
+          if (religion) studentProfile.religion = religion;
+          if (hometown) studentProfile.hometown = hometown;
+          if (languageSpoken) studentProfile.languageSpoken = languageSpoken;
+          if (fatherName) studentProfile.fatherName = fatherName;
+          if (fatherOccupation) studentProfile.fatherOccupation = fatherOccupation;
+          if (motherName) studentProfile.motherName = motherName;
+          if (motherOccupation) studentProfile.motherOccupation = motherOccupation;
+          if (parsedDob) studentProfile.dateOfBirth = parsedDob;
+
+          // Safely handle admission number (only if they don't have one)
+          if (data.admissionNumber && !studentProfile.admissionNumber) {
+            const trimmedNo = String(data.admissionNumber).trim();
+            const existingNo = await Student.findOne({ school: req.user.school, admissionNumber: trimmedNo });
+            if (!existingNo) {
+              studentProfile.admissionNumber = trimmedNo;
+            }
+          }
+
+          await studentProfile.save();
+          results.success.push({ name: existingUser.name, email, admissionNumber: studentProfile.admissionNumber, updated: true });
+          continue; // Skip the creation logic below and move to the next row!
         }
 
         // Admission Number Handling
