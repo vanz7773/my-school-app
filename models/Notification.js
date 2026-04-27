@@ -174,6 +174,12 @@ notificationSchema.index({ school: 1, class: 1 });
 notificationSchema.index({ school: 1, readBy: 1 });
 notificationSchema.index({ school: 1, createdAt: -1 });
 
+// ------------------------------------------------------
+// AUTO-EXPIRATION (TTL)
+// ------------------------------------------------------
+// Automatically delete notifications older than 30 days (30 * 24 * 60 * 60 seconds)
+notificationSchema.index({ createdAt: 1 }, { expireAfterSeconds: 2592000 });
+
 /* ------------------------------------------------------
    EXPORT MODEL SAFELY
 ------------------------------------------------------ */
