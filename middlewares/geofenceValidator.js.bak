@@ -133,8 +133,6 @@ const geofenceValidator = async (req, res, next) => {
       polygonPoints: polygon.length,
       radiusMeters: radius,
       distanceFromCenter,
-      centerLat,
-      centerLng,
       fromCache: polygonCache.has(schoolId),
     };
 

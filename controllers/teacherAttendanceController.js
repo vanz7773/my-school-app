@@ -10,6 +10,8 @@ const DeviceBinding = require('../models/DeviceBinding');
 const PushToken = require("../models/PushToken")
 const { Expo } = require("expo-server-sdk");
 const expo = new Expo();
+const { saveTeacherLocationCache } = require('../utils/locationCache');
+const { calculateDistance } = require('../utils/geofence');
 
 
 // 🔔 Helper for sending push notifications
@@ -336,6 +338,60 @@ const clockAttendance = async (req, res) => {
     attendance.term = term._id;
     await attendance.save();
     console.log('[CLOCK] ✅ Attendance saved successfully. ID:', attendance._id);
+
+    // ─────────────────────────────────────────────────────────────
+    // 🛡️ DATA COLLECTION: Location Cache (Non-blocking)
+    // ─────────────────────────────────────────────────────────────
+    try {
+      const { latitude, longitude, rawLatitude, rawLongitude, weakSignalAssist, accuracy } = req.body;
+      const { centerLat, centerLng, radiusMeters } = req.geofenceData || {};
+
+      const acc = parseFloat(accuracy);
+      
+      // Use raw coordinates if provided (new app), otherwise fallback to standard coordinates (legacy app)
+      const targetLat = rawLatitude !== undefined ? parseFloat(rawLatitude) : parseFloat(latitude);
+      const targetLng = rawLongitude !== undefined ? parseFloat(rawLongitude) : parseFloat(longitude);
+      
+      // Infer weakSignalAssist for legacy app (legacy app only had high accuracy <= 100m without weak signal assist)
+      const isWeak = weakSignalAssist !== undefined ? weakSignalAssist : acc > 100;
+
+      const LOCATION_TARGET_ACCURACY_METERS = 100;
+
+      if (!isNaN(targetLat) && !isNaN(targetLng) && !isNaN(acc) && centerLat !== undefined && centerLng !== undefined && radiusMeters !== undefined) {
+        
+        // Derive strict GPS internally:
+        // - Accuracy within target (100m)
+        // - No weak signal assistance
+        const isStrictGPS = acc <= LOCATION_TARGET_ACCURACY_METERS && isWeak === false;
+
+        if (isStrictGPS) {
+          const distanceToSchool = calculateDistance(targetLat, targetLng, centerLat, centerLng);
+          
+          // Legacy App Snapping Protection: The frontend snaps coordinates to exactly (radius - 5) meters if it falls back.
+          // We must reject points that are exactly at the snap boundary to ensure we only cache genuine raw points.
+          const isLikelySnapped = Math.abs(distanceToSchool - Math.max(0, radiusMeters - 5)) < 0.5;
+
+          // Only attempt to save if distance is within school radius, accuracy is exceptionally good (<=120m), and it's not a snapped point.
+          if (acc <= 120 && distanceToSchool <= radiusMeters && !isLikelySnapped) {
+            console.log(`[CLOCK] 📍 Strict GPS detected (Acc: ${acc}m, Dist: ${distanceToSchool.toFixed(2)}m). Attempting to cache location...`);
+            saveTeacherLocationCache({
+              teacherId: teacher._id,
+              schoolId: teacher.school._id,
+              latitude: targetLat,
+              longitude: targetLng,
+              accuracy: acc,
+              distanceToSchool,
+              schoolRadius: radiusMeters,
+            }); // Async execution (non-blocking)
+          } else if (isLikelySnapped) {
+            console.log(`[CLOCK] 📍 Ignored location cache: coordinate appears to be a snapped fallback point from legacy app.`);
+          }
+        }
+      }
+    } catch (cacheErr) {
+      console.error('[CLOCK] ❌ Error in location cache preprocessing:', cacheErr.message);
+    }
+
 
     console.log('[CLOCK] === CLOCK ATTENDANCE COMPLETED SUCCESSFULLY ===\n');
     return res.status(200).json({
