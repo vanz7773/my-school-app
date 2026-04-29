@@ -392,6 +392,8 @@ const getAccountedAmountForDay = (entry, targetDay, targetDate, amountPerDay = 0
 };
 
 const resolveEntryAmountPerDay = (entry, record, feeConfig) => {
+  if (entry?.student?.isExemptFromFeedingFee) return 0;
+
   if (entry?.student && feeConfig) {
     const liveAmount = getAmountPerDay(entry.student, feeConfig);
     if (liveAmount > 0) return Number(liveAmount) || 0;
@@ -1494,7 +1496,7 @@ const getFeedingFeeSummary = async (req, res) => {
       FeedingFeeRecord.find({
         classId: toObjectId(classId),
         ...(termId && { termId: toObjectId(termId) }) // TERM-WIDE SCAN FOR PHYSICAL CASH
-      }) || []
+      }).populate('breakdown.student', 'isExemptFromFeedingFee') || []
     ]);
 
     // Map mathematical cash drawer flow
@@ -1744,7 +1746,7 @@ const getDebtorsForWeek = async (req, res) => {
     // Fetch all FeedingFeeRecords AND all StudentAttendance records for the term in parallel
     const [records, attendanceRecords] = await Promise.all([
       FeedingFeeRecord.find({ school: schoolId, termId })
-        .populate('breakdown.student', 'guardianName guardianPhone')
+        .populate('breakdown.student', 'guardianName guardianPhone isExemptFromFeedingFee')
         .lean(),
       StudentAttendance.find({ school: schoolId, termId }).lean()
     ]);
@@ -1841,7 +1843,7 @@ const getDailyTotalSummary = async (req, res) => {
     })
       .populate({
         path: 'breakdown.student',
-        select: 'name firstName lastName class user',
+        select: 'name firstName lastName class user isExemptFromFeedingFee',
         populate: {
           path: 'class',
           select: 'name displayName level'
@@ -1946,7 +1948,7 @@ const getFeedingFeeAuditReport = async (req, res) => {
       FeedingFeeRecord.find({ school: schoolId, termId })
         .populate({
           path: 'breakdown.student',
-          select: 'guardianName guardianPhone name firstName lastName class user',
+          select: 'guardianName guardianPhone name firstName lastName class user isExemptFromFeedingFee',
           populate: { path: 'class', select: 'name displayName level' }
         })
         .populate('classId', 'name displayName level')
