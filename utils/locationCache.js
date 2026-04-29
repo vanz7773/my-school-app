@@ -64,22 +64,21 @@ const saveTeacherLocationCache = async ({
     });
     console.log(`[CACHE] ✅ Successfully saved strict GPS cache for teacher ${teacherId}`);
 
-    // 4. Cleanup old records (keep only latest 20)
-    const recordsToKeep = await TeacherLocationCache.find({ teacherId, schoolId })
-      .sort({ createdAt: -1 })
-      .select('_id')
-      .limit(20);
-
-    const idsToKeep = recordsToKeep.map((r) => r._id);
-
-    const deleteResult = await TeacherLocationCache.deleteMany({
+    // 4. Enforce max 20 records per teacher per school
+    const oldRecords = await TeacherLocationCache.find({
       teacherId,
       schoolId,
-      _id: { $nin: idsToKeep },
-    });
+    })
+      .sort({ createdAt: -1 })
+      .skip(20)
+      .select('_id');
 
-    if (deleteResult.deletedCount > 0) {
-      console.log(`[CACHE] Cleaned up ${deleteResult.deletedCount} old cache records.`);
+    if (oldRecords.length > 0) {
+      const idsToDelete = oldRecords.map(r => r._id);
+      await TeacherLocationCache.deleteMany({
+        _id: { $in: idsToDelete }
+      });
+      console.log(`[CACHE] 🧹 Trimmed ${idsToDelete.length} old records (kept latest 20)`);
     }
   } catch (error) {
     // Fail silently so it NEVER affects attendance
@@ -104,14 +103,14 @@ const getTeacherLocationCache = async (teacherId, schoolId) => {
 
 /**
  * PREP ONLY: Future fallback validation.
- * Checks if current coordinates are near any cached location (within 200m).
+ * Checks if current coordinates are near any cached location (within 100m).
  */
-const isNearCachedLocation = ({ currentLat, currentLng, cachedLocations }) => {
+const isNearCachedLocation = (currentLat, currentLng, cachedLocations, radiusMeters = 100) => {
   if (!cachedLocations || cachedLocations.length === 0) return false;
 
   for (const loc of cachedLocations) {
     const dist = calculateDistance(currentLat, currentLng, loc.latitude, loc.longitude);
-    if (dist <= 200) {
+    if (dist <= radiusMeters) {
       return true;
     }
   }

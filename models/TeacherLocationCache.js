@@ -33,8 +33,6 @@ const teacherLocationCacheSchema = new mongoose.Schema(
     createdAt: {
       type: Date,
       default: Date.now,
-      // TTL index to automatically delete records older than 14 days
-      expires: 14 * 24 * 60 * 60,
     },
   },
   { timestamps: true }

@@ -12,10 +12,17 @@
  */
 
 const School = require('../models/School');
+const Teacher = require('../models/Teacher');
+const { getTeacherLocationCache, isNearCachedLocation } = require('../utils/locationCache');
 const { normalizePolygon, validateGeofence, calculateDistance } = require('../utils/geofence');
 
 // 🧠 In-memory cache (resets on server restart)
 const polygonCache = new Map();
+
+// ⚙️ Configuration
+const CACHE_FALLBACK_RADIUS_METERS = 100;
+const MAX_CACHE_DISTANCE_FROM_CENTER_BUFFER = 75;
+const MAX_CACHE_POINTS_TO_USE = 5; // Use most recent points only
 
 /**
  * Geofence validation middleware
@@ -117,16 +124,70 @@ const geofenceValidator = async (req, res, next) => {
 
     // ✅ Enforce validation
     if (!isWithinGeofence) {
-      console.warn(`[GEOFENCE] Out-of-zone clock attempt for ${name}.`);
+      console.log("[GEOFENCE] ❌ Strict validation failed");
+
+      try {
+        const teacher = await Teacher.findOne({ user: req.user.id }).select('_id');
+        const teacherId = teacher?._id;
+
+        if (!teacherId) {
+          console.log("[CACHE] No teacher found");
+        } else {
+          let cachePoints = await getTeacherLocationCache(teacherId, schoolId);
+
+          console.log(`[CACHE] Total stored points: ${cachePoints.length}`);
+
+          if (cachePoints.length > 0) {
+            // Use only most recent points (no deletion, just filtering)
+            cachePoints = cachePoints
+              .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+              .slice(0, MAX_CACHE_POINTS_TO_USE);
+
+            const isNearCache = isNearCachedLocation(
+              lat,
+              lng,
+              cachePoints,
+              CACHE_FALLBACK_RADIUS_METERS
+            );
+
+            const maxAllowedDistance =
+              radius + MAX_CACHE_DISTANCE_FROM_CENTER_BUFFER;
+
+            const isStillNearSchool =
+              distanceFromCenter <= maxAllowedDistance;
+
+            console.log("[CACHE CHECK RESULT]", {
+              isNearCache,
+              isStillNearSchool,
+              distanceFromCenter: Math.round(distanceFromCenter),
+              maxAllowedDistance,
+              fallbackPass: isNearCache && isStillNearSchool
+            });
+
+            if (isNearCache && isStillNearSchool) {
+              console.log("✅ [CACHE FALLBACK] Accepted");
+
+              req.geofenceStatus = 'cache_fallback';
+              return next();
+            }
+          } else {
+            console.log("🔵 [CACHE] No cache available");
+          }
+        }
+      } catch (err) {
+        console.error("[CACHE ERROR]", err.message);
+      }
+
+      // ❌ Reject if fallback fails
       return res.status(403).json({
         status: 'fail',
-        message: `You must be within the school compound to clock in or out. 
-        You're approximately ${Math.round(distanceFromCenter)} meters away.`,
+        message: `You must be within the school compound to clock in or out. \n    You're approximately ${Math.round(distanceFromCenter)} meters away.`,
       });
+    } else {
+      req.geofenceStatus = polygon.length >= 3 ? 'inside' : 'radius';
     }
 
     // ✅ Attach metadata to request
-    req.geofenceStatus = polygon.length >= 3 ? 'inside' : 'radius';
     req.geofenceData = {
       schoolId,
       schoolName: name,
