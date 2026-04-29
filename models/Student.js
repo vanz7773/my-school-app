@@ -86,6 +86,11 @@ const studentSchema = new mongoose.Schema({
   isExemptFromFeedingFee: {
     type: Boolean,
     default: false
+  },
+
+  isExemptFromTermFees: {
+    type: Boolean,
+    default: false
   }
 
 }, { timestamps: true });

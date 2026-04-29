@@ -284,7 +284,7 @@ module.exports = {
       studentsList = await Student.find(query)
         .populate({ path: 'user', select: 'name' })
         .populate({ path: 'class', select: 'name stream displayName' })
-        .select('_id user class admissionNumber')
+        .select('_id user class admissionNumber isExemptFromTermFees')
         .session(session);
 
       if (!studentsList.length) {
@@ -336,6 +336,9 @@ module.exports = {
 
       for (const student of studentsList) {
         try {
+          // Skip bill generation for students exempt from term fees
+          if (student.isExemptFromTermFees === true) continue;
+
           const studentId = student._id.toString();
           const manualBill = manualBillsMap.get(studentId);
           const existingBill = existingBillsMap.get(studentId);
@@ -854,7 +857,8 @@ module.exports = {
             formattedBalance: formatCurrency(balance),
             paymentStatus,
             lastPayment: payments.length > 0 ? payments[payments.length - 1] : null,
-            isPlaceholder: false
+            isPlaceholder: false,
+            isExemptFromTermFees: student.isExemptFromTermFees || false
           };
         } else {
           // No bill exists for this student yet
@@ -885,7 +889,8 @@ module.exports = {
             payments: [],
             isPlaceholder: true,
             term: cleanTerm,
-            academicYear: cleanAcademicYear
+            academicYear: cleanAcademicYear,
+            isExemptFromTermFees: student.isExemptFromTermFees || false
           };
         }
       });
@@ -2028,6 +2033,34 @@ module.exports = {
         message: 'Error fetching audit report',
         error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
+    }
+  },
+
+  async toggleTermFeeExemption(req, res) {
+    try {
+      if (!req.user || !req.user.school) {
+        return res.status(403).json({ message: 'Unauthorized' });
+      }
+
+      const { studentId } = req.params;
+      const student = await Student.findOne({ _id: studentId, school: req.user.school });
+
+      if (!student) {
+        return res.status(404).json({ message: 'Student not found' });
+      }
+
+      student.isExemptFromTermFees = !student.isExemptFromTermFees;
+      await student.save();
+
+      res.json({
+        success: true,
+        isExemptFromTermFees: student.isExemptFromTermFees,
+        message: `Student is now ${student.isExemptFromTermFees ? 'exempt from' : 'liable for'} term fees`
+      });
+
+    } catch (error) {
+      console.error('Toggle Term Fee Exemption Error:', error);
+      res.status(500).json({ message: 'Failed to toggle exemption status' });
     }
   }
 };

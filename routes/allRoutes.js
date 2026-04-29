@@ -13,6 +13,7 @@ router.get('/fee-templates', protect, requirePrivateSchool, allcontrollers.getFe
 router.get('/term-bills', protect, requirePrivateSchool, allcontrollers.getTermBills);
 router.get('/school-wide-summary', protect, requirePrivateSchool, allcontrollers.getSchoolWideTermBillingSummary);
 router.get('/audit-report', protect, requirePrivateSchool, allcontrollers.getTermBillingAuditReport);
+router.post('/bills/exempt/:studentId', protect, requirePrivateSchool, allcontrollers.toggleTermFeeExemption);
 
 // ----------------- Parent Portal Routes -----------------
 router.get('/parent/bills', protect, requirePrivateSchool, allcontrollers.getParentBills);
