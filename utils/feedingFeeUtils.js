@@ -8,6 +8,7 @@ const normalizeClassName = (s) => (s || '').toString().toLowerCase().trim();
  */
 function getAmountPerDay(student, feeConfig) {
   if (!student || !feeConfig) return 0;
+  if (student.isExemptFromFeedingFee) return 0;
 
   const classId = student.class?._id ? String(student.class._id) : String(student.class || '');
   const className = normalizeClassName(student?.class?.name ?? student?.className ?? '');

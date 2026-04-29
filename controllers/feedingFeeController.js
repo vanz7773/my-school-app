@@ -923,6 +923,7 @@ const calculateFeedingFeeCollection = async (req, res) => {
         total: calculatedAmount,
         days: ensureDefaultDays(mergedDays),
         isRecoveredDebt: manual?.isRecoveredDebt || false,
+        isExemptFromFeedingFee: student.isExemptFromFeedingFee || false,
       });
     }
 
@@ -1408,6 +1409,7 @@ const getFeedingFeeForStudent = async (req, res) => {
         days,
         records,
         notification: notifMap[String(student._id)] || null,
+        isExemptFromFeedingFee: student.isExemptFromFeedingFee || false,
       });
     }
 
@@ -1588,7 +1590,8 @@ const getFeedingFeeSummary = async (req, res) => {
         daysPaid: studentTotal / (amountPerDay || 1), // Logical days equivalent
         amountPerDay,
         total: studentTotal,
-        isRecoveredDebt: debtAmount > 0
+        isRecoveredDebt: debtAmount > 0,
+        isExemptFromFeedingFee: student.isExemptFromFeedingFee || false
       });
     }
 
@@ -2104,6 +2107,48 @@ const getFeedingFeeAuditReport = async (req, res) => {
   }
 };
 
+// --------------------------------------------------------------------
+// 🚫 Toggle Student Feeding Fee Exemption
+// --------------------------------------------------------------------
+const toggleFeedingFeeExemption = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const { exempt } = req.body;
+    const schoolId = req.user.school;
+
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Only admins can toggle feeding fee exemption' });
+    }
+
+    const student = await Student.findOne({ _id: studentId, school: schoolId });
+    if (!student) {
+      return res.status(404).json({ success: false, message: 'Student not found' });
+    }
+
+    student.isExemptFromFeedingFee = !!exempt;
+    await student.save();
+
+    // Clear caches
+    studentCache.delete(`student_${studentId}_${schoolId}_none`);
+    
+    // Also clear parent caches for this student just in case
+    for (const key of studentCache.keys()) {
+      if (key.includes(`student_${studentId}_${schoolId}`)) {
+        studentCache.delete(key);
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: `Student successfully ${student.isExemptFromFeedingFee ? 'exempted from' : 'enrolled in'} feeding fees`,
+      isExemptFromFeedingFee: student.isExemptFromFeedingFee
+    });
+  } catch (error) {
+    console.error("Error toggling fee exemption:", error);
+    return res.status(500).json({ success: false, message: "Failed to toggle exemption", error: error.message });
+  }
+};
+
 module.exports = {
   markFeeding,
   markFeedingBulk,
@@ -2117,5 +2162,6 @@ module.exports = {
   getAbsenteesForWeek,
   getDebtorsForWeek,
   getDailyTotalSummary,
-  getFeedingFeeAuditReport
+  getFeedingFeeAuditReport,
+  toggleFeedingFeeExemption
 };

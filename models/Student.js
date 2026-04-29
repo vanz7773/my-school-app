@@ -81,7 +81,12 @@ const studentSchema = new mongoose.Schema({
   lastSchoolAttended: { type: String },
   dateOfLeaving: { type: Date },
   causeForLeaving: { type: String },
-  remarks: { type: String }
+  remarks: { type: String },
+
+  isExemptFromFeedingFee: {
+    type: Boolean,
+    default: false
+  }
 
 }, { timestamps: true });
 

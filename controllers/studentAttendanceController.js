@@ -203,7 +203,7 @@ const fetchCriticalData = async (schoolId, classId, termId, userId) => {
       let students = cache.get(cacheKey);
       if (!students) {
         students = await Student.find({ class: classId, school: schoolId })
-          .select('_id class parent parentIds user')
+          .select('_id class parent parentIds user isExemptFromFeedingFee')
           .populate('class', 'name level')
           .populate('user', 'name')
           .lean();

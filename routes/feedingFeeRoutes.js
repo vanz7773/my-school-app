@@ -40,5 +40,6 @@ router.get('/audit-report', protect, requirePrivateSchool, getFeedingFeeAuditRep
 // ----------------- Manual Marking Routes -----------------
 router.post("/mark", protect, requirePrivateSchool, markFeeding);
 router.post("/mark-bulk", protect, requirePrivateSchool, markFeedingBulk);
+router.post("/exempt/:studentId", protect, requirePrivateSchool, require('../controllers/feedingFeeController').toggleFeedingFeeExemption);
 
 module.exports = router;
