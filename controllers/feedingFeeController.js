@@ -1516,6 +1516,8 @@ const getFeedingFeeSummary = async (req, res) => {
         if (!entry.student) continue;
         const sid = String(entry.student);
 
+        if (entry?.student?.isExemptFromFeedingFee === true) continue;
+
         const amountPerDay = resolveEntryAmountPerDay(entry, record, feeConfig);
         const resolvedAmount = amountPerDay > 0 ? amountPerDay : (Number(entry?.perDayFee?.['M']) || 0);
 
@@ -1979,6 +1981,8 @@ const getFeedingFeeAuditReport = async (req, res) => {
       const studentsDetails = [];
 
       for (const entry of record.breakdown) {
+        if (entry?.student?.isExemptFromFeedingFee === true) continue;
+        
         const isNativeRecord = record.week === weekNumber;
         const amountPerDay = resolveEntryAmountPerDay(entry, record, feeConfig);
         const resolvedAmount = amountPerDay > 0 ? amountPerDay : (Number(entry?.perDayFee?.['M']) || 0);
