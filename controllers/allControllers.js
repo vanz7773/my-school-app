@@ -1507,6 +1507,7 @@ module.exports = {
           formattedPaid: formatCurrency(paidAmount),
           formattedBalance: formatCurrency(balance),
           paymentStatus,
+          isExempt: !!transformed.student?.isExemptFromTermFees,
           lastPayment:
             payments.length > 0
               ? payments[payments.length - 1].paymentDate
