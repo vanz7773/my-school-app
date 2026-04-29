@@ -2052,6 +2052,31 @@ module.exports = {
       student.isExemptFromTermFees = !student.isExemptFromTermFees;
       await student.save();
 
+      // If the student is now exempt, zero out any existing bills 
+      // so they don't count towards the class/school expected totals.
+      if (student.isExemptFromTermFees) {
+        const billsToUpdate = await TermBill.find({ 
+          student: studentId, 
+          school: req.user.school 
+        });
+
+        for (const bill of billsToUpdate) {
+          bill.totalAmount = bill.totalPaid || 0;
+          bill.balance = 0;
+          bill.status = 'Paid'; // Prevents it from showing up in unpaid filters
+
+          if (Array.isArray(bill.items)) {
+            bill.items = bill.items.map(item => ({
+              ...(item.toObject ? item.toObject() : item),
+              amount: item.paid || 0,
+              balance: 0
+            }));
+          }
+
+          await bill.save();
+        }
+      }
+
       res.json({
         success: true,
         isExemptFromTermFees: student.isExemptFromTermFees,
