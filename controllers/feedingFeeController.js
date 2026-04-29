@@ -911,7 +911,8 @@ const calculateFeedingFeeCollection = async (req, res) => {
       }
 
       // Step 3: Count paid days and compute amount — pure in-memory math
-      const daysPaid = Object.values(mergedDays).filter((v) => v === "present").length;
+      const isExempt = student.isExemptFromFeedingFee === true;
+      const daysPaid = isExempt ? 0 : Object.values(mergedDays).filter((v) => v === "present").length;
       const calculatedAmount = daysPaid * amountPerDay;
       totalAmount += calculatedAmount;
 
@@ -1380,7 +1381,8 @@ const getFeedingFeeForStudent = async (req, res) => {
         }
       }
 
-      const presentDays = Object.values(days).filter(
+      const isExempt = student.isExemptFromFeedingFee === true;
+      const presentDays = isExempt ? 0 : Object.values(days).filter(
         (v) => v === "present"
       ).length;
       const total = presentDays * amountPerDay;
