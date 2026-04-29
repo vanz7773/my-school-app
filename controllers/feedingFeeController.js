@@ -1964,7 +1964,7 @@ const getFeedingFeeAuditReport = async (req, res) => {
       attendanceLookup.set(String(att.student), att.days || {});
     }
 
-    const auditReport = [];
+    const classReportMap = new Map();
     let grandTotal = 0;
     let totalPaid = 0;
     let totalUnpaid = 0;
@@ -2073,20 +2073,34 @@ const getFeedingFeeAuditReport = async (req, res) => {
         });
       }
 
-      // Sort students alphabetically
-      studentsDetails.sort((a, b) => {
+      const classIdStr = String(classId);
+      let classEntry = classReportMap.get(classIdStr);
+      if (!classEntry) {
+        classEntry = {
+          classId: classIdStr,
+          className,
+          totalAmount: 0,
+          paidCount: 0,
+          unpaidCount: 0,
+          students: []
+        };
+        classReportMap.set(classIdStr, classEntry);
+      }
+
+      classEntry.totalAmount += classTotalAmount;
+      classEntry.paidCount += classPaidCount;
+      classEntry.unpaidCount += classUnpaidCount;
+      classEntry.students.push(...studentsDetails);
+    }
+
+    const auditReport = Array.from(classReportMap.values());
+    
+    // Sort students alphabetically within each merged class
+    for (const classEntry of auditReport) {
+      classEntry.students.sort((a, b) => {
         if (!a.studentName) return 1;
         if (!b.studentName) return -1;
         return a.studentName.localeCompare(b.studentName);
-      });
-
-      auditReport.push({
-        classId,
-        className,
-        totalAmount: classTotalAmount,
-        paidCount: classPaidCount,
-        unpaidCount: classUnpaidCount,
-        students: studentsDetails
       });
     }
 
