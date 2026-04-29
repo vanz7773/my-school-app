@@ -925,7 +925,9 @@ module.exports = {
         school: req.user.school,
         term: term.trim(),
         academicYear: academicYear.trim()
-      }).lean();
+      })
+      .populate('student', 'isExemptFromTermFees')
+      .lean();
 
       let totalExpected = 0;
       let totalPaid = 0;
@@ -935,6 +937,11 @@ module.exports = {
       let partialPaidCount = 0;
 
       bills.forEach(bill => {
+        // Skip exempt students from school-wide accounting totals
+        if (bill.student?.isExemptFromTermFees) {
+          return;
+        }
+
         const transformNumber = (value) => {
           if (!value) return 0;
           if (typeof value === 'object') {
@@ -2052,31 +2059,6 @@ module.exports = {
 
       student.isExemptFromTermFees = !student.isExemptFromTermFees;
       await student.save();
-
-      // If the student is now exempt, zero out any existing bills 
-      // so they don't count towards the class/school expected totals.
-      if (student.isExemptFromTermFees) {
-        const billsToUpdate = await TermBill.find({ 
-          student: studentId, 
-          school: req.user.school 
-        });
-
-        for (const bill of billsToUpdate) {
-          bill.totalAmount = bill.totalPaid || 0;
-          bill.balance = 0;
-          bill.status = 'Paid'; // Prevents it from showing up in unpaid filters
-
-          if (Array.isArray(bill.items)) {
-            bill.items = bill.items.map(item => ({
-              ...(item.toObject ? item.toObject() : item),
-              amount: item.paid || 0,
-              balance: 0
-            }));
-          }
-
-          await bill.save();
-        }
-      }
 
       res.json({
         success: true,
