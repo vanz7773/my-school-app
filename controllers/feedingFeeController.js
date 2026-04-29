@@ -1514,7 +1514,7 @@ const getFeedingFeeSummary = async (req, res) => {
 
       for (const entry of record.breakdown) {
         if (!entry.student) continue;
-        const sid = String(entry.student);
+        const sid = String(entry.student._id || entry.student);
 
         if (entry?.student?.isExemptFromFeedingFee === true) continue;
 
