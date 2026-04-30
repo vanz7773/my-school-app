@@ -2001,10 +2001,8 @@ const getFeedingFeeAuditReport = async (req, res) => {
     const weekBounds = getTargetWeekBounds(termDoc, weekNumber);
 
     // Fetch ALL records for the school/term to capture cross-week Debt Recoveries
-    // Also fetch StudentAttendance as the authoritative source for absence status.
-    // FeedingFeeRecord.breakdown.days can hold stale 'absent' from old syncs — we
-    // cross-check with StudentAttendance before trusting it.
-    const [records, attendanceRecords] = await Promise.all([
+    // Fetch ALL active students to ensure no one is missing from the audit
+    const [records, attendanceRecords, students] = await Promise.all([
       FeedingFeeRecord.find({ school: schoolId, termId })
         .populate({
           path: 'breakdown.student',
@@ -2013,13 +2011,38 @@ const getFeedingFeeAuditReport = async (req, res) => {
         })
         .populate('classId', 'name displayName level')
         .lean(),
-      StudentAttendance.find({ school: schoolId, termId, weekNumber }).lean()
+      StudentAttendance.find({ school: schoolId, termId, weekNumber }).lean(),
+      Student.find({ school: schoolId, status: { $ne: 'Withdrawn' } })
+        .populate('class', 'name displayName level')
+        .populate('user', 'name firstName lastName')
+        .lean()
     ]);
 
-    // Build lookup: studentId → { M: 'present'|'absent'|..., T: ..., ... }
+    // Build lookup for O(1)
     const attendanceLookup = new Map();
     for (const att of attendanceRecords) {
-      attendanceLookup.set(String(att.student), att.days || {});
+      if (att.student) attendanceLookup.set(String(att.student), att);
+    }
+
+    const feedingMap = new Map();
+    for (const record of records) {
+      if (!record.breakdown || !Array.isArray(record.breakdown)) continue;
+      const isNativeRecord = record.week === weekNumber;
+      
+      for (const entry of record.breakdown) {
+        if (!entry.student) continue;
+        const sid = String(entry.student._id || entry.student);
+        
+        if (!feedingMap.has(sid)) {
+          feedingMap.set(sid, { native: null, debt: [] });
+        }
+        
+        if (isNativeRecord) {
+          feedingMap.get(sid).native = { entry, record };
+        } else {
+          feedingMap.get(sid).debt.push({ entry, record });
+        }
+      }
     }
 
     const classReportMap = new Map();
@@ -2027,111 +2050,110 @@ const getFeedingFeeAuditReport = async (req, res) => {
     let totalPaid = 0;
     let totalUnpaid = 0;
 
-    for (const record of records) {
-      if (!record.breakdown || record.breakdown.length === 0) continue;
+    for (const student of students) {
+      if (student.isExemptFromFeedingFee === true) continue;
 
-      const classId = record.classId?._id || record.classId;
-      const className = record.classId?.displayName || record.classId?.name || 'Unknown Class';
+      const studentId = String(student._id);
+      const manual = feedingMap.get(studentId);
+      const attendance = attendanceLookup.get(studentId);
+      
+      const classObj = student.class;
+      if (!classObj) continue;
+      
+      const classIdStr = String(classObj._id);
+      const className = classObj.displayName || classObj.name || 'Unknown Class';
 
-      let classTotalAmount = 0;
-      let classPaidCount = 0;
-      let classUnpaidCount = 0;
-      const studentsDetails = [];
-
-      for (const entry of record.breakdown) {
-        if (entry?.student?.isExemptFromFeedingFee === true) continue;
-        
-        const isNativeRecord = record.week === weekNumber;
-        const amountPerDay = resolveEntryAmountPerDay(entry, record, feeConfig);
-        const resolvedAmount = amountPerDay > 0 ? amountPerDay : (Number(entry?.perDayFee?.['M']) || 0);
-
-        if (resolvedAmount <= 0) continue;
-
-        let amountPaidToday = 0;
-        const recoveredDays = [];
-        const FULL_DAY_NAMES = { "M": "Monday", "T": "Tuesday", "W": "Wednesday", "TH": "Thursday", "F": "Friday" };
-
+      let mergedDays = { M: "notmarked", T: "notmarked", W: "notmarked", TH: "notmarked", F: "notmarked" };
+      
+      // Step A: Seed attendance
+      if (attendance?.days) {
         for (const dayKey of WEEK_DAY_KEYS) {
-          const isPaidDay = entry.days?.[dayKey] === 'present';
-          if (!isPaidDay) continue;
-
-          const paidAt = entry.paidAt?.[dayKey];
-          const todayKey = dateToDayKey(new Date());
-
-          if (!paidAt) {
-            // Meal was at dayKey (e.g. Monday), but if teachers mark NOW, collection is today (e.g. Wednesday)
-            if (isNativeRecord && todayKey === day) {
-              amountPaidToday += resolvedAmount;
-            }
+          const val = attendance.days[dayKey];
+          if (val === "present" || val === "absent") {
+            mergedDays[dayKey] = normalizeDayValue(val);
+          }
+        }
+      }
+      
+      // Step B: Override with native manual
+      const nativeEntry = manual?.native?.entry;
+      
+      if (nativeEntry?.days) {
+        for (const dayKey of WEEK_DAY_KEYS) {
+          const manualVal = nativeEntry.days[dayKey];
+          const attendanceVal = attendance?.days?.[dayKey];
+          
+          if (manualVal === "absent" && attendanceVal !== "absent") {
+            mergedDays[dayKey] = normalizeDayValue(attendanceVal);
           } else {
-            const paidDate = new Date(paidAt);
-            if (paidDate >= weekBounds.windowStart && paidDate <= weekBounds.windowEnd) {
-              if (dateToDayKey(paidAt) === day) {
-                amountPaidToday += resolvedAmount;
-                if (!isNativeRecord) {
+            mergedDays[dayKey] = manualVal;
+          }
+        }
+      }
+
+      // Step C: Determine Native Payment for the requested day
+      const amountPerDay = getAmountPerDay(student, feeConfig);
+      const resolvedAmount = amountPerDay > 0 ? amountPerDay : (Number(nativeEntry?.perDayFee?.['M']) || 0);
+      
+      let amountPaidToday = 0;
+      let nativeStatus = 'notmarked';
+      
+      if (mergedDays[day] === "present") {
+        nativeStatus = "present";
+        
+        let paidDateObj = null;
+        if (nativeEntry?.paidAt?.[day]) {
+          paidDateObj = new Date(nativeEntry.paidAt[day]);
+        }
+        
+        if (paidDateObj) {
+           if (paidDateObj >= weekBounds.windowStart && paidDateObj <= weekBounds.windowEnd) {
+              if (dateToDayKey(paidDateObj) === day) {
+                 amountPaidToday += resolvedAmount;
+              }
+           }
+        } else {
+           // Attendance-derived or old record without timestamp.
+           // It maps exactly to the day column it represents.
+           amountPaidToday += resolvedAmount;
+        }
+      } else if (mergedDays[day] === "unpaid") {
+        nativeStatus = "unpaid";
+      } else if (mergedDays[day] === "absent") {
+        nativeStatus = "absent";
+      } else {
+        nativeStatus = "notmarked";
+      }
+
+      // Step D: Determine Debt Recoveries for the requested day
+      let debtAmountToday = 0;
+      const recoveredDays = [];
+      const FULL_DAY_NAMES = { "M": "Monday", "T": "Tuesday", "W": "Wednesday", "TH": "Thursday", "F": "Friday" };
+
+      if (manual?.debt) {
+        for (const { entry, record } of manual.debt) {
+          const dResolvedAmount = amountPerDay > 0 ? amountPerDay : (Number(entry?.perDayFee?.['M']) || 0);
+          if (dResolvedAmount <= 0) continue;
+          
+          for (const dayKey of WEEK_DAY_KEYS) {
+            if (entry.days?.[dayKey] === "present" && entry.paidAt?.[dayKey]) {
+              const paidDateObj = new Date(entry.paidAt[dayKey]);
+              if (paidDateObj >= weekBounds.windowStart && paidDateObj <= weekBounds.windowEnd) {
+                if (dateToDayKey(paidDateObj) === day) {
+                  debtAmountToday += dResolvedAmount;
                   recoveredDays.push(FULL_DAY_NAMES[dayKey]);
                 }
               }
             }
           }
         }
-
-        // Include native records ALWAYS. Include non-native ONLY if they contributed cash today.
-        if (!isNativeRecord && amountPaidToday === 0) continue;
-
-        const isPaid = amountPaidToday > 0;
-
-        if (isNativeRecord) {
-          if (isPaid) {
-            classPaidCount++; totalPaid++; classTotalAmount += amountPaidToday; grandTotal += amountPaidToday;
-          } else {
-            const nativeDayStatus = entry.days?.[day];
-            // Only count as unpaid when explicitly marked 'unpaid' — never count 'notmarked' days
-            if (nativeDayStatus === 'unpaid') {
-              classUnpaidCount++; totalUnpaid++;
-            }
-          }
-        } else {
-          // Debt recovery injection
-          classPaidCount++; totalPaid++; classTotalAmount += amountPaidToday; grandTotal += amountPaidToday;
-        }
-
-        const studentObj = entry.student || {};
-        let nativeStatus = 'notmarked';
-        if (isNativeRecord) {
-          const rawStatus = entry.days?.[day] || 'notmarked';
-
-          if (rawStatus === 'absent') {
-            // Cross-check with StudentAttendance — the authoritative absent source.
-            // FeedingFeeRecord can hold stale 'absent' values that were never cleared
-            // when attendance was corrected. Only treat as truly absent if attendance confirms it.
-            const studentIdStr = String(studentObj._id || entry.student);
-            const attDays = attendanceLookup.get(studentIdStr) || {};
-            nativeStatus = attDays[day] === 'absent' ? 'absent' : 'notmarked';
-          } else {
-            nativeStatus = rawStatus;
-          }
-        } else {
-          const joinedDays = recoveredDays.length > 0 ? `, ${recoveredDays.join(' & ')}` : '';
-          nativeStatus = `Debt Recovery (Week ${record.week}${joinedDays})`;
-        }
-
-        // Genuinely absent students (confirmed by StudentAttendance) with no payment
-        // belong in the Absentees view, not the payment audit.
-        if (isNativeRecord && nativeStatus === 'absent' && amountPaidToday === 0) continue;
-
-        studentsDetails.push({
-          studentId: studentObj._id || entry.student,
-          studentName: entry.studentName,
-          status: nativeStatus,
-          amount: amountPaidToday,
-          isRecoveredDebt: !isNativeRecord,
-          guardianName: studentObj.guardianName || '',
-          guardianPhone: studentObj.guardianPhone || ''
-        });
       }
 
-      const classIdStr = String(classId);
+      const totalStudentAmountToday = amountPaidToday + debtAmountToday;
+      
+      // If student is genuinely absent with no payment and no debt recovery, skip them entirely from the audit report
+      if (nativeStatus === 'absent' && totalStudentAmountToday === 0) continue;
+
       let classEntry = classReportMap.get(classIdStr);
       if (!classEntry) {
         classEntry = {
@@ -2145,10 +2167,30 @@ const getFeedingFeeAuditReport = async (req, res) => {
         classReportMap.set(classIdStr, classEntry);
       }
 
-      classEntry.totalAmount += classTotalAmount;
-      classEntry.paidCount += classPaidCount;
-      classEntry.unpaidCount += classUnpaidCount;
-      classEntry.students.push(...studentsDetails);
+      const finalStatus = debtAmountToday > 0 && amountPaidToday === 0
+        ? `Debt Recovery (${recoveredDays.join(' & ')})`
+        : nativeStatus;
+
+      classEntry.totalAmount += totalStudentAmountToday;
+      grandTotal += totalStudentAmountToday;
+
+      if (totalStudentAmountToday > 0) {
+         classEntry.paidCount++;
+         totalPaid++;
+      } else if (nativeStatus === 'unpaid') {
+         classEntry.unpaidCount++;
+         totalUnpaid++;
+      }
+
+      classEntry.students.push({
+        studentId,
+        studentName: getFullStudentName(student),
+        status: finalStatus,
+        amount: totalStudentAmountToday,
+        isRecoveredDebt: debtAmountToday > 0 && amountPaidToday === 0,
+        guardianName: student.guardianName || '',
+        guardianPhone: student.guardianPhone || ''
+      });
     }
 
     const auditReport = Array.from(classReportMap.values());
