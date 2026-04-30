@@ -1896,48 +1896,124 @@ const getDailyTotalSummary = async (req, res) => {
 
     const weekBounds = getTargetWeekBounds(termDoc, weekNumber);
 
-    // Find records for ALL classes in this school for this term (term-wide scanning)
-    const records = await FeedingFeeRecord.find({
-      school: schoolId,
-      termId
-    })
-      .populate({
-        path: 'breakdown.student',
-        select: 'name firstName lastName class user isExemptFromFeedingFee',
-        populate: {
-          path: 'class',
-          select: 'name displayName level'
+    // Fetch ALL records for the school/term to capture cross-week Debt Recoveries
+    // Fetch ALL active students to ensure no one is missing from the audit
+    const [records, attendanceRecords, students] = await Promise.all([
+      FeedingFeeRecord.find({ school: schoolId, termId })
+        .populate({
+          path: 'breakdown.student',
+          select: 'name firstName lastName class user isExemptFromFeedingFee',
+          populate: { path: 'class', select: 'name displayName level' }
+        })
+        .populate('classId', 'name displayName level')
+        .lean(),
+      StudentAttendance.find({ school: schoolId, termId, weekNumber }).lean(),
+      Student.find({ school: schoolId, status: { $ne: 'Withdrawn' } })
+        .populate('class', 'name displayName level')
+        .populate('user', 'name firstName lastName')
+        .lean()
+    ]);
+
+    // Build lookup for O(1)
+    const attendanceLookup = new Map();
+    for (const att of attendanceRecords) {
+      if (att.student) attendanceLookup.set(String(att.student), att);
+    }
+
+    const feedingMap = new Map();
+    for (const record of records) {
+      if (!record.breakdown || !Array.isArray(record.breakdown)) continue;
+      const isNativeRecord = record.week === weekNumber;
+      
+      for (const entry of record.breakdown) {
+        if (!entry.student) continue;
+        const sid = String(entry.student._id || entry.student);
+        
+        if (!feedingMap.has(sid)) {
+          feedingMap.set(sid, { native: null, debt: [] });
         }
-      })
-      .populate('classId', 'name displayName level')
-      .lean();
+        
+        if (isNativeRecord) {
+          feedingMap.get(sid).native = { entry, record };
+        } else {
+          feedingMap.get(sid).debt.push({ entry, record });
+        }
+      }
+    }
 
     const totals = { M: 0, T: 0, W: 0, TH: 0, F: 0 };
 
-    for (const record of records) {
-      if (!record.breakdown) continue;
-      for (const entry of record.breakdown) {
-        const isNativeRecord = record.week === weekNumber;
-        const amountPerDay = resolveEntryAmountPerDay(entry, record, feeConfig);
-        const resolvedAmount = amountPerDay > 0 ? amountPerDay : (Number(entry?.perDayFee?.['M']) || 0);
+    for (const student of students) {
+      if (student.isExemptFromFeedingFee === true) continue;
 
-        if (resolvedAmount <= 0) continue;
-
+      const studentId = String(student._id);
+      const manual = feedingMap.get(studentId);
+      const attendance = attendanceLookup.get(studentId);
+      
+      let mergedDays = { M: "notmarked", T: "notmarked", W: "notmarked", TH: "notmarked", F: "notmarked" };
+      
+      // Step A: Seed attendance
+      if (attendance?.days) {
         for (const dayKey of WEEK_DAY_KEYS) {
-          const isPaid = entry.days?.[dayKey] === 'present';
-          if (!isPaid) continue;
-
-          const paidAt = entry.paidAt?.[dayKey];
-          const todayKey = dateToDayKey(new Date());
-
-          if (!paidAt) {
-            if (isNativeRecord) {
-              totals[todayKey] += resolvedAmount;
-            }
+          const val = attendance.days[dayKey];
+          if (val === "present" || val === "absent") {
+            mergedDays[dayKey] = normalizeDayValue(val);
+          }
+        }
+      }
+      
+      // Step B: Override with native manual
+      const nativeEntry = manual?.native?.entry;
+      
+      if (nativeEntry?.days) {
+        for (const dayKey of WEEK_DAY_KEYS) {
+          const manualVal = nativeEntry.days[dayKey];
+          const attendanceVal = attendance?.days?.[dayKey];
+          
+          if (manualVal === "absent" && attendanceVal !== "absent") {
+            mergedDays[dayKey] = normalizeDayValue(attendanceVal);
           } else {
-            const paidDate = new Date(paidAt);
-            if (paidDate >= weekBounds.windowStart && paidDate <= weekBounds.windowEnd) {
-              totals[dateToDayKey(paidDate)] += resolvedAmount;
+            mergedDays[dayKey] = manualVal;
+          }
+        }
+      }
+
+      // Step C: Process Native Money and Daily Totals based on merged truth
+      const amountPerDay = getAmountPerDay(student, feeConfig);
+      const resolvedAmount = amountPerDay > 0 ? amountPerDay : (Number(nativeEntry?.perDayFee?.['M']) || 0);
+
+      if (resolvedAmount > 0) {
+        for (const dayKey of WEEK_DAY_KEYS) {
+          if (mergedDays[dayKey] === "present") {
+            let paidDateObj = null;
+            if (nativeEntry?.paidAt?.[dayKey]) {
+              paidDateObj = new Date(nativeEntry.paidAt[dayKey]);
+            }
+            
+            if (paidDateObj) {
+              if (paidDateObj >= weekBounds.windowStart && paidDateObj <= weekBounds.windowEnd) {
+                totals[dateToDayKey(paidDateObj)] += resolvedAmount;
+              }
+            } else {
+              // Fallback for attendance-derived marks OR old records without timestamps.
+              totals[dayKey] += resolvedAmount;
+            }
+          }
+        }
+      }
+
+      // Step D: Process Debt Money (strictly from physical manual records)
+      if (manual?.debt) {
+        for (const { entry, record } of manual.debt) {
+          const dResolvedAmount = amountPerDay > 0 ? amountPerDay : (Number(entry?.perDayFee?.['M']) || 0);
+          if (dResolvedAmount <= 0) continue;
+          
+          for (const dayKey of WEEK_DAY_KEYS) {
+            if (entry.days?.[dayKey] === "present" && entry.paidAt?.[dayKey]) {
+              const paidDateObj = new Date(entry.paidAt[dayKey]);
+              if (paidDateObj >= weekBounds.windowStart && paidDateObj <= weekBounds.windowEnd) {
+                totals[dateToDayKey(paidDateObj)] += dResolvedAmount;
+              }
             }
           }
         }
