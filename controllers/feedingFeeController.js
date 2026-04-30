@@ -2172,33 +2172,46 @@ const getFeedingFeeAuditReport = async (req, res) => {
       const resolvedAmount = amountPerDay > 0 ? amountPerDay : (Number(nativeEntry?.perDayFee?.['M']) || 0);
       
       let amountPaidToday = 0;
-      let nativeStatus = 'notmarked';
       
-      if (mergedDays[day] === "present") {
-        nativeStatus = "present";
-        
-        let paidDateObj = null;
-        if (nativeEntry?.paidAt?.[day]) {
-          paidDateObj = new Date(nativeEntry.paidAt[day]);
-        }
-        
-        if (paidDateObj) {
-           if (paidDateObj >= weekBounds.windowStart && paidDateObj <= weekBounds.windowEnd) {
-              if (dateToDayKey(paidDateObj) === day) {
+      if (resolvedAmount > 0) {
+        for (const dayKey of WEEK_DAY_KEYS) {
+          if (mergedDays[dayKey] === "present") {
+            let paidDateObj = null;
+            if (nativeEntry?.paidAt?.[dayKey]) {
+              paidDateObj = new Date(nativeEntry.paidAt[dayKey]);
+            }
+            
+            if (paidDateObj) {
+              if (paidDateObj >= weekBounds.windowStart && paidDateObj <= weekBounds.windowEnd) {
+                if (dateToDayKey(paidDateObj) === day) {
+                   amountPaidToday += resolvedAmount;
+                }
+              }
+            } else {
+              // Attendance-derived or old record without timestamp.
+              // Maps exactly to the day column it represents.
+              if (dayKey === day) {
                  amountPaidToday += resolvedAmount;
               }
-           }
-        } else {
-           // Attendance-derived or old record without timestamp.
-           // It maps exactly to the day column it represents.
-           amountPaidToday += resolvedAmount;
+            }
+          }
         }
+      }
+
+      // Determine Status specifically for the requested day
+      let nativeStatus = 'notmarked';
+      if (mergedDays[day] === "present") {
+        nativeStatus = "present";
       } else if (mergedDays[day] === "unpaid") {
         nativeStatus = "unpaid";
       } else if (mergedDays[day] === "absent") {
         nativeStatus = "absent";
-      } else {
-        nativeStatus = "notmarked";
+      }
+      
+      // If they made a native payment today (even for a different day's meal), 
+      // ensure they appear as PAID on the PDF.
+      if (amountPaidToday > 0) {
+        nativeStatus = "present";
       }
 
       // Step D: Determine Debt Recoveries for the requested day
