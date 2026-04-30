@@ -2214,9 +2214,44 @@ const getFeedingFeeAuditReport = async (req, res) => {
         nativeStatus = "present";
       }
 
-      // Step D: Determine Debt Recoveries for the requested day
-      let debtAmountToday = 0;
-      const recoveredDays = [];
+      // Push Native Row
+      if (nativeStatus !== 'absent' || amountPaidToday > 0) {
+        let classEntry = classReportMap.get(classIdStr);
+        if (!classEntry) {
+          classEntry = {
+            classId: classIdStr,
+            className,
+            totalAmount: 0,
+            paidCount: 0,
+            unpaidCount: 0,
+            students: []
+          };
+          classReportMap.set(classIdStr, classEntry);
+        }
+
+        classEntry.totalAmount += amountPaidToday;
+        grandTotal += amountPaidToday;
+
+        if (amountPaidToday > 0) {
+           classEntry.paidCount++;
+           totalPaid++;
+        } else if (nativeStatus === 'unpaid') {
+           classEntry.unpaidCount++;
+           totalUnpaid++;
+        }
+
+        classEntry.students.push({
+          studentId,
+          studentName: getFullStudentName(student),
+          status: nativeStatus,
+          amount: amountPaidToday,
+          isRecoveredDebt: false,
+          guardianName: student.guardianName || '',
+          guardianPhone: student.guardianPhone || ''
+        });
+      }
+
+      // Push Debt Rows
       const FULL_DAY_NAMES = { "M": "Monday", "T": "Tuesday", "W": "Wednesday", "TH": "Thursday", "F": "Friday" };
 
       if (manual?.debt) {
@@ -2224,62 +2259,55 @@ const getFeedingFeeAuditReport = async (req, res) => {
           const dResolvedAmount = amountPerDay > 0 ? amountPerDay : (Number(entry?.perDayFee?.['M']) || 0);
           if (dResolvedAmount <= 0) continue;
           
+          let recordDebtAmountToday = 0;
+          const recoveredDays = [];
+          
           for (const dayKey of WEEK_DAY_KEYS) {
             if (entry.days?.[dayKey] === "present" && entry.paidAt?.[dayKey]) {
               const paidDateObj = new Date(entry.paidAt[dayKey]);
               if (paidDateObj >= weekBounds.windowStart && paidDateObj <= weekBounds.windowEnd) {
                 if (dateToDayKey(paidDateObj) === day) {
-                  debtAmountToday += dResolvedAmount;
+                  recordDebtAmountToday += dResolvedAmount;
                   recoveredDays.push(FULL_DAY_NAMES[dayKey]);
                 }
               }
             }
           }
+
+          if (recordDebtAmountToday > 0) {
+             let classEntry = classReportMap.get(classIdStr);
+             if (!classEntry) {
+               classEntry = {
+                 classId: classIdStr,
+                 className,
+                 totalAmount: 0,
+                 paidCount: 0,
+                 unpaidCount: 0,
+                 students: []
+               };
+               classReportMap.set(classIdStr, classEntry);
+             }
+
+             const joinedDays = recoveredDays.length > 0 ? `, ${recoveredDays.join(' & ')}` : '';
+             const debtStatus = `Debt Recovery (Week ${record.week}${joinedDays})`;
+
+             classEntry.totalAmount += recordDebtAmountToday;
+             grandTotal += recordDebtAmountToday;
+             classEntry.paidCount++;
+             totalPaid++;
+
+             classEntry.students.push({
+               studentId,
+               studentName: getFullStudentName(student),
+               status: debtStatus,
+               amount: recordDebtAmountToday,
+               isRecoveredDebt: true,
+               guardianName: student.guardianName || '',
+               guardianPhone: student.guardianPhone || ''
+             });
+          }
         }
       }
-
-      const totalStudentAmountToday = amountPaidToday + debtAmountToday;
-      
-      // If student is genuinely absent with no payment and no debt recovery, skip them entirely from the audit report
-      if (nativeStatus === 'absent' && totalStudentAmountToday === 0) continue;
-
-      let classEntry = classReportMap.get(classIdStr);
-      if (!classEntry) {
-        classEntry = {
-          classId: classIdStr,
-          className,
-          totalAmount: 0,
-          paidCount: 0,
-          unpaidCount: 0,
-          students: []
-        };
-        classReportMap.set(classIdStr, classEntry);
-      }
-
-      const finalStatus = debtAmountToday > 0 && amountPaidToday === 0
-        ? `Debt Recovery (${recoveredDays.join(' & ')})`
-        : nativeStatus;
-
-      classEntry.totalAmount += totalStudentAmountToday;
-      grandTotal += totalStudentAmountToday;
-
-      if (totalStudentAmountToday > 0) {
-         classEntry.paidCount++;
-         totalPaid++;
-      } else if (nativeStatus === 'unpaid') {
-         classEntry.unpaidCount++;
-         totalUnpaid++;
-      }
-
-      classEntry.students.push({
-        studentId,
-        studentName: getFullStudentName(student),
-        status: finalStatus,
-        amount: totalStudentAmountToday,
-        isRecoveredDebt: debtAmountToday > 0 && amountPaidToday === 0,
-        guardianName: student.guardianName || '',
-        guardianPhone: student.guardianPhone || ''
-      });
     }
 
     const auditReport = Array.from(classReportMap.values());
