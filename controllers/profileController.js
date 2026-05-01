@@ -127,7 +127,7 @@ exports.getProfile = async (req, res) => {
     // Cache miss - fetch from database
     const user = await User.findById(userId)
       .select("name email profilePicture role school hasSeenWelcome")
-      .populate("school", "name schoolType")
+      .populate("school", "name schoolType lockedFeatures")
       .lean()
       .exec();
 
