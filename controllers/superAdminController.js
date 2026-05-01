@@ -172,6 +172,39 @@ exports.updateSchoolStatus = async (req, res) => {
     }
 };
 
+exports.updateSchoolFeatures = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { lockedFeatures } = req.body;
+
+        if (!Array.isArray(lockedFeatures)) {
+            return sendError(res, 400, "lockedFeatures must be an array");
+        }
+
+        const validFeatures = ["exams", "reports", "feeding_fee", "attendance", "transport", "billing"];
+        const sanitizedFeatures = lockedFeatures.filter(f => validFeatures.includes(f));
+
+        const school = await School.findByIdAndUpdate(
+            id,
+            { lockedFeatures: sanitizedFeatures },
+            { new: true }
+        );
+
+        if (!school) {
+            return sendError(res, 404, "School not found");
+        }
+
+        return res.json({
+            success: true,
+            message: `School features updated successfully`,
+            school
+        });
+    } catch (err) {
+        console.error("Error in updateSchoolFeatures:", err);
+        return sendError(res, 500, "Server error updating features");
+    }
+};
+
 exports.getSchoolTransactions = async (req, res) => {
     try {
         const { schoolId } = req.params;

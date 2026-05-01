@@ -10,7 +10,7 @@ exports.getSchoolInfo = async (req, res) => {
 
 
     const schoolInfo = await SchoolInfo.findOne({ school: schoolId })
-      .populate('school', 'name location') // ✅ include location here
+      .populate('school', 'name location lockedFeatures') // ✅ include location and lockedFeatures here
       .lean();
 
     if (!schoolInfo) return res.status(404).json({ message: 'School info not found' });
@@ -18,6 +18,7 @@ exports.getSchoolInfo = async (req, res) => {
     res.json({
       ...schoolInfo,
       schoolName: schoolInfo.school?.name || 'School Name',
+      lockedFeatures: schoolInfo.school?.lockedFeatures || [],
     });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });

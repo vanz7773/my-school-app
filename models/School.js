@@ -17,6 +17,11 @@ const schoolSchema = new mongoose.Schema(
       default: "Private",
     },
 
+    lockedFeatures: [{
+      type: String,
+      enum: ["exams", "reports", "feeding_fee", "attendance", "transport", "billing"],
+    }],
+
 
     // Geofence — optional
     location: {

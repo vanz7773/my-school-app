@@ -98,7 +98,7 @@ exports.login = async (req, res) => {
 
     const user = await User.findOne({ email: normalizedEmail })
       .select("+password")
-      .populate("school", "name location schoolType status")
+      .populate("school", "name location schoolType status lockedFeatures")
       .lean({ virtuals: true });
 
     if (!user) return sendError(res, 401, "Invalid email or password");
@@ -149,6 +149,7 @@ exports.login = async (req, res) => {
           name: user.school.name,
           schoolType: user.school.schoolType || "Private",
           location: user.school.location || null,
+          lockedFeatures: user.school.lockedFeatures || [],
         }
         : null,
       hasSeenWelcome: user.hasSeenWelcome || false,
