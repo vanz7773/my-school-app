@@ -282,7 +282,7 @@ exports.getAllTeachers = async (req, res) => {
       .populate("user", "name email gender")
       .populate("assignedClasses", "name")
       .populate("subjects", "name shortName")
-      .populate("school", "name schoolType");
+      .populate("school", "name schoolType lockedFeatures");
 
     const valid = teachers.filter(t => t.user != null);
 
@@ -316,7 +316,7 @@ exports.getTeacherById = async (req, res) => {
       .populate("user", "name email role gender")
       .populate("assignedClasses", "name")
       .populate("subjects", "name shortName")
-      .populate("school", "name schoolType");
+      .populate("school", "name schoolType lockedFeatures");
 
     if (!teacher) {
       return res.status(404).json({
@@ -639,7 +639,7 @@ exports.getMyProfile = async (req, res) => {
     const teacher = await Teacher.findOne({ user: userId, school: currentSchool })
       .populate("assignedClasses", "name")
       .populate("subjects", "name shortName")
-      .populate("school", "name schoolType")
+      .populate("school", "name schoolType lockedFeatures")
       .populate("user", "name email role gender");
 
     if (!teacher) {
@@ -671,7 +671,7 @@ exports.getTeacherByUser = async (req, res) => {
     const teacher = await Teacher.findOne({ user: req.params.userId })
       .populate("assignedClasses", "name")
       .populate("subjects", "name shortName")
-      .populate("school", "name schoolType")
+      .populate("school", "name schoolType lockedFeatures")
       .populate("user", "name email role gender");
 
     if (!teacher) {
