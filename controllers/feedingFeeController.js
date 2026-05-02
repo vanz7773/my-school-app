@@ -179,7 +179,7 @@ async function createFeedingFeeNotification(req, {
       school,
       message: `Feeding fee ${action} for ${studentName}`,
       type: "feedingfee",
-      audience: isRecovered ? "all" : "parent",
+      audience: isRecovered ? "specific" : "parent",
       studentId,
       recipientRoles: isRecovered ? ["admin", "parent", "student"] : ["parent"],
       recipientUsers: [] // Will be populated below with resolved user IDs
@@ -1119,8 +1119,8 @@ const setFeedingFeeConfig = async (req, res) => {
           school: schoolId,
           message: `Feeding fee configuration updated`,
           type: "fee",
-          audience: "teacher",
-          recipientRoles: ["teacher"],
+          audience: "admin",
+          recipientRoles: ["admin"],
         });
       } catch (notifErr) {
         console.error("⚠️ setFeedingFeeConfig notification failed:", notifErr);
