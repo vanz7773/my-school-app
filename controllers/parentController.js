@@ -102,7 +102,8 @@ exports.createParent = async (req, res) => {
         sender: req.user._id,
         recipientUsers: [parent._id],
         school: schoolId,
-        type: 'announcement'
+        type: 'announcement',
+        audience: 'specific'
       },
       {
         title: 'New Parent Created',
@@ -110,7 +111,8 @@ exports.createParent = async (req, res) => {
         sender: req.user._id,
         recipientUsers: adminIds,
         school: schoolId,
-        type: 'announcement'
+        type: 'announcement',
+        audience: 'specific'
       }
     ];
 

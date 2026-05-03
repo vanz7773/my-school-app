@@ -108,13 +108,15 @@ exports.createStudent = async (req, res) => {
           sender: req.user._id,
           recipientUsers: [user._id],
           message: `🎉 Welcome ${name}! Your student account has been created.`,
-          school: req.user.school
+          school: req.user.school,
+          audience: 'specific'
         }),
         Notification.create({
           sender: req.user._id,
           recipientUsers: adminIds,
           message: `📢 New student "${name}" has been enrolled.`,
-          school: req.user.school
+          school: req.user.school,
+          audience: 'specific'
         }),
       ]);
 
@@ -684,7 +686,8 @@ exports.bulkCreateStudents = async (req, res) => {
           sender: req.user._id,
           recipientUsers: [user._id],
           message: `🎉 Welcome ${name}! Your student account has been created.`,
-          school: req.user.school
+          school: req.user.school,
+          audience: 'specific'
         }).catch(err => console.warn('Individual student notification failed', err.message));
 
       } catch (err) {
@@ -705,7 +708,8 @@ exports.bulkCreateStudents = async (req, res) => {
           sender: req.user._id,
           recipientUsers: adminIds,
           message: `📢 Bulk Enrollment Complete: ${results.success.length} students added.`,
-          school: req.user.school
+          school: req.user.school,
+          audience: 'specific'
         });
 
         if (enrollmentController.clearEnrollmentCache) {

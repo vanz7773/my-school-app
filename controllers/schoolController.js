@@ -108,12 +108,14 @@ exports.createStudent = async (req, res) => {
           recipientUsers: [user._id],
           message: `🎉 Welcome ${name}! Your student account has been created.`,
           school: req.user.school,
+          audience: 'specific'
         }),
         Notification.create({
           sender: req.user._id,
           recipientUsers: adminIds,
           message: `📢 New student "${name}" has been enrolled.`,
           school: req.user.school,
+          audience: 'specific'
         }),
       ]);
     } catch (notifyErr) {

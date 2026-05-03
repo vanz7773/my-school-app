@@ -133,7 +133,8 @@ exports.createTeacher = async (req, res) => {
         sender: req.user._id,
         recipientUsers: [user._id],
         message: `🎉 Welcome ${name}! Your teacher account has been created.`,
-        school: currentSchool
+        school: currentSchool,
+        audience: 'specific'
       });
 
       const admins = await User.find({ role: "admin", school: currentSchool });
@@ -143,6 +144,7 @@ exports.createTeacher = async (req, res) => {
           recipientUsers: admins.map(a => a._id),
           message: `📢 New teacher "${name}" has been added.`,
           school: currentSchool,
+          audience: 'specific'
         });
       }
     } catch (err) {
@@ -248,6 +250,7 @@ exports.bulkCreateTeachers = async (req, res) => {
             recipientUsers: admins.map(a => a._id),
             message: `📢 ${successCount} new teachers were added via bulk upload.`,
             school: currentSchool,
+            audience: 'specific'
           });
         }
       } catch (err) {
