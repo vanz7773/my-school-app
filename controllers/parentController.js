@@ -91,33 +91,7 @@ exports.createParent = async (req, res) => {
       }
     }
 
-    // Create welcome notification for parent + notify admins (in parallel)
-    const adminDocs = await User.find({ role: 'admin', school: schoolId }).select('_id').lean();
-    const adminIds = adminDocs.map(a => a._id);
-
-    const notifications = [
-      {
-        title: 'Welcome to the School Portal',
-        message: `👋 Welcome ${name}! Your parent account has been created.`,
-        sender: req.user._id,
-        recipientUsers: [parent._id],
-        school: schoolId,
-        type: 'announcement',
-        audience: 'specific'
-      },
-      {
-        title: 'New Parent Created',
-        message: `📢 Parent "${name}" was added by ${req.user.name || 'an admin'}.`,
-        sender: req.user._id,
-        recipientUsers: adminIds,
-        school: schoolId,
-        type: 'announcement',
-        audience: 'specific'
-      }
-    ];
-
-    // Insert notifications (no need to be transactional)
-    await Notification.insertMany(notifications, { session });
+    // Note: Welcome notifications for parents and admins have been removed per request.
 
     await session.commitTransaction();
     session.endSession();
