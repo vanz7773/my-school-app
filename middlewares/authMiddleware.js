@@ -10,6 +10,11 @@ const getTokenFromRequest = (req) => {
     return req.headers.authorization.split(' ')[1];
   }
 
+  // Support token from query params (useful for <img src="..." /> tags)
+  if (req.query && req.query.token) {
+    return req.query.token;
+  }
+
   // Optionally support token from cookies
   if (req.cookies && req.cookies.token) {
     return req.cookies.token;
