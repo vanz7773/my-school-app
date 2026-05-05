@@ -22,6 +22,8 @@ const schoolSchema = new mongoose.Schema(
       enum: ["exams", "reports", "feeding_fee", "attendance", "transport", "billing"],
     }],
 
+    lastAdminLogin: { type: Date, default: null },
+
 
     // Geofence — optional
     location: {

@@ -138,6 +138,15 @@ exports.login = async (req, res) => {
 
     const token = generateToken(user);
 
+    // Track admin dashboard visit
+    if (user.role === 'admin' && user.school) {
+      try {
+        await School.findByIdAndUpdate(user.school._id, { lastAdminLogin: new Date() });
+      } catch (err) {
+        console.error("Failed to update lastAdminLogin:", err);
+      }
+    }
+
     const userResponse = {
       id: user._id,
       name: user.name,
