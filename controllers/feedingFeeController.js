@@ -499,6 +499,7 @@ const processFeedingJob = async (jobData) => {
   if (!studentDoc) return { success: false, status: 404, message: "Student not found" };
 
   const amountPerDay = getAmountPerDay(studentDoc, feeConfig);
+  const hasCustomFee = studentDoc.customFeedingFee > 0;
   const category = getStudentCategory(studentDoc);
   const normalizedValue = normalizeDayValue(fed);
   const studentObjId = toObjectId(student);
@@ -581,6 +582,7 @@ const processFeedingJob = async (jobData) => {
           "breakdown.$.amount": amount,
           "breakdown.$.total": amount,
           "breakdown.$.classFeeAmount": amountPerDay,
+          "breakdown.$.customFeeAmount": hasCustomFee ? amountPerDay : null,
           "breakdown.$.currency": feeConfig.currency || "GHS",
           "breakdown.$.lastUpdatedAt": new Date(),
           ...(isRecoveredDebt && { "breakdown.$.isRecoveredDebt": true }),
@@ -630,6 +632,7 @@ const processFeedingJob = async (jobData) => {
       studentName: getFullStudentName(studentDoc),
       className: studentDoc.class?.name || "Unknown Class",
       classFeeAmount: amountPerDay,
+      customFeeAmount: hasCustomFee ? amountPerDay : null,
       amount,
       total: amount,
       daysPaid,
@@ -1499,7 +1502,7 @@ const getFeedingFeeSummary = async (req, res) => {
       FeedingFeeRecord.find({
         classId: toObjectId(classId),
         ...(termId && { termId: toObjectId(termId) }) // TERM-WIDE SCAN FOR PHYSICAL CASH
-      }).populate('breakdown.student', 'isExemptFromFeedingFee') || []
+      }).populate('breakdown.student', 'isExemptFromFeedingFee customFeedingFee') || []
     ]);
 
     // Map mathematical cash drawer flow
@@ -1807,7 +1810,7 @@ const getDebtorsForWeek = async (req, res) => {
     // Fetch all FeedingFeeRecords AND all StudentAttendance records for the term in parallel
     const [records, attendanceRecords] = await Promise.all([
       FeedingFeeRecord.find({ school: schoolId, termId })
-        .populate('breakdown.student', 'guardianName guardianPhone isExemptFromFeedingFee')
+        .populate('breakdown.student', 'guardianName guardianPhone isExemptFromFeedingFee customFeedingFee')
         .lean(),
       StudentAttendance.find({ school: schoolId, termId }).lean()
     ]);
@@ -1903,7 +1906,7 @@ const getDailyTotalSummary = async (req, res) => {
       FeedingFeeRecord.find({ school: schoolId, termId })
         .populate({
           path: 'breakdown.student',
-          select: 'name firstName lastName class user isExemptFromFeedingFee',
+          select: 'name firstName lastName class user isExemptFromFeedingFee customFeedingFee',
           populate: { path: 'class', select: 'name displayName level' }
         })
         .populate('classId', 'name displayName level')
@@ -2083,7 +2086,7 @@ const getFeedingFeeAuditReport = async (req, res) => {
       FeedingFeeRecord.find({ school: schoolId, termId })
         .populate({
           path: 'breakdown.student',
-          select: 'guardianName guardianPhone name firstName lastName class user isExemptFromFeedingFee',
+          select: 'guardianName guardianPhone name firstName lastName class user isExemptFromFeedingFee customFeedingFee',
           populate: { path: 'class', select: 'name displayName level' }
         })
         .populate('classId', 'name displayName level')
