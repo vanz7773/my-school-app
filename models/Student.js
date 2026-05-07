@@ -88,6 +88,11 @@ const studentSchema = new mongoose.Schema({
     default: false
   },
 
+  customFeedingFee: {
+    type: Number,
+    default: null
+  },
+
   isExemptFromTermFees: {
     type: Boolean,
     default: false

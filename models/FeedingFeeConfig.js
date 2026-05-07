@@ -41,6 +41,11 @@ function getFeeBandsFromConfig(rawConfig = {}) {
 function getAmountPerDay(student, feeConfig) {
   if (!student || !feeConfig) return 0;
 
+  // 0️⃣ Custom per-student fee overrides class fee
+  if (student.customFeedingFee !== null && student.customFeedingFee !== undefined && student.customFeedingFee > 0) {
+    return Number(student.customFeedingFee);
+  }
+
   const className = normalizeClassName(student?.class?.name ?? student?.className ?? '');
   const classId = student?.class?._id ? String(student.class._id) : null;
 

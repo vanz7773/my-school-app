@@ -927,6 +927,7 @@ const calculateFeedingFeeCollection = async (req, res) => {
         days: ensureDefaultDays(mergedDays),
         isRecoveredDebt: manual?.isRecoveredDebt || false,
         isExemptFromFeedingFee: student.isExemptFromFeedingFee || false,
+        hasCustomFee: (student.customFeedingFee !== null && student.customFeedingFee !== undefined && student.customFeedingFee > 0),
       });
     }
 

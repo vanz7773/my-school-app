@@ -27,7 +27,8 @@ exports.createStudent = async (req, res) => {
       fatherOccupation,
       motherName,
       motherOccupation,
-      admissionNumber: manualAdmissionNumber
+      admissionNumber: manualAdmissionNumber,
+      customFeedingFee
     } = req.body;
 
     console.log('📥 Creating student with data:', req.body);
@@ -86,7 +87,8 @@ exports.createStudent = async (req, res) => {
       fatherOccupation,
       motherName,
       motherOccupation,
-      school: req.user.school
+      school: req.user.school,
+      customFeedingFee: customFeedingFee !== undefined ? customFeedingFee : null
     };
 
     if (classId) {
@@ -251,7 +253,8 @@ exports.updateStudent = async (req, res) => {
     dateOfLeaving,
     causeForLeaving,
     remarks,
-    admissionNumber
+    admissionNumber,
+    customFeedingFee
   } = req.body;
 
   try {
@@ -280,6 +283,7 @@ exports.updateStudent = async (req, res) => {
     if (dateOfLeaving !== undefined) student.dateOfLeaving = dateOfLeaving;
     if (causeForLeaving !== undefined) student.causeForLeaving = causeForLeaving;
     if (remarks !== undefined) student.remarks = remarks;
+    if (customFeedingFee !== undefined) student.customFeedingFee = customFeedingFee;
 
     if (admissionNumber !== undefined) {
       const trimmedNo = String(admissionNumber).trim();
@@ -534,7 +538,8 @@ exports.bulkCreateStudents = async (req, res) => {
       const { 
         name, email, password, gender, dob, classId, className, academicYear, 
         guardianPhone, guardianPhone2, guardianOccupation, religion, hometown, 
-        languageSpoken, fatherName, fatherOccupation, motherName, motherOccupation 
+        languageSpoken, fatherName, fatherOccupation, motherName, motherOccupation,
+        customFeedingFee
       } = data;
 
       let createdUserId = null;
@@ -656,7 +661,8 @@ exports.bulkCreateStudents = async (req, res) => {
           fatherOccupation,
           motherName,
           motherOccupation,
-          school: req.user.school
+          school: req.user.school,
+          customFeedingFee: customFeedingFee !== undefined ? customFeedingFee : null
         };
 
         if (classId) {
