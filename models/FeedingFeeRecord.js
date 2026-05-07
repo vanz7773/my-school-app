@@ -61,7 +61,6 @@ const feedingFeeRecordSchema = new mongoose.Schema(
         studentName: String, // Added for display purposes
         className: String,   // Added for display purposes
         classFeeAmount: Number, // The fee per day for this student's class
-        customFeeAmount: Number, // Overridden fee per day for this specific student
 
         // Enhanced days tracking with fee calculation
         days: {
@@ -182,7 +181,7 @@ feedingFeeRecordSchema.pre('save', function (next) {
     // Calculate fees for each day based on attendance
     for (const day of ['M', 'T', 'W', 'TH', 'F']) {
       if (entry.days && entry.days[day] === 'present') {
-        const dayFee = entry.customFeeAmount || entry.classFeeAmount || this.classFeeAmount || 0;
+        const dayFee = entry.classFeeAmount || this.classFeeAmount || 0;
         perDayFee[day] = dayFee;
         entryTotal += dayFee;
         daysPaid++;
@@ -232,7 +231,7 @@ feedingFeeRecordSchema.pre('findOneAndUpdate', function (next) {
       let entryTotal = 0;
       for (const day of ['M', 'T', 'W', 'TH', 'F']) {
         if (entry.days && entry.days[day] === 'present') {
-          const dayFee = entry.customFeeAmount || entry.classFeeAmount || 0;
+          const dayFee = entry.classFeeAmount || 0;
           entryTotal += dayFee;
         }
       }
