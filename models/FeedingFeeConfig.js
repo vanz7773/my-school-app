@@ -39,7 +39,14 @@ function getFeeBandsFromConfig(rawConfig = {}) {
 }
 
 function getAmountPerDay(student, feeConfig) {
-  if (!student || !feeConfig) return 0;
+  if (!student) return 0;
+  if (student.isExemptFromFeedingFee) return 0;
+
+  if (student.customFeedingFeeAmount !== null && student.customFeedingFeeAmount !== undefined) {
+    return Number(student.customFeedingFeeAmount) || 0;
+  }
+
+  if (!feeConfig) return 0;
 
   const className = normalizeClassName(student?.class?.name ?? student?.className ?? '');
   const classId = student?.class?._id ? String(student.class._id) : null;

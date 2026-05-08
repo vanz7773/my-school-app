@@ -13,7 +13,8 @@ const {
   getAbsenteesForWeek,
   getDebtorsForWeek,
   getDailyTotalSummary,
-  getFeedingFeeAuditReport
+  getFeedingFeeAuditReport,
+  setStudentCustomFeedingFee
 } = require('../controllers/feedingFeeController');
 const { protect, requirePrivateSchool } = require('../middlewares/authMiddleware');
 
@@ -40,6 +41,7 @@ router.get('/audit-report', protect, requirePrivateSchool, getFeedingFeeAuditRep
 // ----------------- Manual Marking Routes -----------------
 router.post("/mark", protect, requirePrivateSchool, markFeeding);
 router.post("/mark-bulk", protect, requirePrivateSchool, markFeedingBulk);
+router.post("/student/:studentId/custom-fee", protect, requirePrivateSchool, setStudentCustomFeedingFee);
 router.post("/exempt/:studentId", protect, requirePrivateSchool, require('../controllers/feedingFeeController').toggleFeedingFeeExemption);
 
 module.exports = router;

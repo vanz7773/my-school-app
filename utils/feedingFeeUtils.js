@@ -7,8 +7,14 @@ const normalizeClassName = (s) => (s || '').toString().toLowerCase().trim();
  * Handles both Map (live Mongoose doc) and plain Object (lean query) forms of classFeeBands.
  */
 function getAmountPerDay(student, feeConfig) {
-  if (!student || !feeConfig) return 0;
+  if (!student) return 0;
   if (student.isExemptFromFeedingFee) return 0;
+
+  if (student.customFeedingFeeAmount !== null && student.customFeedingFeeAmount !== undefined) {
+    return Number(student.customFeedingFeeAmount) || 0;
+  }
+
+  if (!feeConfig) return 0;
 
   const classId = student.class?._id ? String(student.class._id) : String(student.class || '');
   const className = normalizeClassName(student?.class?.name ?? student?.className ?? '');

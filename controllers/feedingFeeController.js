@@ -287,6 +287,10 @@ const getFullStudentName = (student) => {
   );
 };
 
+const hasCustomFeedingFee = (student) =>
+  student?.customFeedingFeeAmount !== null &&
+  student?.customFeedingFeeAmount !== undefined;
+
 // 🧩 Helper to determine student feeding category based on class name or level
 function getStudentCategory(student) {
   if (!student || !student.class || !student.class.name) return 'creche-kg2';
@@ -428,7 +432,13 @@ try {
 } catch {
   // Fallback to basic implementation
   getAmountPerDay = (student, config) => {
+    if (!student) return 0;
+    if (student?.isExemptFromFeedingFee) return 0;
+    if (hasCustomFeedingFee(student)) {
+      return Number(student.customFeedingFeeAmount) || 0;
+    }
     if (!config) return 0;
+
     const className = (student?.class?.name || '').toLowerCase().trim();
     if (!className) return 0;
 
@@ -927,6 +937,8 @@ const calculateFeedingFeeCollection = async (req, res) => {
         days: ensureDefaultDays(mergedDays),
         isRecoveredDebt: manual?.isRecoveredDebt || false,
         isExemptFromFeedingFee: student.isExemptFromFeedingFee || false,
+        customFeedingFeeAmount: hasCustomFeedingFee(student) ? Number(student.customFeedingFeeAmount) : null,
+        hasCustomFeedingFee: hasCustomFeedingFee(student),
       });
     }
 
@@ -1414,6 +1426,8 @@ const getFeedingFeeForStudent = async (req, res) => {
         records,
         notification: notifMap[String(student._id)] || null,
         isExemptFromFeedingFee: student.isExemptFromFeedingFee || false,
+        customFeedingFeeAmount: hasCustomFeedingFee(student) ? Number(student.customFeedingFeeAmount) : null,
+        hasCustomFeedingFee: hasCustomFeedingFee(student),
       });
     }
 
@@ -1653,7 +1667,9 @@ const getFeedingFeeSummary = async (req, res) => {
         amountPerDay,
         total: studentTotal,
         isRecoveredDebt: debtAmountCaptured > 0,
-        isExemptFromFeedingFee: isExempt
+        isExemptFromFeedingFee: isExempt,
+        customFeedingFeeAmount: hasCustomFeedingFee(student) ? Number(student.customFeedingFeeAmount) : null,
+        hasCustomFeedingFee: hasCustomFeedingFee(student)
       });
     }
 
@@ -2345,6 +2361,71 @@ const getFeedingFeeAuditReport = async (req, res) => {
 };
 
 // --------------------------------------------------------------------
+// 💵 Set or clear a student-specific feeding fee
+// --------------------------------------------------------------------
+const setStudentCustomFeedingFee = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const { amount } = req.body;
+    const schoolId = req.user.school;
+
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Only admins can update custom feeding fees' });
+    }
+
+    const student = await Student.findOne({ _id: studentId, school: schoolId })
+      .populate({ path: 'class', select: 'name level' })
+      .populate({ path: 'user', select: 'name' });
+
+    if (!student) {
+      return res.status(404).json({ success: false, message: 'Student not found' });
+    }
+
+    const shouldClear = amount === null || amount === undefined || amount === '';
+
+    if (shouldClear) {
+      student.customFeedingFeeAmount = null;
+    } else {
+      const numericAmount = Number(amount);
+      if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Custom feeding fee must be a positive number. Clear the field to use the class fee.',
+        });
+      }
+      student.customFeedingFeeAmount = numericAmount;
+    }
+
+    await student.save();
+
+    for (const key of studentCache.keys()) {
+      if (key.includes(`student_${studentId}_${schoolId}`)) {
+        studentCache.delete(key);
+      }
+    }
+
+    const feeConfig = await getFeeConfigWithCache(schoolId);
+    if (feeConfig) {
+      setImmediate(() => reconcileAmountsAfterConfigChange(schoolId, feeConfig));
+    }
+
+    const amountPerDay = getAmountPerDay(student, feeConfig);
+
+    return res.json({
+      success: true,
+      message: shouldClear ? 'Custom feeding fee cleared' : 'Custom feeding fee updated',
+      studentId,
+      customFeedingFeeAmount: hasCustomFeedingFee(student) ? Number(student.customFeedingFeeAmount) : null,
+      hasCustomFeedingFee: hasCustomFeedingFee(student),
+      amountPerDay,
+    });
+  } catch (error) {
+    console.error("Error setting custom feeding fee:", error);
+    return res.status(500).json({ success: false, message: "Failed to update custom feeding fee", error: error.message });
+  }
+};
+
+// --------------------------------------------------------------------
 // 🚫 Toggle Student Feeding Fee Exemption
 // --------------------------------------------------------------------
 const toggleFeedingFeeExemption = async (req, res) => {
@@ -2400,5 +2481,6 @@ module.exports = {
   getDebtorsForWeek,
   getDailyTotalSummary,
   getFeedingFeeAuditReport,
+  setStudentCustomFeedingFee,
   toggleFeedingFeeExemption
 };
