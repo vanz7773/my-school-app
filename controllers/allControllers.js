@@ -5,6 +5,23 @@ const PDFDocument = require('pdfkit');
 const User = require('../models/User');
 const Student = require('../models/Student');
 
+const FIXED_BILLING_MODE = 'fixed';
+const DAILY_VARIABLE_BILLING_MODE = 'daily-variable';
+const DEFAULT_DAILY_FEE_LABEL = 'Daily School Fees';
+
+const normalizeBillingMode = (mode) =>
+  mode === DAILY_VARIABLE_BILLING_MODE ? DAILY_VARIABLE_BILLING_MODE : FIXED_BILLING_MODE;
+
+const isDailyVariableMode = (mode) => normalizeBillingMode(mode) === DAILY_VARIABLE_BILLING_MODE;
+
+const buildDailyVariableItems = (label = DEFAULT_DAILY_FEE_LABEL, amount = 0) => ([{
+  name: label || DEFAULT_DAILY_FEE_LABEL,
+  amount: Number(amount) || 0,
+  paid: Number(amount) || 0,
+  balance: 0,
+  isVariable: true,
+}]);
+
 // 🟦 STEP 1 — ADD HELPER FUNCTION
 const resolveClassNames = (classDoc) => {
   if (!classDoc) {
@@ -67,6 +84,11 @@ const transformBill = (bill) => {
 
     totalAmount: transformNumber(bill.totalAmount),
     totalPaid: transformNumber(bill.totalPaid),
+    balance: isDailyVariableMode(bill.billingMode)
+      ? 0
+      : transformNumber(bill.balance) || Math.max(0, transformNumber(bill.totalAmount) - transformNumber(bill.totalPaid)),
+    billingMode: normalizeBillingMode(bill.billingMode),
+    dailyFeeLabel: bill.dailyFeeLabel || DEFAULT_DAILY_FEE_LABEL,
 
     student: {
       ...(typeof bill.student === "object"
@@ -175,7 +197,7 @@ module.exports = {
             select: 'name stream displayName',
             options: { lean: true }
           })
-          .select('_id user class admissionNumber');
+          .select('_id user class admissionNumber termFeeBillingMode');
       } else if (classId) {
         students = await Student.find({
           class: classId,
@@ -191,7 +213,7 @@ module.exports = {
             select: 'name stream displayName',
             options: { lean: true }
           })
-          .select('_id user class admissionNumber');
+          .select('_id user class admissionNumber termFeeBillingMode');
       }
 
       if (students.length === 0) {
@@ -211,18 +233,25 @@ module.exports = {
       // 🟦 STEP 3 — UPDATED previewBills
       const previewData = students.map(student => {
         const { className, classDisplayName } = resolveClassNames(student.class);
+        const billingMode = normalizeBillingMode(student.termFeeBillingMode);
+        const isDailyVariable = isDailyVariableMode(billingMode);
+        const items = isDailyVariable
+          ? buildDailyVariableItems()
+          : template.items.map(item => ({
+            name: item.name,
+            amount: item.amount,
+            isMandatory: item.isMandatory
+          }));
 
         return {
           studentId: student._id,
           studentName: student.user?.name || student.admissionNumber || 'Unknown',
           className,
           classDisplayName,
-          items: template.items.map(item => ({
-            name: item.name,
-            amount: item.amount,
-            isMandatory: item.isMandatory
-          })),
-          totalAmount: template.items.reduce((sum, item) => sum + item.amount, 0),
+          billingMode,
+          isDailyVariable,
+          items,
+          totalAmount: isDailyVariable ? 0 : template.items.reduce((sum, item) => sum + item.amount, 0),
           currency: template.currency
         };
       });
@@ -284,7 +313,7 @@ module.exports = {
       studentsList = await Student.find(query)
         .populate({ path: 'user', select: 'name' })
         .populate({ path: 'class', select: 'name stream displayName' })
-        .select('_id user class admissionNumber isExemptFromTermFees')
+        .select('_id user class admissionNumber isExemptFromTermFees termFeeBillingMode')
         .session(session);
 
       if (!studentsList.length) {
@@ -340,11 +369,56 @@ module.exports = {
           if (student.isExemptFromTermFees === true) continue;
 
           const studentId = student._id.toString();
+          const billingMode = normalizeBillingMode(student.termFeeBillingMode);
+          const isDailyVariable = isDailyVariableMode(billingMode);
           const manualBill = manualBillsMap.get(studentId);
           const existingBill = existingBillsMap.get(studentId);
           let billToReturn;
 
-          if (manualBill) {
+          if (isDailyVariable) {
+            const existingTotal = isDailyVariableMode(existingBill?.billingMode)
+              ? Number(existingBill?.totalPaid ?? existingBill?.totalAmount) || 0
+              : Number(existingBill?.totalPaid) || 0;
+            const dailyItems = buildDailyVariableItems(DEFAULT_DAILY_FEE_LABEL, existingTotal);
+
+            if (existingBill) {
+              billToReturn = await TermBill.findByIdAndUpdate(
+                existingBill._id,
+                {
+                  billingMode,
+                  dailyFeeLabel: DEFAULT_DAILY_FEE_LABEL,
+                  items: dailyItems,
+                  totalAmount: existingTotal,
+                  totalPaid: existingTotal,
+                  balance: 0,
+                  status: existingTotal > 0 ? 'Paid' : 'Pending',
+                  template: templateId,
+                  class: student.class || null,
+                  term,
+                  academicYear
+                },
+                { new: true, session }
+              );
+            } else {
+              billToReturn = await TermBill.create([{
+                school: req.user.school,
+                student: student._id,
+                class: student.class || null,
+                template: templateId,
+                term,
+                academicYear,
+                billingMode,
+                dailyFeeLabel: DEFAULT_DAILY_FEE_LABEL,
+                items: buildDailyVariableItems(),
+                totalAmount: 0,
+                totalPaid: 0,
+                balance: 0,
+                status: 'Pending',
+                isManualUpdate: false
+              }], { session });
+              billToReturn = billToReturn[0];
+            }
+          } else if (manualBill) {
             if (!Array.isArray(manualBill.items)) {
               errors.push(`Invalid items for student ${studentId}`);
               continue;
@@ -358,6 +432,8 @@ module.exports = {
                   totalPaid: manualBill.totalPaid,
                   status: manualBill.status,
                   isManualUpdate: true,
+                  billingMode,
+                  balance: Math.max(0, (Number(manualBill.totalAmount) || 0) - (Number(manualBill.totalPaid) || 0)),
                   template: templateId,
                   class: student.class || null, // ✅ ensure class is stored
                   term,
@@ -376,7 +452,9 @@ module.exports = {
                 items: manualBill.items,
                 totalAmount: manualBill.totalAmount,
                 totalPaid: manualBill.totalPaid,
+                balance: Math.max(0, (Number(manualBill.totalAmount) || 0) - (Number(manualBill.totalPaid) || 0)),
                 status: manualBill.status,
+                billingMode,
                 isManualUpdate: true
               }], { session });
               billToReturn = billToReturn[0];
@@ -400,7 +478,9 @@ module.exports = {
               })),
               totalAmount: total,
               totalPaid: 0,
+              balance: total,
               status: 'Unpaid',
+              billingMode,
               isManualUpdate: false
             }], { session });
             billToReturn = billToReturn[0];
@@ -834,11 +914,15 @@ module.exports = {
           const totalAmount = transformedBill.totalAmount;
           const payments = transformedBill.payments || [];
           const paidAmount = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-          const balance = totalAmount - paidAmount;
+          const billingMode = normalizeBillingMode(transformedBill.billingMode || student.termFeeBillingMode);
+          const isDailyVariable = isDailyVariableMode(billingMode);
+          const effectivePaidAmount = isDailyVariable ? transformedBill.totalPaid : paidAmount;
+          const balance = isDailyVariable ? 0 : totalAmount - effectivePaidAmount;
 
           let paymentStatus;
-          if (balance <= 0) paymentStatus = 'Paid';
-          else if (paidAmount > 0) paymentStatus = 'Partial';
+          if (isDailyVariable) paymentStatus = 'Daily Payer';
+          else if (balance <= 0) paymentStatus = 'Paid';
+          else if (effectivePaidAmount > 0) paymentStatus = 'Partial';
           else paymentStatus = 'Unpaid';
 
           const { className, classDisplayName } = resolveClassNames(student.class);
@@ -850,15 +934,20 @@ module.exports = {
             classDisplayName,
             studentId: student._id,
             totalAmount,
-            paidAmount,
+            totalPaid: effectivePaidAmount,
+            paidAmount: effectivePaidAmount,
             balance,
             formattedTotal: formatCurrency(totalAmount),
-            formattedPaid: formatCurrency(paidAmount),
+            formattedPaid: formatCurrency(effectivePaidAmount),
             formattedBalance: formatCurrency(balance),
             paymentStatus,
             lastPayment: payments.length > 0 ? payments[payments.length - 1] : null,
             isPlaceholder: false,
-            isExemptFromTermFees: student.isExemptFromTermFees || false
+            isExemptFromTermFees: student.isExemptFromTermFees || false,
+            termFeeBillingMode: normalizeBillingMode(student.termFeeBillingMode),
+            billingMode,
+            dailyFeeLabel: transformedBill.dailyFeeLabel || DEFAULT_DAILY_FEE_LABEL,
+            isDailyVariable
           };
         } else {
           // No bill exists for this student yet
@@ -890,7 +979,11 @@ module.exports = {
             isPlaceholder: true,
             term: cleanTerm,
             academicYear: cleanAcademicYear,
-            isExemptFromTermFees: student.isExemptFromTermFees || false
+            isExemptFromTermFees: student.isExemptFromTermFees || false,
+            termFeeBillingMode: normalizeBillingMode(student.termFeeBillingMode),
+            billingMode: normalizeBillingMode(student.termFeeBillingMode),
+            dailyFeeLabel: DEFAULT_DAILY_FEE_LABEL,
+            isDailyVariable: isDailyVariableMode(student.termFeeBillingMode)
           };
         }
       });
@@ -993,7 +1086,7 @@ module.exports = {
     try {
       await session.startTransaction();
 
-      const { billId, amount, method, term, academicYear, studentId, itemsToPay } = req.body;
+      const { billId, amount, method, term, academicYear, studentId, itemsToPay, note } = req.body;
 
       if (!billId || !amount || amount <= 0 || !method || !term || !academicYear || !studentId) {
         throw new Error(
@@ -1012,8 +1105,10 @@ module.exports = {
 
       if (!bill) throw new Error('Bill not found');
 
+      const billingMode = normalizeBillingMode(bill.billingMode);
+      const isDailyVariable = isDailyVariableMode(billingMode);
       const remainingBalance = bill.totalAmount - bill.totalPaid;
-      if (amount > remainingBalance) {
+      if (!isDailyVariable && amount > remainingBalance) {
         throw new Error('Payment amount exceeds remaining balance');
       }
 
@@ -1023,6 +1118,8 @@ module.exports = {
           bill: billId,
           amount,
           method,
+          billingMode,
+          note: note || '',
           term,
           academicYear,
           student: studentId,
@@ -1032,44 +1129,63 @@ module.exports = {
         { session }
       );
 
-      // 💰 Apply payment to items
-      let amountLeft = amount;
-      const updatedItems = bill.items.map(item => {
-        if (
-          amountLeft <= 0 ||
-          (itemsToPay?.length && !itemsToPay.includes(item._id.toString()))
-        ) {
-          return item;
-        }
+      let updatedItems;
+      let totalAmount;
+      let totalPaid;
+      let newBalance;
+      let status;
 
-        const paymentApplied = Math.min(amountLeft, item.balance);
-        amountLeft -= paymentApplied;
+      if (isDailyVariable) {
+        totalPaid = (Number(bill.totalPaid) || 0) + amount;
+        totalAmount = totalPaid;
+        newBalance = 0;
+        status = 'Paid';
+        updatedItems = buildDailyVariableItems(bill.dailyFeeLabel || DEFAULT_DAILY_FEE_LABEL, totalPaid);
+      } else {
+        // 💰 Apply payment to fixed bill items
+        let amountLeft = amount;
+        updatedItems = bill.items.map(item => {
+          if (
+            amountLeft <= 0 ||
+            (itemsToPay?.length && !itemsToPay.includes(item._id.toString()))
+          ) {
+            return item;
+          }
 
-        return {
-          ...item.toObject(),
-          paid: item.paid + paymentApplied,
-          balance: item.balance - paymentApplied
-        };
-      });
+          const paymentApplied = Math.min(amountLeft, item.balance);
+          amountLeft -= paymentApplied;
 
-      const totalPaid = bill.totalPaid + amount;
-      const newBalance = bill.totalAmount - totalPaid;
-      const status = newBalance <= 0 ? 'Paid' : 'Partial';
+          return {
+            ...item.toObject(),
+            paid: item.paid + paymentApplied,
+            balance: item.balance - paymentApplied
+          };
+        });
+
+        totalAmount = bill.totalAmount;
+        totalPaid = bill.totalPaid + amount;
+        newBalance = bill.totalAmount - totalPaid;
+        status = newBalance <= 0 ? 'Paid' : 'Partial';
+      }
 
       // 🧾 Update bill
       await TermBill.findByIdAndUpdate(
         billId,
         {
           items: updatedItems,
+          totalAmount,
           totalPaid,
           balance: newBalance,
           status,
+          billingMode,
           class: bill.class || null, // ✅ ENSURE CLASS STAYS ON BILL
           $push: {
             payments: {
               _id: payment[0]._id,
               amount,
               method,
+              billingMode,
+              note: note || '',
               date: new Date()
             }
           }
@@ -1100,7 +1216,8 @@ module.exports = {
           billId,
           amount,
           studentId,
-          newBalance
+          newBalance,
+          billingMode
         });
       }
 
@@ -1125,12 +1242,15 @@ module.exports = {
           name: item.name,
           amount: item.amount,
           paid: item.paid,
-          balance: item.balance
+          balance: item.balance,
+          isVariable: item.isVariable === true
         })),
         payments: updatedBill.payments.map(p => ({
           _id: p._id,
           amount: p.amount,
           method: p.method,
+          billingMode: p.billingMode || billingMode,
+          note: p.note || '',
           date: p.date
         }))
       };
@@ -1171,7 +1291,9 @@ module.exports = {
           _id: payment[0]._id,
           amount: payment[0].amount,
           method: payment[0].method,
-          date: payment[0].date
+          billingMode: payment[0].billingMode || billingMode,
+          note: payment[0].note || '',
+          date: payment[0].paymentDate || payment[0].createdAt
         },
         updatedBill: responseData
       });
@@ -1250,8 +1372,10 @@ module.exports = {
             items: billItems,
             totalAmount,
             totalPaid,
+            balance: Math.max(0, totalAmount - totalPaid),
             status,
             class: student.class?._id || null,
+            billingMode: FIXED_BILLING_MODE,
             isManualUpdate: true
           },
           { new: true, session }
@@ -1266,9 +1390,11 @@ module.exports = {
             items: billItems,
             totalAmount,
             totalPaid,
+            balance: Math.max(0, totalAmount - totalPaid),
             term,
             academicYear,
             status,
+            billingMode: FIXED_BILLING_MODE,
             isManualUpdate: true
           }],
           { session }
@@ -2069,6 +2195,122 @@ module.exports = {
     } catch (error) {
       console.error('Toggle Term Fee Exemption Error:', error);
       res.status(500).json({ message: 'Failed to toggle exemption status' });
+    }
+  },
+
+  async setTermFeeBillingMode(req, res) {
+    try {
+      if (!req.user || !req.user.school) {
+        return res.status(403).json({ message: 'Unauthorized' });
+      }
+
+      const { studentId } = req.params;
+      const { billingMode, term, academicYear, templateId } = req.body;
+      const mode = normalizeBillingMode(billingMode);
+
+      const student = await Student.findOne({ _id: studentId, school: req.user.school })
+        .populate('class', 'name stream displayName')
+        .populate('user', 'name');
+
+      if (!student) {
+        return res.status(404).json({ message: 'Student not found' });
+      }
+
+      student.termFeeBillingMode = mode;
+      await student.save();
+
+      let bill = null;
+      const cleanTerm = term?.trim();
+      const cleanAcademicYear = academicYear?.trim();
+
+      if (cleanTerm && cleanAcademicYear) {
+        bill = await TermBill.findOne({
+          student: student._id,
+          term: cleanTerm,
+          academicYear: cleanAcademicYear,
+          school: req.user.school
+        });
+
+        if (isDailyVariableMode(mode)) {
+          const paidToPreserve = bill
+            ? (isDailyVariableMode(bill.billingMode)
+              ? Number(bill.totalPaid ?? bill.totalAmount) || 0
+              : Number(bill.totalPaid) || 0)
+            : 0;
+
+          const dailyBillPayload = {
+            school: req.user.school,
+            student: student._id,
+            class: student.class?._id || student.class || null,
+            template: templateId || bill?.template || undefined,
+            term: cleanTerm,
+            academicYear: cleanAcademicYear,
+            billingMode: DAILY_VARIABLE_BILLING_MODE,
+            dailyFeeLabel: DEFAULT_DAILY_FEE_LABEL,
+            items: buildDailyVariableItems(DEFAULT_DAILY_FEE_LABEL, paidToPreserve),
+            totalAmount: paidToPreserve,
+            totalPaid: paidToPreserve,
+            balance: 0,
+            status: paidToPreserve > 0 ? 'Paid' : 'Pending',
+            isManualUpdate: false
+          };
+
+          bill = bill
+            ? await TermBill.findByIdAndUpdate(bill._id, dailyBillPayload, { new: true })
+            : await TermBill.create(dailyBillPayload);
+        } else if (bill && isDailyVariableMode(bill.billingMode) && Number(bill.totalPaid) === 0 && templateId) {
+          const template = await FeeTemplate.findOne({ _id: templateId, school: req.user.school });
+          if (template) {
+            const total = template.items.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+            bill = await TermBill.findByIdAndUpdate(
+              bill._id,
+              {
+                template: template._id,
+                billingMode: FIXED_BILLING_MODE,
+                items: template.items.map(item => ({
+                  name: item.name,
+                  amount: Number(item.amount) || 0,
+                  paid: 0,
+                  balance: Number(item.amount) || 0,
+                  isVariable: false
+                })),
+                totalAmount: total,
+                totalPaid: 0,
+                balance: total,
+                status: 'Unpaid',
+                isManualUpdate: false
+              },
+              { new: true }
+            );
+          }
+        }
+      }
+
+      const populatedBill = bill
+        ? await TermBill.findById(bill._id)
+          .populate({
+            path: 'student',
+            populate: [
+              { path: 'user', select: 'name' },
+              { path: 'class', select: 'name stream displayName' }
+            ]
+          })
+          .populate('class', 'name stream displayName')
+          .populate('template', 'name')
+          .lean()
+        : null;
+
+      res.json({
+        success: true,
+        billingMode: mode,
+        termFeeBillingMode: student.termFeeBillingMode,
+        bill: populatedBill ? transformBill(populatedBill) : null,
+        message: `Student billing mode set to ${isDailyVariableMode(mode) ? 'daily variable' : 'fixed'}`
+      });
+
+    } catch (error) {
+      console.error('Set Term Fee Billing Mode Error:', error);
+      res.status(500).json({ message: 'Failed to update billing mode', error: error.message });
     }
   }
 };

@@ -97,6 +97,12 @@ const studentSchema = new mongoose.Schema({
   isExemptFromTermFees: {
     type: Boolean,
     default: false
+  },
+
+  termFeeBillingMode: {
+    type: String,
+    enum: ['fixed', 'daily-variable'],
+    default: 'fixed'
   }
 
 }, { timestamps: true });

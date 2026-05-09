@@ -17,6 +17,8 @@ const PaymentSchema = new mongoose.Schema({
   bill: { type: mongoose.Schema.Types.ObjectId, ref: 'TermBill', required: true },
   amount: { type: Number, required: true, min: 0 },
   method: { type: String, required: true, enum: ['Cash', 'Mobile Money', 'Bank Transfer', 'Cheque', 'Other'] },
+  billingMode: { type: String, enum: ['fixed', 'daily-variable'], default: 'fixed' },
+  note: { type: String, default: '' },
   term: { type: String, required: true },
   academicYear: { type: String, required: true },
   student: { type: mongoose.Schema.Types.ObjectId, ref: 'Student', required: true },
@@ -40,11 +42,19 @@ const termBillSchema = new mongoose.Schema({
     name: String,
     amount: Number,
     paid: { type: Number, default: 0 },
-    balance: { type: Number, default: function() { return this.amount; } }
+    balance: { type: Number, default: function() { return this.amount; } },
+    isVariable: { type: Boolean, default: false }
   }],
   totalAmount: { type: Number, required: true },
   totalPaid: { type: Number, default: 0 },
-  status: { 
+  balance: { type: Number, default: 0 },
+  billingMode: {
+    type: String,
+    enum: ['fixed', 'daily-variable'],
+    default: 'fixed'
+  },
+  dailyFeeLabel: { type: String, default: 'Daily School Fees' },
+  status: {
     type: String, 
     enum: ['Unpaid', 'Pending', 'Partial', 'Paid'], 
     default: 'Unpaid' 
@@ -53,6 +63,8 @@ const termBillSchema = new mongoose.Schema({
   payments: [{
     amount: { type: Number, required: true },
     method: { type: String, required: true },
+    billingMode: { type: String, enum: ['fixed', 'daily-variable'], default: 'fixed' },
+    note: { type: String, default: '' },
     date: { type: Date, default: Date.now },
     recordedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
   }],
