@@ -222,7 +222,7 @@ const sendNotificationsInBackground = async (changedStudents, schoolId, classId,
     try {
       if (changedStudents.size === 0) return;
 
-      const changed = Array.from(changedStudents);
+      const changed = changedStudents instanceof Map ? Array.from(changedStudents.keys()) : Array.from(changedStudents);
 
       const affectedStudents = await Student.aggregate([
         {
@@ -266,6 +266,19 @@ const sendNotificationsInBackground = async (changedStudents, schoolId, classId,
         // PARENT NOTIFICATION
         if (parentRecipients.size > 0) {
           const userList = [...parentRecipients];
+          const latestStatus = changedStudents instanceof Map ? changedStudents.get(String(stu._id)) : 'updated';
+          const studentName = stu.user?.name || "your child";
+          
+          let parentMessage = `Attendance has been updated for ${studentName}.`;
+          let pushMessage = `Attendance updated for ${studentName}.`;
+
+          if (latestStatus === 'present') {
+              parentMessage = `${studentName} was present in school today.`;
+              pushMessage = `${studentName} was present in school today.`;
+          } else if (latestStatus === 'absent') {
+              parentMessage = `${studentName} was absent in school today.`;
+              pushMessage = `${studentName} was absent in school today.`;
+          }
 
           bulkOps.push({
             insertOne: {
@@ -273,7 +286,7 @@ const sendNotificationsInBackground = async (changedStudents, schoolId, classId,
                 sender: userId,
                 school: schoolId,
                 title: "Attendance Updated",
-                message: `Attendance has been updated for ${stu.user?.name || "your child"}.`,
+                message: parentMessage,
                 type: "attendance",
                 audience: "parent",
                 recipientRoles: [],
@@ -288,12 +301,24 @@ const sendNotificationsInBackground = async (changedStudents, schoolId, classId,
           });
 
           // PUSH → Parents
-          pushTargets.push({ users: userList, name: stu.user?.name });
+          pushTargets.push({ users: userList, name: stu.user?.name, message: typeof pushMessage !== 'undefined' ? pushMessage : undefined });
         }
 
         // STUDENT NOTIFICATION
         if (stu.user?._id) {
           const sid = String(stu.user._id);
+          const latestStatus = changedStudents instanceof Map ? changedStudents.get(String(stu._id)) : 'updated';
+          
+          let studentMsg = `Your attendance for week ${weekNumber} has been updated.`;
+          let pushMsg = `Your attendance has been updated.`;
+          
+          if (latestStatus === 'present') {
+              studentMsg = `You were marked present in school today.`;
+              pushMsg = `You were marked present in school today.`;
+          } else if (latestStatus === 'absent') {
+              studentMsg = `You were marked absent in school today.`;
+              pushMsg = `You were marked absent in school today.`;
+          }
 
           bulkOps.push({
             insertOne: {
@@ -301,7 +326,7 @@ const sendNotificationsInBackground = async (changedStudents, schoolId, classId,
                 sender: userId,
                 school: schoolId,
                 title: "Attendance Updated",
-                message: `Your attendance for week ${weekNumber} has been updated.`,
+                message: studentMsg,
                 type: "attendance",
                 audience: "student",
                 recipientRoles: [],
@@ -316,7 +341,7 @@ const sendNotificationsInBackground = async (changedStudents, schoolId, classId,
           });
 
           // PUSH → Student
-          pushTargets.push({ users: [sid], name: stu.user?.name });
+          pushTargets.push({ users: [sid], name: stu.user?.name || "Student", message: typeof pushMsg !== 'undefined' ? pushMsg : undefined });
         }
       }
 
@@ -330,7 +355,7 @@ const sendNotificationsInBackground = async (changedStudents, schoolId, classId,
         await sendPush(
           target.users,
           "Attendance Updated",
-          `Attendance updated for ${target.name}.`,
+          target.message || `Attendance updated for ${target.name}.`,
           { weekNumber, classId, termId }
         );
       }
@@ -406,7 +431,7 @@ const processAttendanceJob = async (jobData) => {
         });
       }
 
-      const changedStudents = new Set();
+      const changedStudents = new Map();
       const studentMap = new Map(classStudents.map(s => [String(s._id), s]));
 
       // 🎯 BULK OPERATION PREPARATION
@@ -461,6 +486,7 @@ const processAttendanceJob = async (jobData) => {
         };
 
         const changedDays = new Set();
+        let latestStatus = 'updated';
         for (const [dayKey, status] of Object.entries(days)) {
           if (!['M', 'T', 'W', 'TH', 'F'].includes(dayKey)) continue;
           if (!['present', 'absent', 'notmarked'].includes(status)) continue;
@@ -468,6 +494,7 @@ const processAttendanceJob = async (jobData) => {
           if (attendanceData.days[dayKey] !== status) {
             changedDays.add(dayKey);
             attendanceData.days[dayKey] = status;
+            latestStatus = status;
           }
         }
 
@@ -475,7 +502,7 @@ const processAttendanceJob = async (jobData) => {
           .filter(v => v === 'present').length;
 
         if (changedDays.size > 0) {
-          changedStudents.add(String(studentId));
+          changedStudents.set(String(studentId), latestStatus);
 
           bulkAttendanceOps.push({
             updateOne: {
