@@ -84,10 +84,10 @@ const transformBill = (bill) => {
 
     totalAmount: transformNumber(bill.totalAmount),
     totalPaid: transformNumber(bill.totalPaid),
-    balance: isDailyVariableMode(bill.billingMode || (typeof bill.student === 'object' && bill.student ? bill.student.termFeeBillingMode : null))
+    balance: isDailyVariableMode(bill.billingMode)
       ? 0
       : transformNumber(bill.balance) || Math.max(0, transformNumber(bill.totalAmount) - transformNumber(bill.totalPaid)),
-    billingMode: normalizeBillingMode(bill.billingMode || (typeof bill.student === 'object' && bill.student ? bill.student.termFeeBillingMode : null)),
+    billingMode: normalizeBillingMode(bill.billingMode),
     dailyFeeLabel: bill.dailyFeeLabel || DEFAULT_DAILY_FEE_LABEL,
 
     student: {
@@ -873,9 +873,9 @@ module.exports = {
         school: req.user.school,
         status: { $ne: 'Withdrawn' } // Ensure all non-withdrawn students are retrieved, matching frontend logic
       })
-      .populate({ path: 'user', select: 'name' })
-      .populate({ path: 'class', select: 'name stream displayName' })
-      .lean();
+        .populate({ path: 'user', select: 'name' })
+        .populate({ path: 'class', select: 'name stream displayName' })
+        .lean();
 
       // 2. Fetch existing bills for this class, term, and year
       const existingBills = await TermBill.find({
@@ -883,18 +883,18 @@ module.exports = {
         term: cleanTerm,
         academicYear: cleanAcademicYear
       })
-      .populate({
-        path: 'student',
-        match: { class: classObjectId },
-        populate: [
-          { path: 'user', select: 'name' },
-          { path: 'class', select: 'name stream displayName' }
-        ]
-      })
-      .populate('class', 'name stream displayName')
-      .populate('template', 'name description items')
-      .populate('payments')
-      .lean();
+        .populate({
+          path: 'student',
+          match: { class: classObjectId },
+          populate: [
+            { path: 'user', select: 'name' },
+            { path: 'class', select: 'name stream displayName' }
+          ]
+        })
+        .populate('class', 'name stream displayName')
+        .populate('template', 'name description items')
+        .populate('payments')
+        .lean();
 
       // Filter bills to only include those whose students are in this class (due to path match)
       const classBills = existingBills.filter(bill => bill.student);
@@ -908,7 +908,7 @@ module.exports = {
       // 3. Merge Students with Bills
       const processedBills = students.map(student => {
         const existingBill = billsMap.get(student._id.toString());
-        
+
         if (existingBill) {
           const transformedBill = transformBill(existingBill);
           const totalAmount = transformedBill.totalAmount;
@@ -953,7 +953,7 @@ module.exports = {
           // No bill exists for this student yet
           const { className, classDisplayName } = resolveClassNames(student.class);
           const studentName = student.user?.name || student.admissionNumber || 'Unknown';
-          
+
           return {
             _id: `temp-${student._id}`,
             student: {
@@ -1019,8 +1019,8 @@ module.exports = {
         term: term.trim(),
         academicYear: academicYear.trim()
       })
-      .populate('student', 'isExemptFromTermFees')
-      .lean();
+        .populate('student', 'isExemptFromTermFees')
+        .lean();
 
       let totalExpected = 0;
       let totalPaid = 0;
@@ -1039,7 +1039,7 @@ module.exports = {
           if (!value) return 0;
           if (typeof value === 'object') {
             return value.$numberInt ? parseInt(value.$numberInt) :
-                   value.$numberDouble ? parseFloat(value.$numberDouble) : 0;
+              value.$numberDouble ? parseFloat(value.$numberDouble) : 0;
           }
           return typeof value === 'number' ? value : 0;
         };
@@ -1440,7 +1440,7 @@ module.exports = {
       try {
         const notificationController = require('../controllers/notificationController');
         const amountFormatted = typeof formatCurrency === 'function' ? formatCurrency(totalAmount) : `GHS ${totalAmount}`;
-        
+
         // Student push
         if (student.user?._id) {
           await notificationController.sendPushToUser(
@@ -2128,11 +2128,11 @@ module.exports = {
 
         const classData = classMap.get(classId);
         const amount = Number(payment.amount) || 0;
-        
+
         classData.totalAmount += amount;
         classData.paidCount += 1;
         grandTotal += amount;
-        
+
         const studentName = student.user?.name || student.name || student.admissionNumber || 'Unknown Student';
 
         classData.students.push({
@@ -2159,7 +2159,7 @@ module.exports = {
         totalPaid,
         report: auditReport
       });
-      
+
     } catch (error) {
       console.error('Term billing audit report error:', error);
       res.status(500).json({
