@@ -84,10 +84,10 @@ const transformBill = (bill) => {
 
     totalAmount: transformNumber(bill.totalAmount),
     totalPaid: transformNumber(bill.totalPaid),
-    balance: isDailyVariableMode(bill.billingMode)
+    balance: isDailyVariableMode(bill.billingMode || (typeof bill.student === 'object' && bill.student ? bill.student.termFeeBillingMode : null))
       ? 0
       : transformNumber(bill.balance) || Math.max(0, transformNumber(bill.totalAmount) - transformNumber(bill.totalPaid)),
-    billingMode: normalizeBillingMode(bill.billingMode),
+    billingMode: normalizeBillingMode(bill.billingMode || (typeof bill.student === 'object' && bill.student ? bill.student.termFeeBillingMode : null)),
     dailyFeeLabel: bill.dailyFeeLabel || DEFAULT_DAILY_FEE_LABEL,
 
     student: {
