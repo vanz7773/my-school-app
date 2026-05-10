@@ -6,9 +6,11 @@ const { sendPushNotifications } = require('../controllers/notificationController
 
 /**
  * Helper to fetch teacher user IDs who should receive notifications today.
- * Excludes teachers if their school is not in an active term or if today is a Holiday.
+ * Excludes teachers if their school is not in an active term, if they are marked 
+ * as Holiday/Absent today, or if they have already satisfied the reminder condition.
+ * @param {string} reminderType - 'CLOCK_IN' | 'CLOCK_OUT' | 'GENERAL'
  */
-async function getEligibleTeacherUserIds() {
+async function getEligibleTeacherUserIds(reminderType = 'GENERAL') {
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
   const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
@@ -19,41 +21,51 @@ async function getEligibleTeacherUserIds() {
       startDate: { $lte: todayEnd },
       endDate: { $gte: todayStart }
     }).select('school').lean();
-    const activeSchools = [...new Set(activeTerms.map(t => String(t.school)))];
+    
+    const activeSchoolIds = [...new Set(activeTerms.map(t => String(t.school)))];
 
-    // 2. Find schools that are marked as Holiday today
-    const holidayAttendances = await Attendance.find({
-      status: 'Holiday',
+    if (activeSchoolIds.length === 0) return [];
+
+    // 2. Get all teachers in active schools
+    const teachers = await Teacher.find({
+      school: { $in: activeSchoolIds },
+      user: { $exists: true, $ne: null },
+    }).select('user school _id').lean();
+
+    // 3. Get all attendance records for today (to check individual status & clock times)
+    const todaysAttendances = await Attendance.find({
       date: { $gte: todayStart, $lte: todayEnd }
-    }).select('school').lean();
-    const schoolsOnHoliday = [...new Set(holidayAttendances.map(a => String(a.school)))];
+    }).select('teacher status signInTime signOutTime').lean();
 
-    // 3. Find teacher user ids for schools that are active and not on holiday
-    const eligibleSchoolIds = activeSchools.filter(
-      (schoolId) => !schoolsOnHoliday.includes(schoolId),
-    );
-
-    if (eligibleSchoolIds.length === 0) {
-      return [];
+    // Create a map for fast lookup: teacherId -> attendance record
+    const attendanceMap = {};
+    for (const record of todaysAttendances) {
+      attendanceMap[String(record.teacher)] = record;
     }
 
-    const teachers = await Teacher.find({
-      school: { $in: eligibleSchoolIds },
-      user: { $exists: true, $ne: null },
-    })
-      .select('user school')
-      .lean();
-
     const eligibleUserIds = new Set();
+    
     for (const t of teachers) {
-      const schoolStr = String(t.school);
-
-      if (t.user) {
-        // Double-check the holiday filter per teacher school before including.
-        if (!schoolsOnHoliday.includes(schoolStr)) {
-          eligibleUserIds.add(String(t.user));
-        }
+      const record = attendanceMap[String(t._id)];
+      
+      // 🛡️ CRITICAL FIX: If marked as Holiday or Absent manually, skip completely!
+      if (record && (record.status === 'Holiday' || record.status === 'Absent')) {
+        continue; 
       }
+
+      // If it's morning (Clock In reminder), skip if they already clocked in
+      if (reminderType === 'CLOCK_IN') {
+        if (record && record.signInTime) continue;
+      }
+
+      // If it's afternoon (Clock Out reminder), skip if they never clocked in, or already clocked out
+      if (reminderType === 'CLOCK_OUT') {
+        if (!record || !record.signInTime) continue; // Didn't come to school
+        if (record && record.signOutTime) continue; // Already left
+      }
+
+      // If they passed all filters, they are eligible
+      eligibleUserIds.add(String(t.user));
     }
 
     return [...eligibleUserIds];
@@ -72,7 +84,7 @@ function initCronJobs() {
   // ⏰ Morning Clock-In Reminder (Mon-Fri at 6:30 AM)
   cron.schedule('30 6 * * 1-5', async () => {
     console.log('CRON [6:30 AM]: Running Morning Clock-In Reminder...');
-    const userIds = await getEligibleTeacherUserIds();
+    const userIds = await getEligibleTeacherUserIds('CLOCK_IN');
 
     if (userIds.length > 0) {
       await sendPushNotifications(
@@ -82,14 +94,14 @@ function initCronJobs() {
       );
       console.log(`✅ Morning reminder queued for ${userIds.length} teachers.`);
     } else {
-      console.log('ℹ️ No eligible teachers to notify (Holidays/No Active Term).');
+      console.log('ℹ️ No eligible teachers to notify (Holidays/Already Clocked In/No Active Term).');
     }
   }, { timezone: 'UTC' });
 
   // ⏰ Afternoon Clock-Out Reminder (Mon-Fri at 3:30 PM)
   cron.schedule('30 15 * * 1-5', async () => {
     console.log('CRON [3:30 PM]: Running Afternoon Clock-Out Reminder...');
-    const userIds = await getEligibleTeacherUserIds();
+    const userIds = await getEligibleTeacherUserIds('CLOCK_OUT');
 
     if (userIds.length > 0) {
       await sendPushNotifications(
@@ -99,14 +111,14 @@ function initCronJobs() {
       );
       console.log(`✅ Afternoon reminder queued for ${userIds.length} teachers.`);
     } else {
-      console.log('ℹ️ No eligible teachers to notify.');
+      console.log('ℹ️ No eligible teachers to notify (Holidays/Already Clocked Out/Absent).');
     }
   }, { timezone: 'UTC' });
 
   // 📚 Friday Weekly Exercise Reminder (Friday at 2:00 PM)
   cron.schedule('0 14 * * 5', async () => {
     console.log('CRON [2:00 PM Fri]: Running Weekly Exercise Reminder...');
-    const userIds = await getEligibleTeacherUserIds();
+    const userIds = await getEligibleTeacherUserIds('GENERAL');
 
     if (userIds.length > 0) {
       await sendPushNotifications(
