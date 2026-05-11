@@ -110,7 +110,7 @@ const geofenceValidator = async (req, res, next) => {
     centerLat /= polygon.length;
 
     // ✅ Perform geofence validation
-    const isWithinGeofence = validateGeofence(lat, lng, polygon, radius);
+    let isWithinGeofence = validateGeofence(lat, lng, polygon, radius);
     const distanceFromCenter = calculateDistance(lat, lng, centerLat, centerLng);
 
     console.log('\n[GEOFENCE CHECK] --------------------------------');
@@ -122,13 +122,45 @@ const geofenceValidator = async (req, res, next) => {
     console.log(`Within geofence: ${isWithinGeofence}`);
     console.log('-----------------------------------------------\n');
 
+    let clockInMethod = 'normal_gps';
+
+    // 🚀 Custom Radius Override Logic
+    let teacherId = null;
+    if (!isWithinGeofence) {
+      try {
+        const teacher = await Teacher.findOne({ user: req.user.id }).select('_id');
+        teacherId = teacher?._id;
+
+        if (teacherId) {
+          const ClockInException = require('../models/ClockInException');
+          const exception = await ClockInException.findOne({ teacherId, isActive: true });
+          
+          if (exception && exception.customRadius) {
+            console.log(`[GEOFENCE] 🔔 Exception found for teacher ${teacherId}. Custom radius: ${exception.customRadius}m`);
+            if (distanceFromCenter <= exception.customRadius) {
+              isWithinGeofence = true;
+              clockInMethod = 'custom_radius_override';
+              console.log(`[GEOFENCE] 🟢 Exception granted! Using custom radius.`);
+            } else {
+              console.log(`[GEOFENCE] 🔴 Outside custom radius.`);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("[GEOFENCE EXCEPTION ERROR]", err.message);
+      }
+    }
+
     // ✅ Enforce validation
     if (!isWithinGeofence) {
       console.log("[GEOFENCE] ❌ Strict validation failed");
 
       try {
-        const teacher = await Teacher.findOne({ user: req.user.id }).select('_id');
-        const teacherId = teacher?._id;
+        // Teacher may have been fetched during exception check
+        if (!teacherId) {
+          const teacher = await Teacher.findOne({ user: req.user.id }).select('_id');
+          teacherId = teacher?._id;
+        }
 
         if (!teacherId) {
           console.log("[CACHE] No teacher found");
@@ -184,7 +216,7 @@ const geofenceValidator = async (req, res, next) => {
         message: `You must be within the school compound to clock in or out. \n    You're approximately ${Math.round(distanceFromCenter)} meters away.`,
       });
     } else {
-      req.geofenceStatus = polygon.length >= 3 ? 'inside' : 'radius';
+      req.geofenceStatus = (clockInMethod === 'custom_radius_override') ? 'custom_radius' : (polygon.length >= 3 ? 'inside' : 'radius');
     }
 
     // ✅ Attach metadata to request
@@ -197,6 +229,7 @@ const geofenceValidator = async (req, res, next) => {
       centerLat,
       centerLng,
       fromCache: polygonCache.has(schoolId),
+      clockInMethod,
     };
 
     console.log(`[GEOFENCE PASS] ${name} | Status: ${req.geofenceStatus}`);
