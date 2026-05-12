@@ -2274,26 +2274,42 @@ module.exports = {
           bill = bill
             ? await TermBill.findByIdAndUpdate(bill._id, dailyBillPayload, { new: true })
             : await TermBill.create(dailyBillPayload);
-        } else if (bill && isDailyVariableMode(bill.billingMode) && Number(bill.totalPaid) === 0 && templateId) {
+        } else if (bill && isDailyVariableMode(bill.billingMode) && templateId) {
           const template = await FeeTemplate.findOne({ _id: templateId, school: req.user.school });
           if (template) {
             const total = template.items.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+            
+            // Distribute existing payments across the new template items
+            let remainingPaid = Number(bill.totalPaid) || 0;
+            const newItems = template.items.map(item => {
+              const amt = Number(item.amount) || 0;
+              let itemPaid = 0;
+              if (remainingPaid > 0) {
+                itemPaid = Math.min(amt, remainingPaid);
+                remainingPaid -= itemPaid;
+              }
+              return {
+                name: item.name,
+                amount: amt,
+                paid: itemPaid,
+                balance: amt - itemPaid,
+                isVariable: false
+              };
+            });
+
+            const currentPaid = Number(bill.totalPaid) || 0;
+            const newBalance = Math.max(0, total - currentPaid);
+
             bill = await TermBill.findByIdAndUpdate(
               bill._id,
               {
                 template: template._id,
                 billingMode: FIXED_BILLING_MODE,
-                items: template.items.map(item => ({
-                  name: item.name,
-                  amount: Number(item.amount) || 0,
-                  paid: 0,
-                  balance: Number(item.amount) || 0,
-                  isVariable: false
-                })),
+                items: newItems,
                 totalAmount: total,
-                totalPaid: 0,
-                balance: total,
-                status: 'Unpaid',
+                totalPaid: currentPaid,
+                balance: newBalance,
+                status: currentPaid >= total ? 'Paid' : (currentPaid > 0 ? 'Partial' : 'Unpaid'),
                 isManualUpdate: false
               },
               { new: true }
