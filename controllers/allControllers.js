@@ -1228,6 +1228,7 @@ module.exports = {
         })
         .populate('class', 'name stream displayName')
         .populate('template', 'name')
+        .session(session)
         .lean();
 
       await session.commitTransaction();
