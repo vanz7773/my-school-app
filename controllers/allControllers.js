@@ -635,11 +635,15 @@ module.exports = {
         const totalAmount = transformed.totalAmount;
         const payments = transformed.payments || [];
         const paidAmount = payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-        const balance = totalAmount - paidAmount;
+        const billingMode = normalizeBillingMode(transformed.billingMode || transformed.student?.termFeeBillingMode);
+        const isDailyVariable = isDailyVariableMode(billingMode);
+        const effectivePaidAmount = isDailyVariable ? transformed.totalPaid : paidAmount;
+        const balance = isDailyVariable ? 0 : totalAmount - effectivePaidAmount;
 
         let paymentStatus;
-        if (balance <= 0) paymentStatus = 'Paid';
-        else if (paidAmount > 0) paymentStatus = 'Partial';
+        if (isDailyVariable) paymentStatus = 'Daily Payer';
+        else if (balance <= 0) paymentStatus = 'Paid';
+        else if (effectivePaidAmount > 0) paymentStatus = 'Partial';
         else paymentStatus = 'Unpaid';
 
         // 🟦 STEP 5 — UPDATED getParentBills
@@ -654,12 +658,16 @@ module.exports = {
           classDisplayName,
           studentId: transformed.student?._id,
           totalAmount,
-          paidAmount,
+          totalPaid: effectivePaidAmount,
+          paidAmount: effectivePaidAmount,
           balance,
           formattedTotal: formatCurrency(totalAmount),
-          formattedPaid: formatCurrency(paidAmount),
+          formattedPaid: formatCurrency(effectivePaidAmount),
           formattedBalance: formatCurrency(balance),
           paymentStatus,
+          billingMode,
+          dailyFeeLabel: transformed.dailyFeeLabel || DEFAULT_DAILY_FEE_LABEL,
+          isDailyVariable,
           lastPayment: payments.length > 0
             ? payments[payments.length - 1].paymentDate
             : null
@@ -1612,11 +1620,15 @@ module.exports = {
           (sum, p) => sum + (Number(p.amount) || 0),
           0
         );
-        const balance = totalAmount - paidAmount;
+        const billingMode = normalizeBillingMode(transformed.billingMode || transformed.student?.termFeeBillingMode);
+        const isDailyVariable = isDailyVariableMode(billingMode);
+        const effectivePaidAmount = isDailyVariable ? transformed.totalPaid : paidAmount;
+        const balance = isDailyVariable ? 0 : totalAmount - effectivePaidAmount;
 
         let paymentStatus;
-        if (balance <= 0) paymentStatus = "Paid";
-        else if (paidAmount > 0) paymentStatus = "Partial";
+        if (isDailyVariable) paymentStatus = "Daily Payer";
+        else if (balance <= 0) paymentStatus = "Paid";
+        else if (effectivePaidAmount > 0) paymentStatus = "Partial";
         else paymentStatus = "Unpaid";
 
         // 🟦 STEP 6 — UPDATED getStudentBills
@@ -1634,12 +1646,16 @@ module.exports = {
           classDisplayName,
           studentId: transformed.student?._id?.toString(),
           totalAmount,
-          paidAmount,
+          totalPaid: effectivePaidAmount,
+          paidAmount: effectivePaidAmount,
           balance,
           formattedTotal: formatCurrency(totalAmount),
-          formattedPaid: formatCurrency(paidAmount),
+          formattedPaid: formatCurrency(effectivePaidAmount),
           formattedBalance: formatCurrency(balance),
           paymentStatus,
+          billingMode,
+          dailyFeeLabel: transformed.dailyFeeLabel || DEFAULT_DAILY_FEE_LABEL,
+          isDailyVariable,
           isExempt: !!transformed.student?.isExemptFromTermFees,
           lastPayment:
             payments.length > 0
