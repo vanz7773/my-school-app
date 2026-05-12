@@ -1165,6 +1165,9 @@ const getTodayAttendance = async (req, res) => {
     const canClockOut =
       !isManualStatus && !!attendance?.signInTime && !attendance?.signOutTime;
 
+    const ClockInException = require('../models/ClockInException');
+    const exception = await ClockInException.findOne({ teacherId: teacher._id, isActive: true });
+
     res.status(200).json({
       status: 'success',
       data: {
@@ -1173,7 +1176,9 @@ const getTodayAttendance = async (req, res) => {
         clockedOut: !!attendance?.signOutTime,
         canClockIn,
         canClockOut,
-        lastAction: attendance?.signOutTime || attendance?.signInTime || null
+        lastAction: attendance?.signOutTime || attendance?.signInTime || null,
+        hasException: !!exception,
+        customRadius: exception ? exception.customRadius : null
       }
     });
 
