@@ -1030,16 +1030,32 @@ module.exports = {
         .populate('student', 'isExemptFromTermFees')
         .lean();
 
-      let totalExpected = 0;
+            let totalExpected = 0;
       let totalPaid = 0;
       let totalBalance = 0;
-      let studentsBilled = bills.length;
+      let studentsBilled = 0;
       let fullyPaidCount = 0;
       let partialPaidCount = 0;
 
+      const processedStudentIds = new Set();
+
       bills.forEach(bill => {
+        // Skip orphaned bills where student was deleted
+        if (!bill.student) {
+          return;
+        }
+
+        // Prevent counting the same student twice if they have duplicate bills
+        const studentIdStr = bill.student._id.toString();
+        if (processedStudentIds.has(studentIdStr)) {
+          return;
+        }
+        processedStudentIds.add(studentIdStr);
+
+        studentsBilled++;
+
         // Skip exempt students from school-wide accounting totals
-        if (bill.student?.isExemptFromTermFees) {
+        if (bill.student.isExemptFromTermFees) {
           return;
         }
 
