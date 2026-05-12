@@ -1438,6 +1438,7 @@ module.exports = {
         })
         .populate('class', 'name stream displayName')
         .populate('template', 'name')
+        .session(session)
         .lean();
 
       // ✅ USE EXISTING resolver (NO safeResolveClassNames)
