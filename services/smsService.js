@@ -37,7 +37,7 @@ class SmsService {
       const apiKey = process.env.ARKESEL_API_KEY;
       if (!apiKey) throw new Error('ARKESEL_API_KEY is not defined in .env');
       
-      const response = await axios.get(`${ARKESEL_API_URL}/clients/balance`, {
+      const response = await axios.get(`${ARKESEL_API_URL}/sms/balance`, {
         headers: {
           'api-key': apiKey
         }
