@@ -1309,6 +1309,42 @@ module.exports = {
         }
       }
 
+      // 💬 Auto-Trigger SMS for Fee Payment
+      try {
+        const smsService = require('../services/smsService');
+        const settings = await smsService.getSchoolSettings(req.user.school);
+        
+        if (settings.smsEnabled && settings.autoTriggers?.feePayments) {
+          const User = require('../models/User');
+          const studentName = updatedBill.student?.user?.name || "your child";
+          
+          let phones = [];
+          if (updatedBill.student?.parentIds && updatedBill.student.parentIds.length > 0) {
+            const parents = await User.find({ _id: { $in: updatedBill.student.parentIds } }).select('phone').lean();
+            phones = parents.map(p => p.phone).filter(Boolean);
+          } else if (updatedBill.student?.parent) {
+            const parent = await User.findById(updatedBill.student.parent).select('phone').lean();
+            if (parent && parent.phone) phones.push(parent.phone);
+          }
+          
+          phones = [...new Set(phones)]; // Unique phone numbers
+          
+          if (phones.length > 0) {
+            const amountFormatted = formatCurrency(payment[0].amount);
+            const smsMessage = `Payment of ${amountFormatted} received for ${studentName}. Receipt #${payment[0]._id.toString().slice(-6).toUpperCase()}. Balance: ${formatCurrency(newBalance)}. Thank you.`;
+            
+            await smsService.sendSms({
+              schoolId: req.user.school,
+              recipients: phones,
+              message: smsMessage,
+              messageType: 'fees'
+            });
+          }
+        }
+      } catch (smsError) {
+        console.error("Auto-SMS fee payment failed:", smsError.message);
+      }
+
       res.status(201).json({
         success: true,
         message: 'Payment recorded successfully',

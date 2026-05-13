@@ -207,10 +207,10 @@ exports.createAnnouncement = async (req, res) => {
       }
 
       const notificationDoc = await Notification.create({
-        title: classId ? "New Class Announcement" : "New School Announcement",
+        title: classId ? "Class Announcement" : "School Announcement",
         sender: creator._id,
         school: schoolId,
-        message: `Announcement: ${title || "New announcement"}`,
+        message: title || "New announcement",
         type: "announcement",
         audience,                // ✅ FIX HERE
         class: classId || null,
@@ -225,16 +225,7 @@ exports.createAnnouncement = async (req, res) => {
     }
 
 
-    // --------------------------------------------------
-    // 🔔 PUSH NOTIFICATION
-    // --------------------------------------------------
-    if (recipientUsers.length > 0) {
-      await sendPush(
-        recipientUsers,
-        "New Announcement",
-        title || "You have a new announcement"
-      );
-    }
+    // Push notifications are automatically handled by broadcastNotification above.
 
     // --------------------------------------------------
     // 💬 SMS AUTO-TRIGGER
@@ -1080,7 +1071,8 @@ exports.softDeleteAnnouncement = async (req, res) => {
       type: "announcement",
       $or: [
         { announcementId: announcement._id },
-        { message: `Announcement: ${announcement.title || "New announcement"}` }
+        { message: `Announcement: ${announcement.title || "New announcement"}` },
+        { message: announcement.title || "New announcement" }
       ]
     });
 
