@@ -83,18 +83,34 @@ exports.sendBulkSms = async (req, res) => {
     // Determine phone numbers
     let phones = [];
     if (recipientType === 'student_parents') {
-      const students = await Student.find({ _id: { $in: recipientIds }, school: req.user.school })
-        .populate('parent')
-        .populate('parentIds');
+      const students = await Student.find({ _id: { $in: recipientIds }, school: req.user.school });
       
+      const parentUserIds = new Set();
+
       students.forEach(student => {
-        if (student.emergencyContactPhone) phones.push(student.emergencyContactPhone);
-        if (student.parent?.user?.phone) phones.push(student.parent.user.phone);
-        student.parentIds?.forEach(pId => {
-           // We might need to fetch the User phone if parentIds are User ObjectIds, 
-           // assuming emergencyContactPhone is the primary fallback
-        });
+        // 1. Primary: Guardian Phones stored directly on Student
+        if (student.guardianPhone) {
+          phones.push(student.guardianPhone);
+        }
+        if (student.guardianPhone2) {
+          phones.push(student.guardianPhone2);
+        }
+        
+        // 2. Fallback: Collect all Parent/Guardian User IDs
+        if (student.parent) parentUserIds.add(String(student.parent._id || student.parent));
+        if (Array.isArray(student.parentIds)) {
+          student.parentIds.forEach(pId => parentUserIds.add(String(pId._id || pId)));
+        }
       });
+
+      // Fetch all unique parent Users to get their phone numbers
+      if (parentUserIds.size > 0) {
+        const User = require('../models/User');
+        const parentUsers = await User.find({ _id: { $in: Array.from(parentUserIds) } }).select('phone');
+        parentUsers.forEach(pu => {
+          if (pu.phone) phones.push(pu.phone);
+        });
+      }
     } else if (recipientType === 'direct_phones') {
       phones = recipientIds; // Assuming recipientIds is actually an array of phone numbers
     }
@@ -183,7 +199,8 @@ exports.triggerOverdueFeesSms = async (req, res) => {
       const message = `Fee Reminder: ${studentName} has an outstanding balance of GHS ${bill.balance}. Please arrange payment.`;
 
       const phones = new Set();
-      if (studentData.emergencyContactPhone) phones.add(studentData.emergencyContactPhone);
+      if (studentData.guardianPhone) phones.add(studentData.guardianPhone);
+      if (studentData.guardianPhone2) phones.add(studentData.guardianPhone2);
       
       const parentIds = [];
       if (studentData.parent) parentIds.push(studentData.parent._id || studentData.parent);
