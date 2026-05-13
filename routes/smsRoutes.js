@@ -1,10 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const smsController = require('../controllers/smsController');
-const { protect, authorize } = require('../middleware/auth');
+const { protect, restrictTo } = require('../middlewares/authMiddleware');
 
 router.use(protect);
-router.use(authorize('admin', 'superadmin'));
+router.use(restrictTo('admin', 'superadmin'));
 
 router.get('/settings', smsController.getSettings);
 router.put('/settings', smsController.updateSettings);
