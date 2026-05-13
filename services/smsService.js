@@ -2,7 +2,7 @@ const axios = require('axios');
 const SmsLog = require('../models/SmsLog');
 const SchoolSmsSettings = require('../models/SchoolSmsSettings');
 
-const ARKESEL_API_URL = 'https://sms.arkesel.com/api/v2';
+const ARKESEL_API_URL = 'https://sms.arkesel.com/sms/api';
 
 // Format Ghana phone number to international format without + sign for Arkesel
 // e.g. 024xxxxxxx -> 23324xxxxxxx
@@ -37,11 +37,7 @@ class SmsService {
       const apiKey = process.env.ARKESEL_API_KEY;
       if (!apiKey) throw new Error('ARKESEL_API_KEY is not defined in .env');
       
-      const response = await axios.get(`${ARKESEL_API_URL}/sms/balance`, {
-        headers: {
-          'api-key': apiKey
-        }
-      });
+      const response = await axios.get(`${ARKESEL_API_URL}?action=check-balance&api_key=${apiKey}&response=json`);
       return response.data;
     } catch (error) {
       console.error('Arkesel Check Balance Error:', error.response?.data || error.message);
@@ -87,19 +83,16 @@ class SmsService {
         return { success: true, message: 'All recipients already received this exact message recently. Skipping.' };
       }
 
-      // Send via Arkesel
-      const payload = {
-        sender: settings.senderId || process.env.ARKESEL_SENDER_ID || 'SCHOOL',
-        message: message,
-        recipients: newRecipients
-      };
+      // For V1 API, recipients need to be a comma-separated string
+      const recipientsString = newRecipients.join(',');
 
-      const response = await axios.post(`${ARKESEL_API_URL}/sms/send`, payload, {
-        headers: {
-          'api-key': apiKey,
-          'Content-Type': 'application/json'
-        }
-      });
+      // Send via Arkesel V1 API
+      const sender = settings.senderId || process.env.ARKESEL_SENDER_ID || 'SCHOOL';
+      const encodedMessage = encodeURIComponent(message);
+      
+      const response = await axios.get(
+        `${ARKESEL_API_URL}?action=send-sms&api_key=${apiKey}&to=${recipientsString}&from=${sender}&sms=${encodedMessage}`
+      );
 
       // Log success
       const logsToCreate = newRecipients.map(phone => ({
