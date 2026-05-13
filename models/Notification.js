@@ -143,6 +143,12 @@ const notificationSchema = new mongoose.Schema(
       index: true,
     },
 
+    announcementId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Announcement',
+      index: true,
+    },
+
     // ------------------------------------------------------
     // READ TRACKING
     // ------------------------------------------------------

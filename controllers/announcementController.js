@@ -1074,53 +1074,15 @@ exports.softDeleteAnnouncement = async (req, res) => {
     announcement.deletedBy = user._id;
     await announcement.save();
 
-    // NOTIFICATION
-    await Notification.create({
-      title: "Announcement Deleted",
-      sender: user._id,
+    // WIPE ORIGINAL NOTIFICATIONS FROM IN-APP DB
+    await Notification.deleteMany({
       school: user.school,
-      message: `Announcement deleted: ${announcement.title}`,
       type: "announcement",
-      audience: announcement.class ? "class" : "all",
-      class: announcement.class || null,
-      recipientRoles: announcement.class ? ["student", "parent"] : ["student", "parent", "teacher"],
-      announcementId: announcement._id
+      $or: [
+        { announcementId: announcement._id },
+        { message: `Announcement: ${announcement.title || "New announcement"}` }
+      ]
     });
-
-    // FIND RECIPIENTS FOR PUSH
-    let recipientUsers = [];
-
-    if (announcement.class) {
-      const students = await Student.find({
-        class: announcement.class,
-        school: user.school
-      }).select("user parent parentIds");
-
-      students.forEach(s => {
-        if (s.user) recipientUsers.push(String(s.user));
-        if (s.parent) recipientUsers.push(String(s.parent));
-        if (Array.isArray(s.parentIds)) {
-          s.parentIds.forEach(pid => recipientUsers.push(String(pid)));
-        }
-      });
-    }
-    else {
-      const users = await User.find({
-        school: user.school,
-        role: { $in: ["student", "parent", "teacher"] }
-      }).select("_id");
-
-      recipientUsers = users.map(u => String(u._id));
-    }
-
-    recipientUsers = [...new Set(recipientUsers)];
-
-    // 🔔 PUSH
-    await sendPush(
-      recipientUsers,
-      "Announcement Deleted",
-      announcement.title
-    );
 
     res.json({ message: "Announcement soft-deleted", announcementId: announcement._id });
   } catch (err) {
