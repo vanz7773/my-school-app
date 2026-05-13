@@ -83,6 +83,11 @@ class SmsService {
         return { success: true, message: 'All recipients already received this exact message recently. Skipping.' };
       }
 
+      // SAAS BILLING: Check and deduct internal school balance
+      if (settings.smsBalance < newRecipients.length) {
+        throw new Error(`Insufficient SMS Balance. You need ${newRecipients.length} units but have ${settings.smsBalance}. Please contact the platform admin to top up.`);
+      }
+
       // For V1 API, recipients need to be a comma-separated string
       const recipientsString = newRecipients.join(',');
 
@@ -107,6 +112,10 @@ class SmsService {
       if (logsToCreate.length > 0) {
         await SmsLog.insertMany(logsToCreate);
       }
+
+      // Deduct balance
+      settings.smsBalance -= newRecipients.length;
+      await settings.save();
 
       return {
         success: true,

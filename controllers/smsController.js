@@ -28,12 +28,20 @@ exports.updateSettings = async (req, res) => {
 
 exports.getBalance = async (req, res) => {
   try {
-    // Only fetch if admin
-    if (req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+    if (req.user.role === 'superadmin') {
+      // Superadmin sees the actual Arkesel master balance
+      const balanceData = await smsService.checkBalance();
+      res.json({ success: true, balance: balanceData });
+    } else if (req.user.role === 'admin') {
+      // Regular school admin sees their school's allocated balance
+      const settings = await SchoolSmsSettings.findOne({ school: req.user.school });
+      res.json({ 
+        success: true, 
+        balance: { balance: settings ? settings.smsBalance : 0 } 
+      });
+    } else {
       return res.status(403).json({ message: 'Unauthorized' });
     }
-    const balanceData = await smsService.checkBalance();
-    res.json({ success: true, balance: balanceData });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

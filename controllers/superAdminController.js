@@ -4,6 +4,7 @@ const Student = require("../models/Student");
 const SchoolTransaction = require("../models/SchoolTransaction");
 const SchoolInfo = require("../models/SchoolInfo");
 const Notification = require("../models/Notification");
+const SchoolSmsSettings = require("../models/SchoolSmsSettings");
 const { broadcastNotification } = require("./notificationController");
 
 // Helper error sender
@@ -139,6 +140,61 @@ exports.alertOwingSchool = async (req, res) => {
     } catch (err) {
         console.error("Error in alertOwingSchool:", err);
         return sendError(res, 500, "Server error alerting school");
+    }
+};
+
+exports.creditSmsBalance = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { amount } = req.body;
+
+        if (!amount || isNaN(amount) || amount <= 0) {
+            return sendError(res, 400, "Invalid amount. Must be a positive number.");
+        }
+
+        const school = await School.findById(id);
+        if (!school) {
+            return sendError(res, 404, "School not found");
+        }
+
+        // Find or create SMS settings
+        let settings = await SchoolSmsSettings.findOne({ school: id });
+        if (!settings) {
+            settings = new SchoolSmsSettings({
+                school: id,
+                smsEnabled: false,
+                smsBalance: 0,
+                senderId: process.env.ARKESEL_SENDER_ID || 'SCHOOL'
+            });
+        }
+
+        settings.smsBalance += Number(amount);
+        await settings.save();
+
+        // 🎉 Notify the school admins about the new SMS credits
+        try {
+            const notification = await Notification.create({
+                title: "SMS Balance Credited",
+                message: `Your school's SMS balance has been credited with ${amount} units. New balance: ${settings.smsBalance}.`,
+                type: "general",
+                audience: "admin",
+                school: id,
+                sender: req.user ? req.user._id : null
+            });
+            const mockReq = { app: req.app, user: req.user };
+            await broadcastNotification(mockReq, notification);
+        } catch (notifErr) {
+            console.error("Failed to send SMS credit notification:", notifErr);
+        }
+
+        return res.json({
+            success: true,
+            message: `Successfully credited ${amount} SMS units to ${school.name}`,
+            newBalance: settings.smsBalance
+        });
+    } catch (err) {
+        console.error("Error in creditSmsBalance:", err);
+        return sendError(res, 500, "Server error crediting SMS balance");
     }
 };
 
