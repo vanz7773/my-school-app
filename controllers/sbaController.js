@@ -2255,6 +2255,31 @@ exports.uploadReportSheetPDF = [
               await sendPush([...userSet], pushTitle, msg).catch(e => console.error("Push Error:", e));
             }
           }
+
+          // 💬 SMS AUTO-TRIGGER
+          try {
+            const smsService = require('../services/smsService');
+            const settings = await smsService.getSchoolSettings(schoolId);
+            if (settings.smsEnabled && settings.autoTriggers?.examReports) {
+              const allRecipientIds = [...new Set(notifications.flatMap(n => n.recipientUsers || []))];
+              if (allRecipientIds.length > 0) {
+                const User = require('../models/User');
+                const targetUsers = await User.find({ _id: { $in: allRecipientIds } }).select('phone').lean();
+                const phones = targetUsers.map(u => u.phone).filter(Boolean);
+                if (phones.length > 0) {
+                  await smsService.sendSms({
+                    schoolId,
+                    recipients: phones,
+                    message: `New Report Card: The Term ${termDoc.term || 'Unknown'} report card is now available on your portal.`,
+                    messageType: 'reports'
+                  });
+                }
+              }
+            }
+          } catch (smsErr) {
+            console.error("SMS Auto-Trigger error in report cards:", smsErr);
+          }
+
         } catch (e) {
           console.warn("Failed to batch insert or push notifications:", e.message || e);
         }

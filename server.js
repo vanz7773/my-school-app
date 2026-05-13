@@ -179,6 +179,7 @@ const webPushRoutes = require('./routes/webPushRoutes');
 app.use('/api/web-push', webPushRoutes);
 app.use('/api/school-records', schoolRecordsRoutes);
 app.use('/api/transport', transportRoutes);
+app.use('/api/sms', require('./routes/smsRoutes'));
 
 
 // Default root route
