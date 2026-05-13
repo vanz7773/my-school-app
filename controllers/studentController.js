@@ -5,6 +5,15 @@ const Notification = require('../models/Notification');
 const StudentAttendance = require('../models/StudentAttendance');
 const FeedingFeeRecord = require('../models/FeedingFeeRecord');
 const enrollmentController = require('./enrollmentController'); // Ensure cache clearing support
+
+const formatPhoneNumber = (phone) => {
+  if (!phone) return phone;
+  const trimmed = String(phone).trim();
+  if (trimmed.length === 9 && !trimmed.startsWith('0')) {
+    return '0' + trimmed;
+  }
+  return trimmed;
+};
 // ✅ Admin-only: Admit/enroll student (multi-school aware)
 exports.createStudent = async (req, res) => {
   let createdUserId = null;
@@ -75,8 +84,8 @@ exports.createStudent = async (req, res) => {
       admissionNumber,
       gender: formattedGender,
       dateOfBirth: dob,
-      guardianPhone,
-      guardianPhone2,
+      guardianPhone: formatPhoneNumber(guardianPhone),
+      guardianPhone2: formatPhoneNumber(guardianPhone2),
       guardianOccupation,
       academicYear,
       religion,
@@ -260,8 +269,8 @@ exports.updateStudent = async (req, res) => {
 
     if (gender !== undefined) student.gender = gender;
     if (dob !== undefined) student.dateOfBirth = dob;
-    if (guardianPhone !== undefined) student.guardianPhone = guardianPhone;
-    if (guardianPhone2 !== undefined) student.guardianPhone2 = guardianPhone2;
+    if (guardianPhone !== undefined) student.guardianPhone = formatPhoneNumber(guardianPhone);
+    if (guardianPhone2 !== undefined) student.guardianPhone2 = formatPhoneNumber(guardianPhone2);
     if (guardianOccupation !== undefined) student.guardianOccupation = guardianOccupation;
     if (academicYear !== undefined) student.academicYear = academicYear;
     if (religion !== undefined) student.religion = religion;
@@ -564,14 +573,8 @@ exports.bulkCreateStudents = async (req, res) => {
           }
 
           // Phone number formatting
-          let formattedPhone = guardianPhone;
-          if (formattedPhone && String(formattedPhone).trim().length === 9) {
-              formattedPhone = '0' + String(formattedPhone).trim();
-          }
-          let formattedPhone2 = guardianPhone2;
-          if (formattedPhone2 && String(formattedPhone2).trim().length === 9) {
-              formattedPhone2 = '0' + String(formattedPhone2).trim();
-          }
+          let formattedPhone = formatPhoneNumber(guardianPhone);
+          let formattedPhone2 = formatPhoneNumber(guardianPhone2);
 
           // Update only provided optional fields (Do NOT overwrite name, email, password, class, gender, academicYear)
           if (formattedPhone) studentProfile.guardianPhone = formattedPhone;
@@ -630,14 +633,8 @@ exports.bulkCreateStudents = async (req, res) => {
         // Removed buggy nextNum++ logic and unused admissionNumber local variable
 
         // Phone number formatting (Excel strips leading zeros from 10-digit numbers making them 9 digits)
-        let formattedPhone = guardianPhone;
-        if (formattedPhone && String(formattedPhone).trim().length === 9) {
-            formattedPhone = '0' + String(formattedPhone).trim();
-        }
-        let formattedPhone2 = guardianPhone2;
-        if (formattedPhone2 && String(formattedPhone2).trim().length === 9) {
-            formattedPhone2 = '0' + String(formattedPhone2).trim();
-        }
+        let formattedPhone = formatPhoneNumber(guardianPhone);
+        let formattedPhone2 = formatPhoneNumber(guardianPhone2);
 
         // Create Student
         const studentData = {
