@@ -3,7 +3,6 @@ const SmsLog = require('../models/SmsLog');
 const SchoolSmsSettings = require('../models/SchoolSmsSettings');
 
 const ARKESEL_API_URL = 'https://sms.arkesel.com/api/v2';
-const API_KEY = process.env.ARKESEL_API_KEY;
 
 // Format Ghana phone number to international format without + sign for Arkesel
 // e.g. 024xxxxxxx -> 23324xxxxxxx
@@ -35,11 +34,12 @@ class SmsService {
 
   async checkBalance() {
     try {
-      if (!API_KEY) throw new Error('ARKESEL_API_KEY is not defined in .env');
+      const apiKey = process.env.ARKESEL_API_KEY;
+      if (!apiKey) throw new Error('ARKESEL_API_KEY is not defined in .env');
       
       const response = await axios.get(`${ARKESEL_API_URL}/clients/balance`, {
         headers: {
-          'api-key': API_KEY
+          'api-key': apiKey
         }
       });
       return response.data;
@@ -51,7 +51,8 @@ class SmsService {
 
   async sendSms({ schoolId, recipients, message, messageType }) {
     try {
-      if (!API_KEY) throw new Error('ARKESEL_API_KEY is not configured');
+      const apiKey = process.env.ARKESEL_API_KEY;
+      if (!apiKey) throw new Error('ARKESEL_API_KEY is not configured');
 
       const settings = await this.getSchoolSettings(schoolId);
       if (!settings.smsEnabled) {
@@ -95,7 +96,7 @@ class SmsService {
 
       const response = await axios.post(`${ARKESEL_API_URL}/sms/send`, payload, {
         headers: {
-          'api-key': API_KEY,
+          'api-key': apiKey,
           'Content-Type': 'application/json'
         }
       });
