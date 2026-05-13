@@ -193,12 +193,18 @@ exports.createAnnouncement = async (req, res) => {
     // 📣 CREATE NOTIFICATION DOC (FIXED)
     // --------------------------------------------------
     if (recipientUsers.length > 0) {
-      const audience =
-        classId
-          ? "class"
-          : resolvedRoles.length === 1
-            ? resolvedRoles[0]   // "teacher" | "student" | "parent"
-            : "all";             // true school-wide only
+      let audience = "all";
+      if (classId) {
+        audience = "class";
+      } else if (resolvedRoles.includes("all")) {
+        audience = "all";
+      } else if (resolvedRoles.length === 1) {
+        audience = resolvedRoles[0]; // "teacher" | "student" | "parent"
+      } else if (resolvedRoles.length >= 3 || (resolvedRoles.includes('student') && resolvedRoles.includes('parent') && resolvedRoles.includes('teacher'))) {
+        audience = "all";
+      } else {
+        audience = "specific";
+      }
 
       const notificationDoc = await Notification.create({
         title: classId ? "New Class Announcement" : "New School Announcement",
