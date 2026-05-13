@@ -120,10 +120,12 @@ exports.sendBulkSms = async (req, res) => {
         });
       }
     } else if (recipientType === 'teachers') {
-      const User = require('../models/User');
-      const teachers = await User.find({ school: req.user.school, role: 'teacher' }).select('phone');
+      const Teacher = require('../models/Teacher');
+      const teachers = await Teacher.find({ school: req.user.school }).select('phone telNo user').populate('user', 'phone');
       teachers.forEach(t => {
         if (t.phone) phones.push(t.phone);
+        if (t.telNo) phones.push(t.telNo);
+        if (t.user && t.user.phone) phones.push(t.user.phone);
       });
     } else if (recipientType === 'direct_phones') {
       phones = recipientIds; // Assuming recipientIds is actually an array of phone numbers
