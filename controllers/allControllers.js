@@ -775,9 +775,10 @@ module.exports = {
       // Payment summary
       const col1 = 50;
       const col2 = 300;
+      const shortReceiptNo = payment._id.toString().slice(-6).toUpperCase();
 
       doc.fontSize(12)
-        .text('Receipt No:', col1).text(payment._id.toString(), col2).moveDown(0.5)
+        .text('Receipt No:', col1).text(shortReceiptNo, col2).moveDown(0.5)
         .text('Date:', col1).text(payment.createdAt.toLocaleDateString(), col2).moveDown(0.5)
         .text('Amount Paid:', col1).text(formatCurrency(payment.amount), col2).moveDown(0.5)
         .text('Balance:', col1).text(formatCurrency(transformedBill.balance), col2)
@@ -1286,11 +1287,12 @@ module.exports = {
       if (updatedBill.student?.user?._id) {
         const studentUserId = updatedBill.student.user._id;
         const amountFormatted = formatCurrency(payment[0].amount);
+        const shortReceiptNo = payment[0]._id.toString().slice(-6).toUpperCase();
 
         await notificationController.sendPushToUser(
           studentUserId,
           'Fees Payment Receipt',
-          `Payment of ${amountFormatted} received successfully. Receipt #${payment[0]._id}`,
+          `Payment of ${amountFormatted} received successfully. Receipt #${shortReceiptNo}. Log in to the app to download receipt.`,
           { type: 'payment', paymentId: payment[0]._id }
         );
 
@@ -1302,7 +1304,7 @@ module.exports = {
             await notificationController.sendPushNotifications(
               parentTokens,
               'Fees Payment Receipt',
-              `Payment of ${amountFormatted} received for ${studentName}. Receipt #${payment[0]._id}`,
+              `Payment of ${amountFormatted} received for ${studentName}. Receipt #${shortReceiptNo}. Log in to the app to download receipt.`,
               { type: 'payment', paymentId: payment[0]._id }
             ).catch(e => console.error("Parent receipt push failed:", e));
           }
@@ -1331,7 +1333,8 @@ module.exports = {
           
           if (phones.length > 0) {
             const amountFormatted = formatCurrency(payment[0].amount);
-            const smsMessage = `Payment of ${amountFormatted} received for ${studentName}. Receipt #${payment[0]._id.toString().slice(-6).toUpperCase()}. Balance: ${formatCurrency(newBalance)}. Thank you.`;
+            const shortReceiptNo = payment[0]._id.toString().slice(-6).toUpperCase();
+            const smsMessage = `Payment of ${amountFormatted} received for ${studentName}. Receipt #${shortReceiptNo}. Balance: ${formatCurrency(newBalance)}. Log in to the app to download receipt.`;
             
             await smsService.sendSms({
               schoolId: req.user.school,
