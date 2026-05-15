@@ -1316,7 +1316,8 @@ module.exports = {
         const smsService = require('../services/smsService');
         const settings = await smsService.getSchoolSettings(req.user.school);
         
-        if (settings.smsEnabled && settings.autoTriggers?.feePayments) {
+        // Skip immediate SMS for Daily Variable payers (we send a weekly summary instead)
+        if (settings.smsEnabled && settings.autoTriggers?.feePayments && !isDailyVariable) {
           const User = require('../models/User');
           const studentName = updatedBill.student?.user?.name || "your child";
           

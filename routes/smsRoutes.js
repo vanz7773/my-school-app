@@ -13,5 +13,6 @@ router.get('/logs', smsController.getLogs);
 router.post('/send', smsController.sendSingleSms);
 router.post('/bulk', smsController.sendBulkSms);
 router.post('/trigger-overdue', smsController.triggerOverdueFeesSms);
+router.post('/trigger-weekly-daily-fees', smsController.triggerWeeklyDailyFeesSms);
 
 module.exports = router;

@@ -132,6 +132,13 @@ function initCronJobs() {
     }
   }, { timezone: 'UTC' });
 
+  // 💰 Friday Weekly Summary for Daily School Fees (Friday at 4:00 PM)
+  cron.schedule('0 16 * * 5', async () => {
+    console.log('CRON [4:00 PM Fri]: Running Weekly Daily School Fees SMS Summary...');
+    const smsController = require('../controllers/smsController');
+    await smsController.processAllWeeklyDailyFeesSMS();
+  }, { timezone: 'UTC' });
+
   console.log('✅ CRON Jobs Registered.');
 }
 

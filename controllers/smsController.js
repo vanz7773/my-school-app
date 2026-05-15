@@ -258,3 +258,190 @@ exports.triggerOverdueFeesSms = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+exports.triggerWeeklyDailyFeesSms = async (req, res) => {
+  try {
+    const { Payment } = require('../models/allModels');
+    const User = require('../models/User');
+
+    const today = new Date();
+    const oneWeekAgo = new Date(today);
+    oneWeekAgo.setDate(today.getDate() - 7);
+
+    // Fetch daily variable payments for this week
+    const recentPayments = await Payment.find({
+      school: req.user.school,
+      billingMode: 'daily-variable',
+      paymentDate: { $gte: oneWeekAgo, $lte: today }
+    }).populate({
+      path: 'student',
+      populate: { path: 'parent parentIds user' }
+    });
+
+    if (recentPayments.length === 0) {
+      return res.status(400).json({ success: false, message: 'No daily school fee payments found for the past week.' });
+    }
+
+    const studentTotals = {};
+
+    for (const payment of recentPayments) {
+      if (!payment.student) continue;
+      const studentId = String(payment.student._id);
+      
+      if (!studentTotals[studentId]) {
+        studentTotals[studentId] = {
+          student: payment.student,
+          total: 0
+        };
+      }
+      studentTotals[studentId].total += payment.amount;
+    }
+
+    const phoneMessages = {}; // Maps phone -> array of strings like "Alice (GHS 50)"
+    let totalMessagesQueued = 0;
+
+    for (const data of Object.values(studentTotals)) {
+      if (data.total <= 0) continue;
+
+      const studentName = data.student.user?.name || data.student.name || 'Student';
+      const summaryText = `${studentName} (GHS ${data.total})`;
+
+      const phones = new Set();
+      if (data.student.guardianPhone) phones.add(data.student.guardianPhone);
+      if (data.student.guardianPhone2) phones.add(data.student.guardianPhone2);
+      
+      const parentIds = [];
+      if (data.student.parent) parentIds.push(data.student.parent._id || data.student.parent);
+      if (Array.isArray(data.student.parentIds)) {
+        data.student.parentIds.forEach(p => parentIds.push(p._id || p));
+      }
+
+      if (parentIds.length > 0) {
+        const parentUsers = await User.find({ _id: { $in: parentIds } }).select('phone');
+        parentUsers.forEach(pu => { if (pu.phone) phones.add(pu.phone); });
+      }
+
+      for (const phone of phones) {
+        if (!phoneMessages[phone]) phoneMessages[phone] = [];
+        phoneMessages[phone].push(summaryText);
+        totalMessagesQueued++;
+      }
+    }
+
+    if (totalMessagesQueued === 0) {
+      return res.status(400).json({ success: false, message: 'No valid phone numbers found for the payments recorded this week.' });
+    }
+
+    let sentCount = 0;
+    for (const [phone, summaries] of Object.entries(phoneMessages)) {
+      const combinedMessage = `Weekly Fee Summary: ${summaries.join(', ')} paid towards daily school fees this week. Thank you!`;
+      try {
+        await smsService.sendSms({
+          schoolId: req.user.school,
+          recipients: [phone],
+          message: combinedMessage,
+          messageType: 'fees'
+        });
+        sentCount++;
+      } catch(err) {
+        console.error('Failed to send weekly daily fees SMS:', err.message);
+      }
+    }
+
+    res.json({ success: true, message: `Weekly daily fees summary sent to ${sentCount} parents.` });
+
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.processAllWeeklyDailyFeesSMS = async () => {
+  console.log('CRON: Processing Weekly Daily School Fees SMS for all opted-in schools...');
+  try {
+    const { Payment } = require('../models/allModels');
+    const User = require('../models/User');
+
+    // 1. Find all schools with weeklyDailyFeesSummary enabled
+    const settingsList = await SchoolSmsSettings.find({ 'autoTriggers.weeklyDailyFeesSummary': true });
+    if (settingsList.length === 0) {
+      console.log('CRON: No schools have Weekly Daily School Fees SMS enabled.');
+      return;
+    }
+
+    const today = new Date();
+    const oneWeekAgo = new Date(today);
+    oneWeekAgo.setDate(today.getDate() - 7);
+
+    for (const settings of settingsList) {
+      if (!settings.smsEnabled) continue;
+      const schoolId = settings.school;
+
+      const recentPayments = await Payment.find({
+        school: schoolId,
+        billingMode: 'daily-variable',
+        paymentDate: { $gte: oneWeekAgo, $lte: today }
+      }).populate({
+        path: 'student',
+        populate: { path: 'parent parentIds user' }
+      });
+
+      if (recentPayments.length === 0) continue;
+
+      const studentTotals = {};
+      for (const payment of recentPayments) {
+        if (!payment.student) continue;
+        const studentId = String(payment.student._id);
+        if (!studentTotals[studentId]) {
+          studentTotals[studentId] = { student: payment.student, total: 0 };
+        }
+        studentTotals[studentId].total += payment.amount;
+      }
+
+      const phoneMessages = {};
+
+      for (const data of Object.values(studentTotals)) {
+        if (data.total <= 0) continue;
+
+        const studentName = data.student.user?.name || data.student.name || 'Student';
+        const summaryText = `${studentName} (GHS ${data.total})`;
+
+        const phones = new Set();
+        if (data.student.guardianPhone) phones.add(data.student.guardianPhone);
+        if (data.student.guardianPhone2) phones.add(data.student.guardianPhone2);
+        
+        const parentIds = [];
+        if (data.student.parent) parentIds.push(data.student.parent._id || data.student.parent);
+        if (Array.isArray(data.student.parentIds)) {
+          data.student.parentIds.forEach(p => parentIds.push(p._id || p));
+        }
+
+        if (parentIds.length > 0) {
+          const parentUsers = await User.find({ _id: { $in: parentIds } }).select('phone');
+          parentUsers.forEach(pu => { if (pu.phone) phones.add(pu.phone); });
+        }
+
+        for (const phone of phones) {
+          if (!phoneMessages[phone]) phoneMessages[phone] = [];
+          phoneMessages[phone].push(summaryText);
+        }
+      }
+
+      for (const [phone, summaries] of Object.entries(phoneMessages)) {
+        const combinedMessage = `Weekly Fee Summary: ${summaries.join(', ')} paid towards daily school fees this week. Thank you!`;
+        try {
+          await smsService.sendSms({
+            schoolId: schoolId,
+            recipients: [phone],
+            message: combinedMessage,
+            messageType: 'fees'
+          });
+        } catch(err) {
+          console.error(`CRON Failed to send weekly daily fees SMS for school ${schoolId}:`, err.message);
+        }
+      }
+    }
+    console.log('CRON: Weekly Daily School Fees SMS processing completed.');
+  } catch (err) {
+    console.error('CRON: Error processing Weekly Daily School Fees SMS:', err);
+  }
+};

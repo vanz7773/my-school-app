@@ -24,7 +24,8 @@ const schoolSmsSettingsSchema = new mongoose.Schema({
     feesOverdue: { type: Boolean, default: false },
     examReports: { type: Boolean, default: false },
     announcements: { type: Boolean, default: false },
-    feePayments: { type: Boolean, default: false }
+    feePayments: { type: Boolean, default: false },
+    weeklyDailyFeesSummary: { type: Boolean, default: false }
   }
 }, { timestamps: true });
 
