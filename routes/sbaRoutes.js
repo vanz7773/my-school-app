@@ -40,6 +40,14 @@ router.post(
   sbaController.uploadGlobalTemplate
 );
 
+// 3.5️⃣ Admin: upload a school-specific blank template
+router.post(
+  "/admin/upload-school-template",
+  protect,
+  restrictTo("admin"),
+  sbaController.uploadSchoolSpecificTemplate
+);
+
 // 4️⃣ Admin: download full SBA workbook for any class
 router.get(
   "/admin/download/:classId",

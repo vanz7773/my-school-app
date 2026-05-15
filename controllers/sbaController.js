@@ -103,13 +103,17 @@ function isBasic1to6(className = "") {
   return /\b(basic\s*[1-6]|grade\s*[1-6]|class\s*[1-6]|primary\s*[1-6]|std\s*[1-6]|p\s*[1-6])\b/i.test(className);
 }
 
-// ✅ NEW: Nursery & KG checks - flexible
+// ✅ NEW: Nursery, KG & Creche checks - flexible
 function isNurseryClass(className = "") {
-  return /\b(nursery\s*[1-2]|pre-nursery|nurs\s*[1-2])\b/i.test(className);
+  return /\b(nursery\s*[1-2]?|pre-nursery|nurs\s*[1-2]?)\b/i.test(className);
 }
 
 function isKgClass(className = "") {
-  return /\b(kg\s*[1-2]|kindergarten\s*[1-2]|k\s*g\s*[1-2])\b/i.test(className);
+  return /\b(kg\s*[1-2]?|kindergarten\s*[1-2]?|k\s*g\s*[1-2]?)\b/i.test(className);
+}
+
+function isCrecheClass(className = "") {
+  return /\b(creche|crèche|daycare|day\s*care)\b/i.test(className);
 }
 
 // Helper function for logging (add this at the top of your controller)
@@ -194,6 +198,11 @@ function getClassLevelKey(className) {
     'NURSERY_ONE': 'NURSERY_1',
     'NURSERY_TWO': 'NURSERY_2',
     'PRE_NURSERY': 'NURSERY_1',
+
+    // Creche variations
+    'CRECHE': 'CRECHE',
+    'DAYCARE': 'CRECHE',
+    'DAY_CARE': 'CRECHE',
   };
 
   // Check if we have a direct mapping
@@ -231,6 +240,11 @@ function getClassLevelKey(className) {
         if (num === 'TWO') return 'NURSERY_2';
         return `NURSERY_${num}`;
       }
+    },
+    // Match Creche variations
+    {
+      regex: /^(CRECHE|CRÈCHE|DAYCARE|DAY_CARE)(?:_1|_ONE)?$/i,
+      replacer: () => 'CRECHE'
     }
   ];
 
@@ -248,7 +262,7 @@ function getClassLevelKey(className) {
     'BASIC_1', 'BASIC_2', 'BASIC_3', 'BASIC_4', 'BASIC_5', 'BASIC_6',
     'BASIC_7', 'BASIC_8', 'BASIC_9',
     'KG_1', 'KG_2', 'KG_3',
-    'NURSERY_1', 'NURSERY_2'
+    'NURSERY_1', 'NURSERY_2', 'CRECHE'
   ];
 
   if (standardKeys.includes(cleaned)) {
@@ -1105,7 +1119,7 @@ exports.downloadClassTemplate = async (req, res) => {
             rowInterval = 39;
           }
 
-          if (isKgClass(className) || isNurseryClass(className)) {
+          if (isKgClass(className) || isNurseryClass(className) || isCrecheClass(className)) {
             firstAttendanceRow = 24;
             rowInterval = 34;
           }
@@ -1671,6 +1685,57 @@ exports.uploadGlobalTemplate = [
     }
   }
 ];
+
+// 3.5️⃣ Upload school-specific template (admin)
+exports.uploadSchoolSpecificTemplate = [
+  upload.single("file"),
+  async (req, res) => {
+    let tempPath = null;
+    try {
+      if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+      
+      const { schoolId, classLevelKey } = req.body;
+      if (!schoolId || !classLevelKey) {
+        return res.status(400).json({ message: "schoolId and classLevelKey are required" });
+      }
+
+      tempPath = req.file.path;
+      const school = await School.findById(schoolId);
+      if (!school) return res.status(404).json({ message: "School not found" });
+
+      const bucket = admin.storage().bucket();
+      const schoolPath = `templates/${schoolId}/${classLevelKey}_master.xlsx`;
+      
+      await bucket.upload(tempPath, {
+        destination: schoolPath,
+        metadata: { contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+      });
+      await bucket.file(schoolPath).makePublic();
+
+      const publicUrl = `https://storage.googleapis.com/${bucket.name}/${schoolPath}`;
+
+      await School.findByIdAndUpdate(schoolId, {
+        $set: {
+          [`sbaMaster.${classLevelKey}`]: {
+            path: schoolPath,
+            url: publicUrl,
+            sourceTemplate: "custom_school_upload",
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        },
+      });
+
+      res.json({ message: "School-specific template uploaded successfully", url: publicUrl });
+    } catch (err) {
+      console.error("Error uploading school specific template:", err);
+      res.status(500).json({ message: "Failed to upload template", error: err.message });
+    } finally {
+      if (tempPath && fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    }
+  }
+];
+
 
 // 4️⃣ Get teacher's subject sheet (for JSON editing)
 exports.getSubjectSheet = async (req, res) => {
