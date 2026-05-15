@@ -15,7 +15,7 @@ const { protect, restrictTo } = require("../middlewares/authMiddleware");
 router.get(
   "/download/:teacherId",
   protect,
-  restrictTo("teacher", "admin", "parent"),
+  restrictTo("teacher", "admin", "parent", "superadmin"),
   sbaController.downloadClassTemplate
 );
 
@@ -23,7 +23,7 @@ router.get(
 router.post(
   "/upload",
   protect,
-  restrictTo("teacher", "admin"),
+  restrictTo("teacher", "admin", "superadmin"),
   sbaController.uploadMiddleware,
   sbaController.uploadClassTemplate
 );
@@ -36,7 +36,7 @@ router.post(
 router.post(
   "/admin/upload-template",
   protect,
-  restrictTo("admin"),
+  restrictTo("admin", "superadmin"),
   sbaController.uploadGlobalTemplate
 );
 
@@ -44,7 +44,7 @@ router.post(
 router.post(
   "/admin/upload-school-template",
   protect,
-  restrictTo("admin"),
+  restrictTo("admin", "superadmin"),
   sbaController.uploadSchoolSpecificTemplate
 );
 
@@ -52,7 +52,7 @@ router.post(
 router.get(
   "/admin/download/:classId",
   protect,
-  restrictTo("admin"),
+  restrictTo("admin", "superadmin"),
   sbaController.adminDownloadClassWorkbook
 );
 
@@ -64,7 +64,7 @@ router.get(
 router.get(
   "/subject/:teacherId",
   protect,
-  restrictTo("teacher", "admin"),
+  restrictTo("teacher", "admin", "superadmin"),
   sbaController.getSubjectSheet
 );
 
@@ -72,7 +72,7 @@ router.get(
 router.post(
   "/subject/save",
   protect,
-  restrictTo("teacher", "admin"),
+  restrictTo("teacher", "admin", "superadmin"),
   sbaController.saveSubjectSheet
 );
 
@@ -84,7 +84,7 @@ router.post(
 router.post(
   "/report-card/upload-pdf",
   protect,
-  restrictTo("teacher", "admin"),
+  restrictTo("teacher", "admin", "superadmin"),
   sbaController.uploadReportSheetPDF
 );
 
@@ -92,7 +92,7 @@ router.post(
 router.get(
   "/report-card/my-pdf/:studentId/:termId",
   protect,
-  restrictTo("student", "parent", "admin"),
+  restrictTo("student", "parent", "admin", "superadmin"),
   sbaController.getMyReportSheet
 );
 
@@ -105,12 +105,12 @@ router.get(
 router.get(
   "/overall-subject-average/:classId",
   protect,
-  restrictTo("teacher", "admin"),
+  restrictTo("teacher", "admin", "superadmin"),
   sbaController.getOverallSubjectAverage  // ✅ Updated: now expects schoolId, not classId
 );
 // In your routes file
 router.get('/class-averages-chart',protect,
-  restrictTo("admin"), sbaController.getClassAveragesForChart);
+  restrictTo("admin", "superadmin"), sbaController.getClassAveragesForChart);
 // =========================================================
 // EXPORT ROUTER
 // =========================================================
