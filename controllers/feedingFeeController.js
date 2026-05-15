@@ -2089,11 +2089,8 @@ const getFeedingFeeAuditReport = async (req, res) => {
       return res.status(404).json({ success: false, message: "Fee configuration not found" });
     }
 
-    const weekDates = getWeekDayDates(termDoc, weekNumber);
     const weekBounds = getTargetWeekBounds(termDoc, weekNumber);
 
-    // Fetch ALL records for the school/term to capture cross-week Debt Recoveries
-    // Fetch ALL active students to ensure no one is missing from the audit
     const [records, attendanceRecords, students] = await Promise.all([
       FeedingFeeRecord.find({ school: schoolId, termId })
         .populate({
@@ -2110,7 +2107,6 @@ const getFeedingFeeAuditReport = async (req, res) => {
         .lean()
     ]);
 
-    // Build lookup for O(1)
     const attendanceLookup = new Map();
     for (const att of attendanceRecords) {
       if (att.student) attendanceLookup.set(String(att.student), att);
@@ -2120,246 +2116,215 @@ const getFeedingFeeAuditReport = async (req, res) => {
     for (const record of records) {
       if (!record.breakdown || !Array.isArray(record.breakdown)) continue;
       const isNativeRecord = record.week === weekNumber;
-      
       for (const entry of record.breakdown) {
         if (!entry.student) continue;
         const sid = String(entry.student._id || entry.student);
-        
-        if (!feedingMap.has(sid)) {
-          feedingMap.set(sid, { native: null, debt: [] });
-        }
-        
-        if (isNativeRecord) {
-          feedingMap.get(sid).native = { entry, record };
-        } else {
-          feedingMap.get(sid).debt.push({ entry, record });
-        }
+        if (!feedingMap.has(sid)) feedingMap.set(sid, { native: null, debt: [] });
+        if (isNativeRecord) feedingMap.get(sid).native = { entry, record };
+        else feedingMap.get(sid).debt.push({ entry, record });
       }
     }
 
-    const classReportMap = new Map();
-    let grandTotal = 0;
-    let totalPaid = 0;
-    let totalUnpaid = 0;
+    const generateReportForDay = (targetDay) => {
+      const classReportMap = new Map();
+      let dGrandTotal = 0;
+      let dTotalPaid = 0;
+      let dTotalUnpaid = 0;
 
-    for (const student of students) {
-      if (student.isExemptFromFeedingFee === true) continue;
+      for (const student of students) {
+        if (student.isExemptFromFeedingFee === true) continue;
 
-      const studentId = String(student._id);
-      const manual = feedingMap.get(studentId);
-      const attendance = attendanceLookup.get(studentId);
-      
-      const classObj = student.class;
-      if (!classObj) continue;
-      
-      const classIdStr = String(classObj._id);
-      const className = classObj.displayName || classObj.name || 'Unknown Class';
+        const studentId = String(student._id);
+        const manual = feedingMap.get(studentId);
+        const attendance = attendanceLookup.get(studentId);
+        const classObj = student.class;
+        if (!classObj) continue;
+        
+        const classIdStr = String(classObj._id);
+        const className = classObj.displayName || classObj.name || 'Unknown Class';
 
-      let mergedDays = { M: "notmarked", T: "notmarked", W: "notmarked", TH: "notmarked", F: "notmarked" };
-      
-      // Step A: Seed attendance
-      if (attendance?.days) {
-        for (const dayKey of WEEK_DAY_KEYS) {
-          const val = attendance.days[dayKey];
-          if (val === "present" || val === "absent") {
-            mergedDays[dayKey] = normalizeDayValue(val);
+        let mergedDays = { M: "notmarked", T: "notmarked", W: "notmarked", TH: "notmarked", F: "notmarked" };
+        if (attendance?.days) {
+          for (const dayKey of WEEK_DAY_KEYS) {
+            const val = attendance.days[dayKey];
+            if (val === "present" || val === "absent") mergedDays[dayKey] = normalizeDayValue(val);
           }
         }
-      }
-      
-      // Step B: Override with native manual
-      const nativeEntry = manual?.native?.entry;
-      
-      if (nativeEntry?.days) {
-        for (const dayKey of WEEK_DAY_KEYS) {
-          const manualVal = nativeEntry.days[dayKey];
-          const attendanceVal = attendance?.days?.[dayKey];
-          
-          if (manualVal === "absent" && attendanceVal !== "absent") {
-            mergedDays[dayKey] = normalizeDayValue(attendanceVal);
-          } else {
-            mergedDays[dayKey] = manualVal;
-          }
-        }
-      }
-
-      // Step C: Determine Native Payment for the requested day
-      const amountPerDay = getAmountPerDay(student, feeConfig);
-      const resolvedAmount = amountPerDay > 0 ? amountPerDay : (Number(nativeEntry?.perDayFee?.['M']) || 0);
-      
-      let amountPaidToday = 0;
-      
-      if (resolvedAmount > 0) {
-        for (const dayKey of WEEK_DAY_KEYS) {
-          if (mergedDays[dayKey] === "present") {
-            let paidDateObj = null;
-            if (nativeEntry?.paidAt?.[dayKey]) {
-              paidDateObj = new Date(nativeEntry.paidAt[dayKey]);
+        
+        const nativeEntry = manual?.native?.entry;
+        if (nativeEntry?.days) {
+          for (const dayKey of WEEK_DAY_KEYS) {
+            const manualVal = nativeEntry.days[dayKey];
+            const attendanceVal = attendance?.days?.[dayKey];
+            if (manualVal === "absent" && attendanceVal !== "absent") {
+              mergedDays[dayKey] = normalizeDayValue(attendanceVal);
+            } else {
+              mergedDays[dayKey] = manualVal;
             }
+          }
+        }
+
+        const amountPerDay = getAmountPerDay(student, feeConfig);
+        const resolvedAmount = amountPerDay > 0 ? amountPerDay : (Number(nativeEntry?.perDayFee?.['M']) || 0);
+        let amountPaidToday = 0;
+        
+        if (resolvedAmount > 0) {
+          for (const dayKey of WEEK_DAY_KEYS) {
+            if (mergedDays[dayKey] === "present") {
+              let paidDateObj = null;
+              if (nativeEntry?.paidAt?.[dayKey]) paidDateObj = new Date(nativeEntry.paidAt[dayKey]);
+              
+              if (paidDateObj) {
+                if (paidDateObj >= weekBounds.windowStart && paidDateObj <= weekBounds.windowEnd) {
+                  if (dateToDayKey(paidDateObj) === targetDay) amountPaidToday += resolvedAmount;
+                }
+              } else {
+                if (dayKey === targetDay) amountPaidToday += resolvedAmount;
+              }
+            }
+          }
+        }
+
+        let nativeStatus = 'notmarked';
+        if (mergedDays[targetDay] === "present") nativeStatus = "present";
+        else if (mergedDays[targetDay] === "unpaid") nativeStatus = "unpaid";
+        else if (mergedDays[targetDay] === "absent") nativeStatus = "absent";
+        
+        if (amountPaidToday > 0) nativeStatus = "present";
+
+        if (nativeStatus !== 'absent' || amountPaidToday > 0) {
+          let classEntry = classReportMap.get(classIdStr);
+          if (!classEntry) {
+            classEntry = { classId: classIdStr, className, totalAmount: 0, paidCount: 0, unpaidCount: 0, students: [] };
+            classReportMap.set(classIdStr, classEntry);
+          }
+
+          classEntry.totalAmount += amountPaidToday;
+          dGrandTotal += amountPaidToday;
+
+          if (amountPaidToday > 0) {
+             classEntry.paidCount++;
+             dTotalPaid++;
+          } else if (nativeStatus === 'unpaid') {
+             classEntry.unpaidCount++;
+             dTotalUnpaid++;
+          }
+
+          classEntry.students.push({
+            studentId, studentName: getFullStudentName(student), status: nativeStatus,
+            amount: amountPaidToday, isRecoveredDebt: false, guardianName: student.guardianName || '',
+            guardianPhone: student.guardianPhone || ''
+          });
+        }
+
+        const FULL_DAY_NAMES = { "M": "Monday", "T": "Tuesday", "W": "Wednesday", "TH": "Thursday", "F": "Friday" };
+        if (manual?.debt) {
+          for (const { entry, record } of manual.debt) {
+            const dResolvedAmount = amountPerDay > 0 ? amountPerDay : (Number(entry?.perDayFee?.['M']) || 0);
+            if (dResolvedAmount <= 0) continue;
             
-            if (paidDateObj) {
-              if (paidDateObj >= weekBounds.windowStart && paidDateObj <= weekBounds.windowEnd) {
-                if (dateToDayKey(paidDateObj) === day) {
-                   amountPaidToday += resolvedAmount;
+            let recordDebtAmountToday = 0;
+            const recoveredDays = [];
+            
+            for (const dayKey of WEEK_DAY_KEYS) {
+              if (entry.days?.[dayKey] === "present" && entry.paidAt?.[dayKey]) {
+                const paidDateObj = new Date(entry.paidAt[dayKey]);
+                if (paidDateObj >= weekBounds.windowStart && paidDateObj <= weekBounds.windowEnd) {
+                  if (dateToDayKey(paidDateObj) === targetDay) {
+                    recordDebtAmountToday += dResolvedAmount;
+                    recoveredDays.push(FULL_DAY_NAMES[dayKey]);
+                  }
                 }
               }
-            } else {
-              // Attendance-derived or old record without timestamp.
-              // Maps exactly to the day column it represents.
-              if (dayKey === day) {
-                 amountPaidToday += resolvedAmount;
-              }
+            }
+
+            if (recordDebtAmountToday > 0) {
+               let classEntry = classReportMap.get(classIdStr);
+               if (!classEntry) {
+                 classEntry = { classId: classIdStr, className, totalAmount: 0, paidCount: 0, unpaidCount: 0, students: [] };
+                 classReportMap.set(classIdStr, classEntry);
+               }
+
+               const joinedDays = recoveredDays.length > 0 ? `, ${recoveredDays.join(' & ')}` : '';
+               const debtStatus = `Debt Recovery (Week ${record.week}${joinedDays})`;
+
+               classEntry.totalAmount += recordDebtAmountToday;
+               dGrandTotal += recordDebtAmountToday;
+               classEntry.paidCount++;
+               dTotalPaid++;
+
+               classEntry.students.push({
+                 studentId, studentName: getFullStudentName(student), status: debtStatus,
+                 amount: recordDebtAmountToday, isRecoveredDebt: true, guardianName: student.guardianName || '',
+                 guardianPhone: student.guardianPhone || ''
+               });
             }
           }
         }
       }
 
-      // Determine Status specifically for the requested day
-      let nativeStatus = 'notmarked';
-      if (mergedDays[day] === "present") {
-        nativeStatus = "present";
-      } else if (mergedDays[day] === "unpaid") {
-        nativeStatus = "unpaid";
-      } else if (mergedDays[day] === "absent") {
-        nativeStatus = "absent";
-      }
-      
-      // If they made a native payment today (even for a different day's meal), 
-      // ensure they appear as PAID on the PDF.
-      if (amountPaidToday > 0) {
-        nativeStatus = "present";
-      }
-
-      // Push Native Row
-      if (nativeStatus !== 'absent' || amountPaidToday > 0) {
-        let classEntry = classReportMap.get(classIdStr);
-        if (!classEntry) {
-          classEntry = {
-            classId: classIdStr,
-            className,
-            totalAmount: 0,
-            paidCount: 0,
-            unpaidCount: 0,
-            students: []
-          };
-          classReportMap.set(classIdStr, classEntry);
-        }
-
-        classEntry.totalAmount += amountPaidToday;
-        grandTotal += amountPaidToday;
-
-        if (amountPaidToday > 0) {
-           classEntry.paidCount++;
-           totalPaid++;
-        } else if (nativeStatus === 'unpaid') {
-           classEntry.unpaidCount++;
-           totalUnpaid++;
-        }
-
-        classEntry.students.push({
-          studentId,
-          studentName: getFullStudentName(student),
-          status: nativeStatus,
-          amount: amountPaidToday,
-          isRecoveredDebt: false,
-          guardianName: student.guardianName || '',
-          guardianPhone: student.guardianPhone || ''
+      const auditReport = Array.from(classReportMap.values());
+      for (const classEntry of auditReport) {
+        classEntry.students.sort((a, b) => {
+          if (!a.studentName) return 1; if (!b.studentName) return -1;
+          return a.studentName.localeCompare(b.studentName);
         });
       }
+      auditReport.sort((a, b) => {
+        if (!a.className) return 1; if (!b.className) return -1;
+        return a.className.localeCompare(b.className);
+      });
 
-      // Push Debt Rows
-      const FULL_DAY_NAMES = { "M": "Monday", "T": "Tuesday", "W": "Wednesday", "TH": "Thursday", "F": "Friday" };
+      return {
+        day: targetDay,
+        grandTotal: dGrandTotal,
+        totalPaid: dTotalPaid,
+        totalUnpaid: dTotalUnpaid,
+        report: auditReport
+      };
+    };
 
-      if (manual?.debt) {
-        for (const { entry, record } of manual.debt) {
-          const dResolvedAmount = amountPerDay > 0 ? amountPerDay : (Number(entry?.perDayFee?.['M']) || 0);
-          if (dResolvedAmount <= 0) continue;
-          
-          let recordDebtAmountToday = 0;
-          const recoveredDays = [];
-          
-          for (const dayKey of WEEK_DAY_KEYS) {
-            if (entry.days?.[dayKey] === "present" && entry.paidAt?.[dayKey]) {
-              const paidDateObj = new Date(entry.paidAt[dayKey]);
-              if (paidDateObj >= weekBounds.windowStart && paidDateObj <= weekBounds.windowEnd) {
-                if (dateToDayKey(paidDateObj) === day) {
-                  recordDebtAmountToday += dResolvedAmount;
-                  recoveredDays.push(FULL_DAY_NAMES[dayKey]);
-                }
-              }
-            }
-          }
-
-          if (recordDebtAmountToday > 0) {
-             let classEntry = classReportMap.get(classIdStr);
-             if (!classEntry) {
-               classEntry = {
-                 classId: classIdStr,
-                 className,
-                 totalAmount: 0,
-                 paidCount: 0,
-                 unpaidCount: 0,
-                 students: []
-               };
-               classReportMap.set(classIdStr, classEntry);
-             }
-
-             const joinedDays = recoveredDays.length > 0 ? `, ${recoveredDays.join(' & ')}` : '';
-             const debtStatus = `Debt Recovery (Week ${record.week}${joinedDays})`;
-
-             classEntry.totalAmount += recordDebtAmountToday;
-             grandTotal += recordDebtAmountToday;
-             classEntry.paidCount++;
-             totalPaid++;
-
-             classEntry.students.push({
-               studentId,
-               studentName: getFullStudentName(student),
-               status: debtStatus,
-               amount: recordDebtAmountToday,
-               isRecoveredDebt: true,
-               guardianName: student.guardianName || '',
-               guardianPhone: student.guardianPhone || ''
-             });
-          }
-        }
+    if (day === 'All') {
+      const dailyReports = [];
+      let overallGrandTotal = 0;
+      let overallTotalPaid = 0;
+      let overallTotalUnpaid = 0;
+      
+      for (const targetDay of ['M', 'T', 'W', 'TH', 'F']) {
+        const dayReport = generateReportForDay(targetDay);
+        dailyReports.push(dayReport);
+        overallGrandTotal += dayReport.grandTotal;
+        overallTotalPaid += dayReport.totalPaid;
+        overallTotalUnpaid += dayReport.totalUnpaid;
       }
-    }
-
-    const auditReport = Array.from(classReportMap.values());
-    
-    // Sort students alphabetically within each merged class
-    for (const classEntry of auditReport) {
-      classEntry.students.sort((a, b) => {
-        if (!a.studentName) return 1;
-        if (!b.studentName) return -1;
-        return a.studentName.localeCompare(b.studentName);
+      
+      return res.json({
+        success: true,
+        day,
+        week: weekNumber,
+        grandTotal: overallGrandTotal,
+        totalPaid: overallTotalPaid,
+        totalUnpaid: overallTotalUnpaid,
+        dailyReports // NEW: Array of reports
+      });
+    } else {
+      const singleReport = generateReportForDay(day);
+      return res.json({
+        success: true,
+        day,
+        week: weekNumber,
+        grandTotal: singleReport.grandTotal,
+        totalPaid: singleReport.totalPaid,
+        totalUnpaid: singleReport.totalUnpaid,
+        report: singleReport.report
       });
     }
-
-    // Sort classes alphabetically
-    auditReport.sort((a, b) => {
-      if (!a.className) return 1;
-      if (!b.className) return -1;
-      return a.className.localeCompare(b.className);
-    });
-
-    return res.json({
-      success: true,
-      day,
-      week: weekNumber,
-      grandTotal,
-      totalPaid,
-      totalUnpaid,
-      report: auditReport
-    });
 
   } catch (error) {
     console.error("Error fetching audit report:", error);
     return res.status(500).json({ success: false, message: "Failed to fetch audit report", error: error.message });
   }
 };
-
 // --------------------------------------------------------------------
 // 💵 Set or clear a student-specific feeding fee
 // --------------------------------------------------------------------
