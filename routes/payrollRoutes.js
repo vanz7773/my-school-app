@@ -1,15 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const payrollController = require('../controllers/payrollController');
-const { requireAuth, checkRole } = require('../middlewares/authMiddleware');
+const { protect, restrictTo } = require('../middlewares/authMiddleware');
 
-router.use(requireAuth);
+router.use(protect);
 
 // Teacher portal
-router.get('/my-payslips', checkRole(['teacher']), payrollController.getMyPayslips);
+router.get('/my-payslips', restrictTo('teacher'), payrollController.getMyPayslips);
 
 // Admin routes
-router.use(checkRole(['admin', 'superadmin']));
+router.use(restrictTo('admin', 'superadmin'));
 router.get('/settings', payrollController.getSettings);
 router.post('/settings', payrollController.updateSettings);
 
