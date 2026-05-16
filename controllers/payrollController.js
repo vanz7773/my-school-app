@@ -79,6 +79,10 @@ exports.generatePayroll = async (req, res) => {
         path: 'teacher',
         populate: { path: 'user' }
     });
+    
+    // Fetch school to get the name for the payslip snapshots
+    const schoolDoc = await require('../models/School').findById(req.user.school);
+    const schoolName = schoolDoc ? schoolDoc.name : 'Unknown School';
 
     // We need start and end of month for attendance query
     const startDate = new Date(year, month - 1, 1);
@@ -134,6 +138,9 @@ exports.generatePayroll = async (req, res) => {
       payslips.push({
         teacher: salary.teacher._id,
         teacherName: salary.teacher.user.name,
+        schoolName: schoolName,
+        teacherLevel: salary.teacher.rank || 'N/A',
+        teacherDateOfBirth: salary.teacher.dateOfBirth,
         employeeId: salary.teacher.employeeId || 'N/A',
         baseSalary: salary.baseSalary,
         earnings,

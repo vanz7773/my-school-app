@@ -3,6 +3,9 @@ const mongoose = require('mongoose');
 const payslipSchema = new mongoose.Schema({
   teacher: { type: mongoose.Schema.Types.ObjectId, ref: 'Teacher', required: true },
   teacherName: String, // Snapshot
+  schoolName: String,
+  teacherLevel: String,
+  teacherDateOfBirth: Date,
   employeeId: String,
   baseSalary: Number,
   earnings: [{
