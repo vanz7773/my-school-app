@@ -3,6 +3,7 @@ const TeacherSalary = require('../models/TeacherSalary');
 const Payroll = require('../models/Payroll');
 const Teacher = require('../models/Teacher');
 const Attendance = require('../models/TeacherAttendance'); // existing model
+const SchoolInfo = require('../models/SchoolInfo');
 
 // PayrollSettings CRUD
 exports.getSettings = async (req, res) => {
@@ -197,7 +198,10 @@ exports.getPayrollDetails = async (req, res) => {
     const { id } = req.params;
     const payroll = await Payroll.findOne({ _id: id, school: req.user.school }).populate('generatedBy approvedBy', 'name').populate('school', 'name');
     if (!payroll) return res.status(404).json({ success: false, message: 'Payroll not found' });
-    res.json({ success: true, payroll });
+    
+    const schoolInfo = await SchoolInfo.findOne({ school: req.user.school });
+    
+    res.json({ success: true, payroll, schoolInfo });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
