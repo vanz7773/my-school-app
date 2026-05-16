@@ -195,7 +195,7 @@ exports.getPayrollHistory = async (req, res) => {
 exports.getPayrollDetails = async (req, res) => {
   try {
     const { id } = req.params;
-    const payroll = await Payroll.findOne({ _id: id, school: req.user.school }).populate('generatedBy approvedBy', 'name');
+    const payroll = await Payroll.findOne({ _id: id, school: req.user.school }).populate('generatedBy approvedBy', 'name').populate('school', 'name');
     if (!payroll) return res.status(404).json({ success: false, message: 'Payroll not found' });
     res.json({ success: true, payroll });
   } catch (err) {
