@@ -97,6 +97,22 @@ exports.generatePayroll = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Payroll for this month is already approved or paid.' });
     }
 
+    // Calculate YTD Gross accumulated from previous months in the same year
+    const payrollYear = period.substring(0, 4);
+    const previousPayrollsThisYear = await Payroll.find({
+      school: req.user.school,
+      month: { $regex: `^${payrollYear}-`, $lt: period } // Earlier months in the same year
+    });
+    
+    const ytdGrossMap = {};
+    previousPayrollsThisYear.forEach(p => {
+       p.payslips.forEach(slip => {
+          const tid = String(slip.teacher);
+          if (!ytdGrossMap[tid]) ytdGrossMap[tid] = 0;
+          ytdGrossMap[tid] += (slip.grossSalary || 0);
+       });
+    });
+
     const settings = await PayrollSettings.findOne({ school: req.user.school });
     const salaries = await TeacherSalary.find({ school: req.user.school }).populate({
         path: 'teacher',
@@ -153,6 +169,9 @@ exports.generatePayroll = async (req, res) => {
       }
 
       const netSalary = grossSalary - tDeductions;
+      const annualSalary = grossSalary * 12;
+      const pastYTD = ytdGrossMap[String(salary.teacher._id)] || 0;
+      const ytdGross = pastYTD + grossSalary;
 
       totalGross += grossSalary;
       totalDeductions += tDeductions;
@@ -175,6 +194,8 @@ exports.generatePayroll = async (req, res) => {
           totalWorkingDays: teacherAtt.length
         },
         grossSalary,
+        annualSalary,
+        ytdGross,
         totalDeductions: tDeductions,
         netSalary,
         accountDetails: salary.accountDetails,

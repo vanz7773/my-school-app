@@ -24,6 +24,8 @@ const payslipSchema = new mongoose.Schema({
     totalWorkingDays: Number
   },
   grossSalary: Number,
+  annualSalary: Number,
+  ytdGross: Number,
   totalDeductions: Number,
   netSalary: Number,
   paymentDate: Date,
