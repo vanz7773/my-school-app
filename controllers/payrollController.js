@@ -107,16 +107,16 @@ exports.generatePayroll = async (req, res) => {
       const lateCount = teacherAtt.filter(a => a.status === 'Late').length;
       const presentCount = teacherAtt.filter(a => a.status === 'Present' || a.status === 'On Time').length;
 
-      let grossSalary = salary.baseSalary || 0;
+      let grossSalary = Number(salary.baseSalary) || 0;
       const earnings = [...(salary.allowances || [])];
       let tDeductions = 0;
       const deductions = [...(salary.deductions || [])];
 
       // Add earnings
-      earnings.forEach(e => grossSalary += e.amount);
+      earnings.forEach(e => grossSalary += Number(e.amount || 0));
 
       // Fixed deductions
-      deductions.forEach(d => tDeductions += d.amount);
+      deductions.forEach(d => tDeductions += Number(d.amount || 0));
 
       // Attendance penalties
       if (settings?.attendancePenalties?.absentPenaltyAmount && absentCount > 0) {
