@@ -479,8 +479,8 @@ exports.downloadPdf = async (req, res) => {
 
     const pdfBuffer = Buffer.from(doc.output('arraybuffer'));
     const fileName = slipsToPrint.length === 1
-      ? `Payslip_${slipsToPrint[0].teacherName}_${payroll.month}.pdf`
-      : `Payslips_Batch_${payroll.month}.pdf`;
+      ? `Payslip_${longMonth}_${yearNum}.pdf`
+      : `Batch_Payslips_${longMonth}_${yearNum}.pdf`;
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
