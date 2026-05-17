@@ -5,7 +5,7 @@ const Teacher = require('../models/Teacher');
 const Attendance = require('../models/TeacherAttendance'); // existing model
 const SchoolInfo = require('../models/SchoolInfo');
 const { jsPDF } = require('jspdf');
-require('jspdf-autotable');
+const autoTable = require('jspdf-autotable');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
@@ -403,7 +403,7 @@ exports.downloadPdf = async (req, res) => {
       doc.text("PAYSLIP", xPos, doc.internal.pageSize.height / 2 + optimalFontSize * 0.35 - 5, { align: 'center' });
       doc.setTextColor(0, 0, 0);
 
-      doc.autoTable({
+      autoTable(doc, {
         startY: 15, margin: { left: 14, right: 14 }, theme: 'grid',
         styles: { font: 'helvetica', fontSize: 8, cellPadding: 1.5, lineWidth: 0.3, lineColor: 0, textColor: 0, fillColor: false },
         columnStyles: {
@@ -435,7 +435,7 @@ exports.downloadPdf = async (req, res) => {
         { content: (slip.totalDeductions || 0).toFixed(2), styles: { halign: 'right', fontStyle: 'bold' } }
       ]);
 
-      doc.autoTable({
+      autoTable(doc, {
         startY: doc.lastAutoTable.finalY, margin: { left: 14, right: 14 }, theme: 'grid',
         headStyles: { font: 'helvetica', textColor: 0, fontStyle: 'bold', lineWidth: 0.3, lineColor: 0, fontSize: 8, fillColor: false },
         styles: { font: 'helvetica', fontSize: 8, cellPadding: 2, lineWidth: 0.3, lineColor: 0, textColor: 0, fillColor: false },
@@ -448,7 +448,7 @@ exports.downloadPdf = async (req, res) => {
         }
       });
 
-      doc.autoTable({
+      autoTable(doc, {
         startY: doc.lastAutoTable.finalY, margin: { left: 14, right: 14 }, theme: 'grid',
         styles: { font: 'helvetica', fontSize: 8, cellPadding: 1.5, lineWidth: 0.3, lineColor: 0, textColor: 0, fillColor: false },
         columnStyles: {
