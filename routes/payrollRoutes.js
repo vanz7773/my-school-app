@@ -8,6 +8,9 @@ router.use(protect);
 // Teacher portal
 router.get('/my-payslips', restrictTo('teacher'), payrollController.getMyPayslips);
 
+// Shared route for downloading PDF (authorization logic inside controller)
+router.get('/:id/download-pdf', payrollController.downloadPdf);
+
 // Admin routes
 router.use(restrictTo('admin', 'superadmin'));
 router.get('/settings', payrollController.getSettings);
