@@ -416,7 +416,7 @@ exports.downloadPdf = async (req, res) => {
 
       autoTable(doc, {
         startY: 15, margin: { left: 14, right: 14 }, theme: 'grid',
-        styles: { font: 'helvetica', fontSize: 8, cellPadding: 1.5, lineWidth: 0.3, lineColor: [180, 180, 180], textColor: [60, 60, 60], fillColor: false },
+        styles: { font: 'helvetica', fontSize: 8, cellPadding: 1.5, lineWidth: 0.3, lineColor: [100, 100, 100], textColor: [60, 60, 60], fillColor: false },
         columnStyles: {
           0: { cellWidth: 35, halign: 'center', valign: 'bottom', fontStyle: 'bold' },
           1: { cellWidth: 20, fontStyle: 'bold' },
@@ -448,8 +448,8 @@ exports.downloadPdf = async (req, res) => {
 
       autoTable(doc, {
         startY: doc.lastAutoTable.finalY, margin: { left: 14, right: 14 }, theme: 'grid',
-        headStyles: { font: 'helvetica', textColor: [80, 80, 80], fontStyle: 'bold', lineWidth: 0.3, lineColor: [180, 180, 180], fontSize: 8, fillColor: false },
-        styles: { font: 'helvetica', fontSize: 8, cellPadding: 2, lineWidth: 0.3, lineColor: [180, 180, 180], textColor: [60, 60, 60], fillColor: false },
+        headStyles: { font: 'helvetica', textColor: [80, 80, 80], fontStyle: 'bold', lineWidth: 0.3, lineColor: [100, 100, 100], fontSize: 8, fillColor: false },
+        styles: { font: 'helvetica', fontSize: 8, cellPadding: 2, lineWidth: 0.3, lineColor: [100, 100, 100], textColor: [60, 60, 60], fillColor: false },
         columnStyles: { 6: { halign: 'right' }, 7: { halign: 'right' } },
         head: [['MONTH/YEAR', 'NATURE', 'LEVEL', 'DESCRIPTION', 'HRS/ORIGINAL AMOUNT', 'RATE(%) BALANCE', 'PAYMENTS', 'DEDUCTIONS']],
         body: tableRows,
@@ -461,7 +461,7 @@ exports.downloadPdf = async (req, res) => {
 
       autoTable(doc, {
         startY: doc.lastAutoTable.finalY, margin: { left: 14, right: 14 }, theme: 'grid',
-        styles: { font: 'helvetica', fontSize: 8, cellPadding: 1.5, lineWidth: 0.3, lineColor: [180, 180, 180], textColor: [60, 60, 60], fillColor: false },
+        styles: { font: 'helvetica', fontSize: 8, cellPadding: 1.5, lineWidth: 0.3, lineColor: [100, 100, 100], textColor: [60, 60, 60], fillColor: false },
         columnStyles: {
           0: { cellWidth: 30, fontStyle: 'bold' }, 1: { cellWidth: 20, halign: 'right' }, 2: { cellWidth: 30, fontStyle: 'bold' },
           3: { cellWidth: 18, halign: 'right' }, 4: { cellWidth: 25, fontStyle: 'bold' }, 5: { cellWidth: 15, halign: 'right' },
