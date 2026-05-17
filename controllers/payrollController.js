@@ -287,7 +287,7 @@ exports.getMyPayslips = async (req, res) => {
        school: req.user.school, 
        status: { $in: ['Approved', 'Paid'] },
        'payslips.teacher': teacher._id 
-    }).sort({ month: -1 });
+    }).populate('school').sort({ month: -1 });
 
     const myPayslips = payrolls.map(p => {
        const slip = p.payslips.find(s => String(s.teacher) === String(teacher._id));
@@ -295,6 +295,7 @@ exports.getMyPayslips = async (req, res) => {
           month: p.month,
           status: p.status,
           paidAt: p.paidAt,
+          schoolLogo: p.school?.logo || '',
           ...slip.toObject()
        };
     });
