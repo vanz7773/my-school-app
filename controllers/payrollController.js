@@ -283,11 +283,13 @@ exports.getMyPayslips = async (req, res) => {
     const teacher = await Teacher.findOne({ user: req.user._id });
     if (!teacher) return res.status(404).json({ success: false, message: 'Teacher record not found' });
 
+    const schoolInfo = await SchoolInfo.findOne({ school: req.user.school });
+
     const payrolls = await Payroll.find({ 
        school: req.user.school, 
        status: { $in: ['Approved', 'Paid'] },
        'payslips.teacher': teacher._id 
-    }).populate('school').sort({ month: -1 });
+    }).sort({ month: -1 });
 
     const myPayslips = payrolls.map(p => {
        const slip = p.payslips.find(s => String(s.teacher) === String(teacher._id));
@@ -295,7 +297,7 @@ exports.getMyPayslips = async (req, res) => {
           month: p.month,
           status: p.status,
           paidAt: p.paidAt,
-          schoolLogo: p.school?.logo || '',
+          schoolLogo: schoolInfo?.logo || '',
           ...slip.toObject()
        };
     });
