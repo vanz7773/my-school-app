@@ -53,9 +53,13 @@ exports.getTeacherSalaries = async (req, res) => {
 exports.updateTeacherSalary = async (req, res) => {
   try {
     const { teacherId, baseSalary, allowances, deductions, accountDetails } = req.body;
+    
+    // Sanitize: "Basic Salary" must never be stored inside the allowances array
+    const sanitizedAllowances = allowances ? allowances.filter(a => a.name.toLowerCase() !== 'basic salary') : [];
+
     const salary = await TeacherSalary.findOneAndUpdate(
       { school: req.user.school, teacher: teacherId },
-      { baseSalary, allowances, deductions, accountDetails },
+      { baseSalary, allowances: sanitizedAllowances, deductions, accountDetails },
       { new: true, upsert: true }
     );
     res.json({ success: true, salary });
