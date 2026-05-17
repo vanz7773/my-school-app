@@ -36,6 +36,7 @@
     "googleapis": "^156.0.0",
     "gridfs-stream": "^1.1.1",
     "ioredis": "^5.10.1",
+    "jimp": "^0.16.13",
     "jsonwebtoken": "^9.0.2",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",

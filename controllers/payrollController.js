@@ -7,6 +7,7 @@ const SchoolInfo = require('../models/SchoolInfo');
 const { jsPDF } = require('jspdf');
 const autoTable = require('jspdf-autotable').default;
 const axios = require('axios');
+const Jimp = require('jimp');
 const path = require('path');
 const fs = require('fs');
 
@@ -340,19 +341,29 @@ exports.downloadPdf = async (req, res) => {
     const schoolInfo = await SchoolInfo.findOne({ school: req.user.school });
     
     let logoBase64 = null;
+    let grayLogoBase64 = null;
     if (schoolInfo && schoolInfo.logo) {
       try {
+        let rawBuffer = null;
         const isAbsolute = schoolInfo.logo.startsWith('http');
         if (isAbsolute) {
           const response = await axios.get(schoolInfo.logo, { responseType: 'arraybuffer' });
-          logoBase64 = `data:image/png;base64,${Buffer.from(response.data, 'binary').toString('base64')}`;
+          rawBuffer = Buffer.from(response.data, 'binary');
         } else {
           const filePath = path.join(__dirname, '..', schoolInfo.logo);
           if (fs.existsSync(filePath)) {
-            const fileData = fs.readFileSync(filePath);
-            const ext = path.extname(schoolInfo.logo).toLowerCase().replace('.', '') || 'png';
-            logoBase64 = `data:image/${ext};base64,${fileData.toString('base64')}`;
+            rawBuffer = fs.readFileSync(filePath);
           }
+        }
+        
+        if (rawBuffer) {
+          const ext = path.extname(schoolInfo.logo).toLowerCase().replace('.', '') || 'png';
+          logoBase64 = `data:image/${ext};base64,${rawBuffer.toString('base64')}`;
+          
+          const image = await Jimp.read(rawBuffer);
+          image.greyscale();
+          const grayBuffer = await image.getBufferAsync(Jimp.MIME_PNG);
+          grayLogoBase64 = `data:image/png;base64,${grayBuffer.toString('base64')}`;
         }
       } catch (err) {
         console.error("Logo fetch failed", err);
@@ -386,9 +397,9 @@ exports.downloadPdf = async (req, res) => {
       const dobToUse = slip.teacherDateOfBirth || null;
       const activeSchoolName = (payroll.school && payroll.school.name) ? payroll.school.name.toUpperCase() : 'YOUR SCHOOL NAME';
 
-      if (logoBase64) {
+      if (grayLogoBase64) {
         doc.setGState(new doc.GState({ opacity: 0.10 }));
-        doc.addImage(logoBase64, 'PNG', doc.internal.pageSize.width / 2 - 42.5, doc.internal.pageSize.height / 2 - 42.5, 85, 85);
+        doc.addImage(grayLogoBase64, 'PNG', doc.internal.pageSize.width / 2 - 42.5, doc.internal.pageSize.height / 2 - 42.5, 85, 85);
         doc.setGState(new doc.GState({ opacity: 1 }));
       }
 
@@ -405,7 +416,7 @@ exports.downloadPdf = async (req, res) => {
 
       autoTable(doc, {
         startY: 15, margin: { left: 14, right: 14 }, theme: 'grid',
-        styles: { font: 'helvetica', fontSize: 8, cellPadding: 1.5, lineWidth: 0.3, lineColor: 0, textColor: 0, fillColor: false },
+        styles: { font: 'helvetica', fontSize: 8, cellPadding: 1.5, lineWidth: 0.3, lineColor: [180, 180, 180], textColor: [60, 60, 60], fillColor: false },
         columnStyles: {
           0: { cellWidth: 35, halign: 'center', valign: 'bottom', fontStyle: 'bold' },
           1: { cellWidth: 20, fontStyle: 'bold' },
@@ -437,8 +448,8 @@ exports.downloadPdf = async (req, res) => {
 
       autoTable(doc, {
         startY: doc.lastAutoTable.finalY, margin: { left: 14, right: 14 }, theme: 'grid',
-        headStyles: { font: 'helvetica', textColor: 0, fontStyle: 'bold', lineWidth: 0.3, lineColor: 0, fontSize: 8, fillColor: false },
-        styles: { font: 'helvetica', fontSize: 8, cellPadding: 2, lineWidth: 0.3, lineColor: 0, textColor: 0, fillColor: false },
+        headStyles: { font: 'helvetica', textColor: [80, 80, 80], fontStyle: 'bold', lineWidth: 0.3, lineColor: [180, 180, 180], fontSize: 8, fillColor: false },
+        styles: { font: 'helvetica', fontSize: 8, cellPadding: 2, lineWidth: 0.3, lineColor: [180, 180, 180], textColor: [60, 60, 60], fillColor: false },
         columnStyles: { 6: { halign: 'right' }, 7: { halign: 'right' } },
         head: [['MONTH/YEAR', 'NATURE', 'LEVEL', 'DESCRIPTION', 'HRS/ORIGINAL AMOUNT', 'RATE(%) BALANCE', 'PAYMENTS', 'DEDUCTIONS']],
         body: tableRows,
@@ -450,7 +461,7 @@ exports.downloadPdf = async (req, res) => {
 
       autoTable(doc, {
         startY: doc.lastAutoTable.finalY, margin: { left: 14, right: 14 }, theme: 'grid',
-        styles: { font: 'helvetica', fontSize: 8, cellPadding: 1.5, lineWidth: 0.3, lineColor: 0, textColor: 0, fillColor: false },
+        styles: { font: 'helvetica', fontSize: 8, cellPadding: 1.5, lineWidth: 0.3, lineColor: [180, 180, 180], textColor: [60, 60, 60], fillColor: false },
         columnStyles: {
           0: { cellWidth: 30, fontStyle: 'bold' }, 1: { cellWidth: 20, halign: 'right' }, 2: { cellWidth: 30, fontStyle: 'bold' },
           3: { cellWidth: 18, halign: 'right' }, 4: { cellWidth: 25, fontStyle: 'bold' }, 5: { cellWidth: 15, halign: 'right' },
