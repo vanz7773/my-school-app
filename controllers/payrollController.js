@@ -9,9 +9,27 @@ const SchoolInfo = require('../models/SchoolInfo');
 exports.getSettings = async (req, res) => {
   try {
     let settings = await PayrollSettings.findOne({ school: req.user.school });
+    
+    const defaultComponents = [
+      { name: 'Basic Salary', type: 'earning', isDefault: true, active: true },
+      { name: 'Transport Allowance', type: 'earning', isDefault: false, active: true },
+      { name: 'SSNIT', type: 'deduction', isDefault: true, active: true }
+    ];
+
     if (!settings) {
-      settings = await PayrollSettings.create({ school: req.user.school });
+      settings = await PayrollSettings.create({ 
+        school: req.user.school,
+        components: defaultComponents
+      });
+    } else {
+      // Auto-inject SSNIT into existing settings if not present
+      const hasSSNIT = settings.components.some(c => c.name.toUpperCase() === 'SSNIT');
+      if (!hasSSNIT) {
+        settings.components.push({ name: 'SSNIT', type: 'deduction', isDefault: true, active: true });
+        await settings.save();
+      }
     }
+    
     res.json({ success: true, settings });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
