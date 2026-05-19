@@ -4,19 +4,34 @@ const SchoolSmsSettings = require('../models/SchoolSmsSettings');
 
 const ARKESEL_API_URL = 'https://sms.arkesel.com/sms/api';
 
-// Format Ghana phone number to international format without + sign for Arkesel
-// e.g. 024xxxxxxx -> 23324xxxxxxx
+// Format Ghana phone number to international format without + sign for Arkesel.
+// Examples: 054xxxxxxx -> 23354xxxxxxx, +23354xxxxxxx -> 23354xxxxxxx
 const formatPhoneNumber = (phone) => {
   if (!phone) return null;
-  let formatted = phone.replace(/\D/g, ''); // remove non-digits
-  if (formatted.startsWith('0')) {
-    formatted = '233' + formatted.substring(1);
-  } else if (formatted.startsWith('+233')) {
-    formatted = formatted.substring(1);
-  } else if (!formatted.startsWith('233') && formatted.length === 9) {
-    formatted = '233' + formatted; // Handle numbers missing leading 0 or 233
+
+  let formatted = String(phone).trim().replace(/\D/g, '');
+  if (formatted.startsWith('00')) {
+    formatted = formatted.substring(2);
   }
-  return formatted;
+  if (formatted.startsWith('0') && formatted.length === 10) {
+    formatted = `233${formatted.substring(1)}`;
+  } else if (!formatted.startsWith('233') && formatted.length === 9) {
+    formatted = `233${formatted}`;
+  }
+
+  return /^233\d{9}$/.test(formatted) ? formatted : null;
+};
+
+const normalizeRecipients = (recipients) => {
+  const rawRecipients = Array.isArray(recipients) ? recipients : [recipients];
+  const formattedRecipients = rawRecipients.map(formatPhoneNumber).filter(Boolean);
+  return [...new Set(formattedRecipients)];
+};
+
+const isSuccessfulProviderResponse = (data) => {
+  const code = String(data?.code || data?.status || '').toLowerCase();
+  const message = String(data?.message || '').toLowerCase();
+  return code === 'ok' || code === '1000' || message.includes('successfully sent');
 };
 
 class SmsService {
@@ -59,9 +74,7 @@ class SmsService {
         throw new Error('No valid recipients provided');
       }
 
-      const formattedRecipients = Array.isArray(recipients) 
-        ? recipients.map(formatPhoneNumber).filter(Boolean)
-        : [formatPhoneNumber(recipients)].filter(Boolean);
+      const formattedRecipients = normalizeRecipients(recipients);
 
       if (formattedRecipients.length === 0) {
         throw new Error('No valid phone numbers after formatting');
@@ -93,11 +106,25 @@ class SmsService {
 
       // Send via Arkesel V1 API
       const sender = settings.senderId || process.env.ARKESEL_SENDER_ID || 'SCHOOL';
-      const encodedMessage = encodeURIComponent(message);
+      const params = new URLSearchParams({
+        action: 'send-sms',
+        api_key: apiKey,
+        to: recipientsString,
+        from: sender,
+        sms: message
+      });
       
       const response = await axios.get(
-        `${ARKESEL_API_URL}?action=send-sms&api_key=${apiKey}&to=${recipientsString}&from=${sender}&sms=${encodedMessage}`
+        `${ARKESEL_API_URL}?${params.toString()}`
       );
+
+      if (!isSuccessfulProviderResponse(response.data)) {
+        const providerMessage = response.data?.message || 'SMS provider rejected the request';
+        const providerError = new Error(providerMessage);
+        providerError.response = { data: response.data };
+        providerError.formattedRecipients = newRecipients;
+        throw providerError;
+      }
 
       // Log success
       const logsToCreate = newRecipients.map(phone => ({
@@ -129,7 +156,7 @@ class SmsService {
       
       // Log failure if we got past basic validation
       if (schoolId && recipients && message) {
-        const failedPhones = Array.isArray(recipients) ? recipients : [recipients];
+        const failedPhones = error.formattedRecipients || normalizeRecipients(recipients);
         const logsToCreate = failedPhones.map(phone => ({
           school: schoolId,
           recipientPhone: phone || 'unknown',
@@ -154,9 +181,7 @@ class SmsService {
         throw new Error('No valid recipients provided');
       }
 
-      const formattedRecipients = Array.isArray(recipients) 
-        ? recipients.map(formatPhoneNumber).filter(Boolean)
-        : [formatPhoneNumber(recipients)].filter(Boolean);
+      const formattedRecipients = normalizeRecipients(recipients);
 
       if (formattedRecipients.length === 0) {
         throw new Error('No valid phone numbers after formatting');
@@ -164,11 +189,24 @@ class SmsService {
 
       const recipientsString = formattedRecipients.join(',');
       const sender = process.env.ARKESEL_SENDER_ID || 'SYSTEM';
-      const encodedMessage = encodeURIComponent(message);
+      const params = new URLSearchParams({
+        action: 'send-sms',
+        api_key: apiKey,
+        to: recipientsString,
+        from: sender,
+        sms: message
+      });
       
       const response = await axios.get(
-        `${ARKESEL_API_URL}?action=send-sms&api_key=${apiKey}&to=${recipientsString}&from=${sender}&sms=${encodedMessage}`
+        `${ARKESEL_API_URL}?${params.toString()}`
       );
+
+      if (!isSuccessfulProviderResponse(response.data)) {
+        const providerMessage = response.data?.message || 'SMS provider rejected the request';
+        const providerError = new Error(providerMessage);
+        providerError.response = { data: response.data };
+        throw providerError;
+      }
 
       return {
         success: true,
