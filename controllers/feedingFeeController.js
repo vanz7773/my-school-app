@@ -2284,31 +2284,35 @@ const getFeedingFeeAuditReport = async (req, res) => {
       };
     };
 
+    const weeklyDayNames = { M: 'Monday', T: 'Tuesday', W: 'Wednesday', TH: 'Thursday', F: 'Friday' };
+    const weeklyReports = ['M', 'T', 'W', 'TH', 'F'].map(generateReportForDay);
+    const weeklySummary = weeklyReports.reduce((summary, dayReport) => {
+      summary.grandTotal += dayReport.grandTotal;
+      summary.totalPaid += dayReport.totalPaid;
+      summary.totalUnpaid += dayReport.totalUnpaid;
+      summary.dailyTotals.push({
+        day: dayReport.day,
+        dayName: weeklyDayNames[dayReport.day] || dayReport.day,
+        grandTotal: dayReport.grandTotal,
+        totalPaid: dayReport.totalPaid,
+        totalUnpaid: dayReport.totalUnpaid
+      });
+      return summary;
+    }, { grandTotal: 0, totalPaid: 0, totalUnpaid: 0, dailyTotals: [] });
+
     if (day === 'All') {
-      const dailyReports = [];
-      let overallGrandTotal = 0;
-      let overallTotalPaid = 0;
-      let overallTotalUnpaid = 0;
-      
-      for (const targetDay of ['M', 'T', 'W', 'TH', 'F']) {
-        const dayReport = generateReportForDay(targetDay);
-        dailyReports.push(dayReport);
-        overallGrandTotal += dayReport.grandTotal;
-        overallTotalPaid += dayReport.totalPaid;
-        overallTotalUnpaid += dayReport.totalUnpaid;
-      }
-      
       return res.json({
         success: true,
         day,
         week: weekNumber,
-        grandTotal: overallGrandTotal,
-        totalPaid: overallTotalPaid,
-        totalUnpaid: overallTotalUnpaid,
-        dailyReports // NEW: Array of reports
+        grandTotal: weeklySummary.grandTotal,
+        totalPaid: weeklySummary.totalPaid,
+        totalUnpaid: weeklySummary.totalUnpaid,
+        weeklySummary,
+        dailyReports: weeklyReports
       });
     } else {
-      const singleReport = generateReportForDay(day);
+      const singleReport = weeklyReports.find(dayReport => dayReport.day === day) || generateReportForDay(day);
       return res.json({
         success: true,
         day,
@@ -2316,6 +2320,7 @@ const getFeedingFeeAuditReport = async (req, res) => {
         grandTotal: singleReport.grandTotal,
         totalPaid: singleReport.totalPaid,
         totalUnpaid: singleReport.totalUnpaid,
+        weeklySummary,
         report: singleReport.report
       });
     }
