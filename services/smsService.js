@@ -144,6 +144,42 @@ class SmsService {
       throw error;
     }
   }
+
+  async sendSystemSms({ recipients, message, messageType = 'system' }) {
+    try {
+      const apiKey = process.env.ARKESEL_API_KEY;
+      if (!apiKey) throw new Error('ARKESEL_API_KEY is not configured');
+
+      if (!recipients || recipients.length === 0) {
+        throw new Error('No valid recipients provided');
+      }
+
+      const formattedRecipients = Array.isArray(recipients) 
+        ? recipients.map(formatPhoneNumber).filter(Boolean)
+        : [formatPhoneNumber(recipients)].filter(Boolean);
+
+      if (formattedRecipients.length === 0) {
+        throw new Error('No valid phone numbers after formatting');
+      }
+
+      const recipientsString = formattedRecipients.join(',');
+      const sender = process.env.ARKESEL_SENDER_ID || 'SYSTEM';
+      const encodedMessage = encodeURIComponent(message);
+      
+      const response = await axios.get(
+        `${ARKESEL_API_URL}?action=send-sms&api_key=${apiKey}&to=${recipientsString}&from=${sender}&sms=${encodedMessage}`
+      );
+
+      return {
+        success: true,
+        data: response.data,
+        recipientsCount: formattedRecipients.length
+      };
+    } catch (error) {
+      console.error('System SMS Send Error:', error.response?.data || error.message);
+      throw error;
+    }
+  }
 }
 
 module.exports = new SmsService();

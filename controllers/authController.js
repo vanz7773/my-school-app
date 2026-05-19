@@ -36,8 +36,8 @@ const hashToken = (token) =>
 // ------------------------------
 exports.register = async (req, res) => {
   try {
-    const { name, email, password, role, schoolName, schoolType } = req.body;
-    if (!name || !email || !password || !role || !schoolName)
+    const { name, email, phone, password, role, schoolName, schoolType } = req.body;
+    if (!name || !email || !phone || !password || !role || !schoolName)
       return sendError(res, 400, "All fields are required");
 
     const normalizedEmail = String(email).toLowerCase().trim();
@@ -58,10 +58,24 @@ exports.register = async (req, res) => {
     const user = await User.create({
       name: name.trim(),
       email: normalizedEmail,
+      phone: phone.trim(),
       password,
       role,
       school: school._id || school.id,
     });
+
+    // Send Welcome SMS
+    try {
+      const smsService = require('../services/smsService');
+      const message = `Welcome to My School App School Management System! Your admin account for ${schoolName} has been successfully created. Contact support on +233594640478 or contactcorevista@gmail.com if you need help getting started.`;
+
+      await smsService.sendSystemSms({
+        recipients: [phone],
+        message: message
+      });
+    } catch (smsError) {
+      console.error("Welcome SMS failed to send (non-fatal):", smsError);
+    }
 
     return res.status(201).json({
       success: true,
