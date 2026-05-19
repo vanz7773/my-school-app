@@ -2185,6 +2185,33 @@ module.exports = {
         .populate('recordedBy', 'name')
         .lean();
 
+      const dailyTotalsQuery = { school: schoolId };
+      if (term) dailyTotalsQuery.term = term.trim();
+      if (academicYear) dailyTotalsQuery.academicYear = academicYear.trim();
+
+      const termPayments = await Payment.find(dailyTotalsQuery)
+        .select('amount paymentDate')
+        .sort({ paymentDate: 1 })
+        .lean();
+
+      const dailyTotalsMap = new Map();
+      termPayments.forEach(payment => {
+        const paymentDate = new Date(payment.paymentDate);
+        const paymentDateKey = paymentDate.toISOString().slice(0, 10);
+        const current = dailyTotalsMap.get(paymentDateKey) || {
+          date: paymentDateKey,
+          totalAmount: 0,
+          paidCount: 0
+        };
+
+        current.totalAmount += Number(payment.amount) || 0;
+        current.paidCount += 1;
+        dailyTotalsMap.set(paymentDateKey, current);
+      });
+
+      const dailyTotals = Array.from(dailyTotalsMap.values());
+      const termGrandTotal = dailyTotals.reduce((sum, day) => sum + day.totalAmount, 0);
+
       let grandTotal = 0;
       let totalPaid = payments.length;
       const auditReport = [];
@@ -2242,6 +2269,8 @@ module.exports = {
         academicYear: academicYear?.trim(),
         grandTotal,
         totalPaid,
+        dailyTotals,
+        termGrandTotal,
         report: auditReport
       });
 
