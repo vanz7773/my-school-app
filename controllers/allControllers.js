@@ -1023,15 +1023,18 @@ module.exports = {
         });
       }
 
+      const cleanTerm = term.trim();
+      const cleanAcademicYear = academicYear.trim();
+
       const bills = await TermBill.find({
         school: req.user.school,
-        term: term.trim(),
-        academicYear: academicYear.trim()
+        term: cleanTerm,
+        academicYear: cleanAcademicYear
       })
         .populate('student', 'isExemptFromTermFees')
         .lean();
 
-            let totalExpected = 0;
+      let totalExpected = 0;
       let totalPaid = 0;
       let totalBalance = 0;
       let studentsBilled = 0;
@@ -1069,10 +1072,11 @@ module.exports = {
           return typeof value === 'number' ? value : 0;
         };
 
-        const expected = transformNumber(bill.totalAmount);
+        const billingMode = normalizeBillingMode(bill.billingMode);
+        const isDailyVariable = isDailyVariableMode(billingMode);
         const paid = transformNumber(bill.totalPaid);
-        const explicitBalance = transformNumber(bill.balance);
-        const actualBalance = (explicitBalance !== undefined && explicitBalance !== null && explicitBalance !== 0) ? explicitBalance : (expected - paid);
+        const expected = isDailyVariable ? paid : transformNumber(bill.totalAmount);
+        const actualBalance = isDailyVariable ? 0 : Math.max(0, expected - paid);
 
         totalExpected += expected;
         totalPaid += paid;
@@ -2149,7 +2153,7 @@ module.exports = {
   // Get daily term billing audit report
   async getTermBillingAuditReport(req, res) {
     try {
-      const { date } = req.query;
+      const { date, term, academicYear } = req.query;
       const schoolId = req.user.school;
 
       if (!date) {
@@ -2162,10 +2166,15 @@ module.exports = {
       endOfDay.setHours(23, 59, 59, 999);
 
       // Fetch payments for the given day
-      const payments = await Payment.find({
+      const paymentQuery = {
         school: schoolId,
         paymentDate: { $gte: startOfDay, $lte: endOfDay }
-      })
+      };
+
+      if (term) paymentQuery.term = term.trim();
+      if (academicYear) paymentQuery.academicYear = academicYear.trim();
+
+      const payments = await Payment.find(paymentQuery)
         .populate({
           path: 'student',
           populate: [
@@ -2229,6 +2238,8 @@ module.exports = {
       res.json({
         success: true,
         date,
+        term: term?.trim(),
+        academicYear: academicYear?.trim(),
         grandTotal,
         totalPaid,
         report: auditReport
