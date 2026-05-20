@@ -13,6 +13,8 @@ router.put('/schools/:id/status', superAdminController.updateSchoolStatus);
 router.put('/schools/:id/features', superAdminController.updateSchoolFeatures);
 router.post('/schools/:id/alert-owing', superAdminController.alertOwingSchool);
 router.post('/schools/:id/credit-sms', superAdminController.creditSmsBalance);
+router.post('/schools/:id/send-sms', superAdminController.sendSmsToAdmin);
+
 
 // 💰 School Transactions (Invoices & Payments)
 router.get('/schools/:schoolId/transactions', superAdminController.getSchoolTransactions);

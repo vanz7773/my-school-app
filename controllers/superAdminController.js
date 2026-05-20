@@ -375,3 +375,60 @@ exports.updateTransactionStatus = async (req, res) => {
     }
 };
 
+exports.sendSmsToAdmin = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { message } = req.body;
+
+        if (!message) {
+            return sendError(res, 400, "Message content is required.");
+        }
+
+        const school = await School.findById(id);
+        if (!school) {
+            return sendError(res, 404, "School not found");
+        }
+
+        // Find admins for this school
+        const admins = await User.find({ school: id, role: "admin" }).select("phone");
+        const phones = admins.map(admin => admin.phone).filter(Boolean);
+
+        if (phones.length === 0) {
+            return sendError(res, 400, "No admin users with phone numbers found for this school.");
+        }
+
+        const smsService = require("../services/smsService");
+        const result = await smsService.sendSystemSms({
+            recipients: phones,
+            message: message,
+            messageType: "system"
+        });
+
+        // Also create a Notification for their dashboard
+        try {
+            const notification = await Notification.create({
+                title: "Message from Super Admin",
+                message: message,
+                type: "general",
+                audience: "admin",
+                school: id,
+                sender: req.user ? req.user._id : null
+            });
+            const mockReq = { app: req.app, user: req.user };
+            await broadcastNotification(mockReq, notification);
+        } catch (notifErr) {
+            console.error("Failed to send notification:", notifErr);
+        }
+
+        return res.json({
+            success: true,
+            message: `SMS successfully sent to ${phones.length} admin(s) of ${school.name}`,
+            result
+        });
+    } catch (err) {
+        console.error("Error in sendSmsToAdmin:", err);
+        return sendError(res, 500, "Server error sending SMS to admin");
+    }
+};
+
+
