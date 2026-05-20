@@ -378,7 +378,7 @@ exports.updateTransactionStatus = async (req, res) => {
 exports.sendSmsToAdmin = async (req, res) => {
     try {
         const { id } = req.params;
-        const { message } = req.body;
+        const { message, senderId } = req.body;
 
         if (!message) {
             return sendError(res, 400, "Message content is required.");
@@ -401,6 +401,7 @@ exports.sendSmsToAdmin = async (req, res) => {
         const result = await smsService.sendSystemSms({
             recipients: phones,
             message: message,
+            sender: senderId,
             messageType: "system"
         });
 

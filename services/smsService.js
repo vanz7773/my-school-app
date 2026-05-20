@@ -172,7 +172,7 @@ class SmsService {
     }
   }
 
-  async sendSystemSms({ recipients, message, messageType = 'system' }) {
+  async sendSystemSms({ recipients, message, sender, messageType = 'system' }) {
     try {
       const apiKey = process.env.ARKESEL_API_KEY;
       if (!apiKey) throw new Error('ARKESEL_API_KEY is not configured');
@@ -188,12 +188,15 @@ class SmsService {
       }
 
       const recipientsString = formattedRecipients.join(',');
-      const sender = process.env.ARKESEL_SENDER_ID || 'SYSTEM';
+      let senderId = sender || process.env.ARKESEL_SENDER_ID || 'SYSTEM';
+      // Alphanumeric Sender ID must be max 11 characters
+      senderId = String(senderId).trim().substring(0, 11);
+
       const params = new URLSearchParams({
         action: 'send-sms',
         api_key: apiKey,
         to: recipientsString,
-        from: sender,
+        from: senderId,
         sms: message
       });
       
