@@ -502,7 +502,7 @@ const getAdminDailyRecords = async (req, res) => {
     if (teacherId) teacherQuery._id = new mongoose.Types.ObjectId(teacherId);
 
     const allTeachers = await Teacher.find(teacherQuery)
-      .populate({ path: 'user', select: 'name' })
+      .populate({ path: 'user', select: 'name profilePicture' })
       .lean();
 
     // Sort teachers alphabetically by name
@@ -510,7 +510,7 @@ const getAdminDailyRecords = async (req, res) => {
 
     // 2️⃣ Fetch actual attendance records
     const records = await Attendance.find(match)
-      .populate({ path: 'teacher', populate: { path: 'user', select: 'name' } })
+      .populate({ path: 'teacher', populate: { path: 'user', select: 'name profilePicture' } })
       .sort({ date: -1 });
 
     // 3️⃣ Generate the full list with placeholders
@@ -1315,7 +1315,7 @@ const getAdminAttendanceHistory = async (req, res) => {
     const history = await Attendance.find(filter)
       .populate({
         path: 'teacher',
-        populate: { path: 'user', select: 'name ' }
+        populate: { path: 'user', select: 'name profilePicture' }
       })
       .populate({
         path: 'term',

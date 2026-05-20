@@ -193,7 +193,7 @@ const getAllMovements = async (req, res) => {
       .populate({
         path: 'teacher',
         select: 'user',
-        populate: { path: 'user', select: 'name' }
+        populate: { path: 'user', select: 'name profilePicture' }
       })
       .sort({ createdAt: -1 })
       .lean();
@@ -201,7 +201,8 @@ const getAllMovements = async (req, res) => {
     // Map to flatten teacher name for easy frontend use
     const formattedMovements = movements.map(m => ({
       ...m,
-      teacherName: m.teacher?.user?.name || 'Unknown Teacher'
+      teacherName: m.teacher?.user?.name || 'Unknown Teacher',
+      teacherProfilePicture: m.teacher?.user?.profilePicture || null
     }));
 
     return res.status(200).json({ movements: formattedMovements });

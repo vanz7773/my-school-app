@@ -152,7 +152,7 @@ exports.createTeacher = async (req, res) => {
     }
 
     const populatedTeacher = await Teacher.findById(teacher._id)
-      .populate("user", "name email")
+      .populate("user", "name email profilePicture")
       .populate("assignedClasses", "name")
       .populate("subjects", "name shortName")
       .lean();
@@ -282,7 +282,7 @@ exports.bulkCreateTeachers = async (req, res) => {
 exports.getAllTeachers = async (req, res) => {
   try {
     const teachers = await Teacher.find({ school: req.user.school })
-      .populate("user", "name email gender")
+      .populate("user", "name email gender profilePicture")
       .populate("assignedClasses", "name")
       .populate("subjects", "name shortName")
       .populate("school", "name schoolType lockedFeatures");
@@ -316,7 +316,7 @@ exports.getTeacherById = async (req, res) => {
       _id: req.params.id,
       school: req.user.school
     })
-      .populate("user", "name email role gender")
+      .populate("user", "name email role gender profilePicture")
       .populate("assignedClasses", "name")
       .populate("subjects", "name shortName")
       .populate("school", "name schoolType lockedFeatures");
@@ -609,7 +609,7 @@ exports.getMyStudents = async (req, res) => {
       class: { $in: teacher.assignedClasses },
       school: req.user.school
     })
-      .populate("user", "name email")
+      .populate("user", "name email profilePicture")
       .populate("class", "name");
 
     res.json({
@@ -643,7 +643,7 @@ exports.getMyProfile = async (req, res) => {
       .populate("assignedClasses", "name")
       .populate("subjects", "name shortName")
       .populate("school", "name schoolType lockedFeatures")
-      .populate("user", "name email role gender");
+      .populate("user", "name email role gender profilePicture");
 
     if (!teacher) {
       return res.status(404).json({
@@ -675,7 +675,7 @@ exports.getTeacherByUser = async (req, res) => {
       .populate("assignedClasses", "name")
       .populate("subjects", "name shortName")
       .populate("school", "name schoolType lockedFeatures")
-      .populate("user", "name email role gender");
+      .populate("user", "name email role gender profilePicture");
 
     if (!teacher) {
       return res.status(404).json({
