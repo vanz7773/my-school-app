@@ -460,7 +460,50 @@ module.exports = {
               billToReturn = billToReturn[0];
             }
           } else if (existingBill) {
-            billToReturn = existingBill;
+            const total = template.items.reduce((sum, item) => sum + item.amount, 0);
+
+            // Distribute existing payments across the new template items
+            let amountLeft = Number(existingBill.totalPaid) || 0;
+            const updatedItems = template.items.map(item => {
+              if (amountLeft <= 0) {
+                return {
+                  name: item.name,
+                  amount: item.amount,
+                  paid: 0,
+                  balance: item.amount
+                };
+              }
+              const paymentApplied = Math.min(amountLeft, item.amount);
+              amountLeft -= paymentApplied;
+              return {
+                name: item.name,
+                amount: item.amount,
+                paid: paymentApplied,
+                balance: item.amount - paymentApplied
+              };
+            });
+
+            const newTotalPaid = Math.min(total, Number(existingBill.totalPaid) || 0);
+            const newBalance = Math.max(0, total - newTotalPaid);
+            const newStatus = newTotalPaid >= total ? 'Paid' : newTotalPaid > 0 ? 'Partial' : 'Unpaid';
+
+            billToReturn = await TermBill.findByIdAndUpdate(
+              existingBill._id,
+              {
+                template: templateId,
+                items: updatedItems,
+                totalAmount: total,
+                totalPaid: newTotalPaid,
+                balance: newBalance,
+                status: newStatus,
+                billingMode,
+                isManualUpdate: false,
+                class: student.class || null,
+                term,
+                academicYear
+              },
+              { new: true, session }
+            );
           } else {
             const total = template.items.reduce((sum, item) => sum + item.amount, 0);
             billToReturn = await TermBill.create([{
