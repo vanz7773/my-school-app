@@ -1165,8 +1165,11 @@ const getTodayAttendance = async (req, res) => {
     const canClockOut =
       !isManualStatus && !!attendance?.signInTime && !attendance?.signOutTime;
 
-    const ClockInException = require('../models/ClockInException');
-    const exception = await ClockInException.findOne({ teacherId: teacher._id, isActive: true });
+     const ClockInException = require('../models/ClockInException');
+    const exception = await ClockInException.findOne({
+      teacherId: { $in: [teacher._id, teacher.user] },
+      isActive: true
+    });
 
     res.status(200).json({
       status: 'success',

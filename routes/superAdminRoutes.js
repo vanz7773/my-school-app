@@ -15,6 +15,11 @@ router.post('/schools/:id/alert-owing', superAdminController.alertOwingSchool);
 router.post('/schools/:id/credit-sms', superAdminController.creditSmsBalance);
 router.post('/schools/:id/send-sms', superAdminController.sendSmsToAdmin);
 
+// 📍 Geofence overrides/Clock-in Exceptions
+router.get('/schools/:id/teachers', superAdminController.getSchoolTeachersAndExceptions);
+router.post('/teachers/:teacherId/exception', superAdminController.updateTeacherException);
+
+
 
 // 💰 School Transactions (Invoices & Payments)
 router.get('/schools/:schoolId/transactions', superAdminController.getSchoolTransactions);

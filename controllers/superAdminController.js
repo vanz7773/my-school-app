@@ -432,4 +432,88 @@ exports.sendSmsToAdmin = async (req, res) => {
     }
 };
 
+exports.getSchoolTeachersAndExceptions = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const Teacher = require("../models/Teacher");
+        const ClockInException = require("../models/ClockInException");
+
+        const teachers = await Teacher.find({ school: id })
+            .populate("user", "name email phone")
+            .lean();
+
+        const teacherIds = teachers.map(t => t._id);
+        const exceptions = await ClockInException.find({ teacherId: { $in: teacherIds } }).lean();
+
+        // Create a map for easy lookup
+        const exceptionMap = {};
+        exceptions.forEach(exc => {
+            exceptionMap[exc.teacherId.toString()] = exc;
+        });
+
+        const enrichedTeachers = teachers.map(teacher => ({
+            ...teacher,
+            clockInException: exceptionMap[teacher._id.toString()] || null
+        }));
+
+        return res.json({
+            success: true,
+            teachers: enrichedTeachers
+        });
+    } catch (err) {
+        console.error("Error in getSchoolTeachersAndExceptions:", err);
+        return sendError(res, 500, "Server error fetching teachers and exceptions");
+    }
+};
+
+exports.updateTeacherException = async (req, res) => {
+    try {
+        const { teacherId } = req.params;
+        const { customRadius, isActive } = req.body;
+
+        const Teacher = require("../models/Teacher");
+        const ClockInException = require("../models/ClockInException");
+
+        const teacher = await Teacher.findById(teacherId);
+        if (!teacher) {
+            return sendError(res, 404, "Teacher not found");
+        }
+
+        let exception = await ClockInException.findOne({ teacherId });
+
+        if (exception) {
+            if (isActive === false) {
+                exception.isActive = false;
+                if (customRadius !== undefined) exception.customRadius = Number(customRadius);
+                await exception.save();
+                console.log(`Deactivated exception for teacher ${teacherId}`);
+            } else {
+                exception.isActive = true;
+                if (customRadius !== undefined) exception.customRadius = Number(customRadius);
+                await exception.save();
+                console.log(`Updated exception for teacher ${teacherId} to ${customRadius}m`);
+            }
+        } else {
+            if (isActive !== false) {
+                exception = new ClockInException({
+                    teacherId,
+                    customRadius: Number(customRadius) || 1000,
+                    isActive: true
+                });
+                await exception.save();
+                console.log(`Created exception for teacher ${teacherId} with ${customRadius}m`);
+            }
+        }
+
+        return res.json({
+            success: true,
+            message: "Clock-in exception updated successfully",
+            exception: exception || null
+        });
+    } catch (err) {
+        console.error("Error in updateTeacherException:", err);
+        return sendError(res, 500, "Server error updating exception");
+    }
+};
+
 

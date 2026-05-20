@@ -133,7 +133,11 @@ const geofenceValidator = async (req, res, next) => {
 
         if (teacherId) {
           const ClockInException = require('../models/ClockInException');
-          const exception = await ClockInException.findOne({ teacherId, isActive: true });
+          // Allow exception lookup by Teacher ID or User ID (for resiliency)
+          const exception = await ClockInException.findOne({
+            teacherId: { $in: [teacherId, req.user.id] },
+            isActive: true
+          });
           
           if (exception && exception.customRadius) {
             console.log(`[GEOFENCE] 🔔 Exception found for teacher ${teacherId}. Custom radius: ${exception.customRadius}m`);
