@@ -344,57 +344,16 @@ async function findFlexibleTemplate(school, classLevelKey) {
     }
   }
 
-  // If still not found, try to find any template with same number
+  // If still not found, fall back to ANY global template with the same level (e.g. BASIC_1 for BASIC_2)
   if (!globalTemplate) {
-    const numMatch = classLevelKey.match(/\d+/);
-    if (numMatch) {
-      const num = numMatch[0];
-      const templatesWithSameNumber = await SbaTemplate.find({
-        key: new RegExp(num + '$')
+    const levelMatch = classLevelKey.split('_')[0]; // e.g. "BASIC", "KG", "NURSERY"
+    if (levelMatch) {
+      globalTemplate = await SbaTemplate.findOne({
+        key: { $regex: new RegExp(`^${levelMatch}_`, 'i') }
       }).lean();
-
-      console.log(`🔍 Templates with number ${num}: ${templatesWithSameNumber.map(t => t.key).join(', ')}`);
-
-      if (templatesWithSameNumber.length > 0) {
-        // Prioritize BASIC templates for numbers 1-9
-        const basicTemplate = templatesWithSameNumber.find(t =>
-          t.key.toUpperCase().startsWith('BASIC_')
-        );
-        if (basicTemplate) {
-          globalTemplate = basicTemplate;
-          usedKey = basicTemplate.key;
-          console.log(`🔍 Found BASIC template with same number: ${usedKey}`);
-        } else {
-          globalTemplate = templatesWithSameNumber[0];
-          usedKey = globalTemplate.key;
-          console.log(`🔍 Found template with same number: ${usedKey}`);
-        }
-      }
-    }
-  }
-
-  // If still not found, check school's existing templates for similar key
-  if (!globalTemplate && school?.sbaMaster) {
-    const schoolKeys = Object.keys(school.sbaMaster);
-    console.log(`🔍 Checking school templates for fallback: ${schoolKeys.join(', ')}`);
-
-    // Look for templates with same number
-    const numMatch = classLevelKey.match(/\d+/);
-    if (numMatch) {
-      const num = numMatch[0];
-      const similarSchoolKey = schoolKeys.find(key => key.includes(num));
-
-      if (similarSchoolKey) {
-        console.log(`🔍 Found school template with same number: ${similarSchoolKey}`);
-        // We can't return this directly, but we can use it to find corresponding global template
-        globalTemplate = await SbaTemplate.findOne({
-          key: { $regex: new RegExp(similarSchoolKey.replace(/\d+$/, ''), 'i') }
-        }).lean();
-
-        if (globalTemplate) {
-          usedKey = globalTemplate.key;
-          console.log(`🔍 Found corresponding global template: ${usedKey}`);
-        }
+      if (globalTemplate) {
+        usedKey = globalTemplate.key;
+        console.log(`🔍 Found global template with same level (${levelMatch}): ${usedKey}`);
       }
     }
   }
@@ -412,9 +371,9 @@ function findSimilarSchoolKey(school, classLevelKey) {
   if (!school?.sbaMaster) return null;
 
   const allKeys = Object.keys(school.sbaMaster);
-  console.log(`🔍 Looking for similar key among: ${allKeys.join(', ')}`);
+  console.log(`🔍 Looking for exact case-insensitive match among: ${allKeys.join(', ')}`);
 
-  // 1. Case-insensitive exact match
+  // 1. Case-insensitive exact match ONLY
   const caseInsensitiveMatch = allKeys.find(key =>
     key.toUpperCase() === classLevelKey.toUpperCase()
   );
@@ -423,34 +382,10 @@ function findSimilarSchoolKey(school, classLevelKey) {
     return caseInsensitiveMatch;
   }
 
-  // 2. Match by number
-  const numMatch = classLevelKey.match(/\d+/);
-  if (numMatch) {
-    const num = numMatch[0];
-    const sameNumberKey = allKeys.find(key => {
-      const keyNum = (key.match(/\d+/) || [])[0];
-      return keyNum === num;
-    });
-
-    if (sameNumberKey) {
-      console.log(`🔍 Found key with same number (${num}): ${sameNumberKey}`);
-      return sameNumberKey;
-    }
-  }
-
-  // 3. Match by level (Basic vs JHS vs KG vs Nursery)
-  const levelMatch = allKeys.find(key => {
-    const level1 = classLevelKey.split('_')[0]; // e.g., "BASIC" from "BASIC_1"
-    const level2 = key.split('_')[0]; // e.g., "BASIC" from "BASIC_2"
-    return level1 === level2;
-  });
-
-  if (levelMatch) {
-    console.log(`🔍 Found key with same level: ${levelMatch}`);
-    return levelMatch;
-  }
-
-  console.log(`🔍 No similar key found for: ${classLevelKey}`);
+  // Strictly NO cross-level or cross-number matching. 
+  // If they request BASIC_1 and there is no BASIC_1 in school.sbaMaster,
+  // we want it to fall back to the GLOBAL BASIC_1 template, NOT the school's NURSERY_1 template.
+  console.log(`🔍 No exact match found for: ${classLevelKey}`);
   return null;
 }
 
