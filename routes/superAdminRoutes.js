@@ -14,6 +14,7 @@ router.put('/schools/:id/features', superAdminController.updateSchoolFeatures);
 router.post('/schools/:id/alert-owing', superAdminController.alertOwingSchool);
 router.post('/schools/:id/credit-sms', superAdminController.creditSmsBalance);
 router.post('/schools/:id/send-sms', superAdminController.sendSmsToAdmin);
+router.get('/schools/:id/sms-logs', superAdminController.getSchoolSmsLogs);
 
 // 📍 Geofence overrides/Clock-in Exceptions
 router.get('/schools/:id/teachers', superAdminController.getSchoolTeachersAndExceptions);

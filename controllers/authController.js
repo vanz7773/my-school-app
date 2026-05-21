@@ -70,6 +70,7 @@ exports.register = async (req, res) => {
       const message = `Welcome to My School App School Management System! Your admin account for ${schoolName} has been successfully created. Contact support on +233594640478 or contactcorevista@gmail.com if you need help getting started.`;
 
       await smsService.sendSystemSms({
+        schoolId: school._id || school.id,
         recipients: [phone],
         message: message
       });

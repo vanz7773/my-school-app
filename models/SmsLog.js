@@ -21,7 +21,7 @@ const smsLogSchema = new mongoose.Schema({
   },
   messageType: {
     type: String,
-    enum: ['attendance', 'fees', 'reports', 'announcements', 'bulk', 'custom'],
+    enum: ['attendance', 'fees', 'reports', 'announcements', 'bulk', 'custom', 'system'],
     required: true
   },
   apiResponse: {

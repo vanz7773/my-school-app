@@ -172,7 +172,7 @@ class SmsService {
     }
   }
 
-  async sendSystemSms({ recipients, message, sender, messageType = 'system' }) {
+  async sendSystemSms({ schoolId, recipients, message, sender, messageType = 'system' }) {
     try {
       const apiKey = process.env.ARKESEL_API_KEY;
       if (!apiKey) throw new Error('ARKESEL_API_KEY is not configured');
@@ -208,7 +208,21 @@ class SmsService {
         const providerMessage = response.data?.message || 'SMS provider rejected the request';
         const providerError = new Error(providerMessage);
         providerError.response = { data: response.data };
+        providerError.formattedRecipients = formattedRecipients;
         throw providerError;
+      }
+
+      // Log success to database if schoolId is provided
+      if (schoolId) {
+        const logsToCreate = formattedRecipients.map(phone => ({
+          school: schoolId,
+          recipientPhone: phone,
+          message,
+          messageType,
+          status: 'sent',
+          apiResponse: response.data
+        }));
+        await SmsLog.insertMany(logsToCreate).catch(console.error);
       }
 
       return {
@@ -218,6 +232,21 @@ class SmsService {
       };
     } catch (error) {
       console.error('System SMS Send Error:', error.response?.data || error.message);
+      
+      // Log failure to database if schoolId is provided
+      if (schoolId && recipients && message) {
+        const failedPhones = error.formattedRecipients || normalizeRecipients(recipients);
+        const logsToCreate = failedPhones.map(phone => ({
+          school: schoolId,
+          recipientPhone: phone || 'unknown',
+          message,
+          messageType,
+          status: 'failed',
+          apiResponse: error.response?.data || error.message
+        }));
+        await SmsLog.insertMany(logsToCreate).catch(console.error);
+      }
+
       throw error;
     }
   }

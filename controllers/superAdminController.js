@@ -399,6 +399,7 @@ exports.sendSmsToAdmin = async (req, res) => {
 
         const smsService = require("../services/smsService");
         const result = await smsService.sendSystemSms({
+            schoolId: id,
             recipients: phones,
             message: message,
             sender: senderId,
@@ -513,6 +514,33 @@ exports.updateTeacherException = async (req, res) => {
     } catch (err) {
         console.error("Error in updateTeacherException:", err);
         return sendError(res, 500, "Server error updating exception");
+    }
+};
+
+exports.getSchoolSmsLogs = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { page = 1, limit = 50 } = req.query;
+
+        const SmsLog = require("../models/SmsLog");
+
+        const logs = await SmsLog.find({ school: id })
+            .sort({ sentAt: -1 })
+            .skip((page - 1) * limit)
+            .limit(parseInt(limit));
+
+        const total = await SmsLog.countDocuments({ school: id });
+
+        return res.json({
+            success: true,
+            logs,
+            totalPages: Math.ceil(total / limit),
+            currentPage: parseInt(page),
+            total
+        });
+    } catch (err) {
+        console.error("Error in getSchoolSmsLogs:", err);
+        return sendError(res, 500, "Server error fetching school SMS logs");
     }
 };
 
