@@ -127,6 +127,14 @@ exports.sendBulkSms = async (req, res) => {
         if (t.telNo) phones.push(t.telNo);
         if (t.user && t.user.phone) phones.push(t.user.phone);
       });
+    } else if (recipientType === 'individual_teacher') {
+      const Teacher = require('../models/Teacher');
+      const teachers = await Teacher.find({ _id: { $in: recipientIds }, school: req.user.school }).select('phone telNo user').populate('user', 'phone');
+      teachers.forEach(t => {
+        if (t.phone) phones.push(t.phone);
+        if (t.telNo) phones.push(t.telNo);
+        if (t.user && t.user.phone) phones.push(t.user.phone);
+      });
     } else if (recipientType === 'direct_phones') {
       phones = recipientIds; // Assuming recipientIds is actually an array of phone numbers
     }
