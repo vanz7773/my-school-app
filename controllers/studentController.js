@@ -5,6 +5,7 @@ const Notification = require('../models/Notification');
 const StudentAttendance = require('../models/StudentAttendance');
 const FeedingFeeRecord = require('../models/FeedingFeeRecord');
 const enrollmentController = require('./enrollmentController'); // Ensure cache clearing support
+const { uploadFile } = require('../utils/firebaseStorage');
 
 const formatPhoneNumber = (phone) => {
   if (!phone) return phone;
@@ -102,6 +103,15 @@ exports.createStudent = async (req, res) => {
       const selectedClass = await Class.findById(classId);
       if (!selectedClass) return res.status(404).json({ message: 'Class not found' });
       studentData.class = classId;
+    }
+
+    if (req.file) {
+      try {
+        const publicUrl = await uploadFile(req.file, 'profiles', req.user.school);
+        studentData.profilePicture = publicUrl;
+      } catch (uploadErr) {
+        console.warn('⚠️ Profile picture upload failed:', uploadErr.message);
+      }
     }
 
     const student = new Student(studentData);
@@ -305,6 +315,15 @@ exports.updateStudent = async (req, res) => {
       const selectedClass = await Class.findById(classId);
       if (!selectedClass) return res.status(404).json({ message: 'Class not found' });
       student.class = classId;
+    }
+
+    if (req.file) {
+      try {
+        const publicUrl = await uploadFile(req.file, 'profiles', req.user.school);
+        student.profilePicture = publicUrl;
+      } catch (uploadErr) {
+        console.warn('⚠️ Profile picture upload failed:', uploadErr.message);
+      }
     }
 
     await student.save();
@@ -774,3 +793,87 @@ exports.deleteStudentsByClass = async (req, res) => {
     res.status(500).json({ message: 'Error deleting students', error: error.message });
   }
 };
+
+// ✅ Bulk upload profile pictures
+exports.bulkUploadPictures = async (req, res) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ message: 'No pictures provided for bulk upload' });
+    }
+
+    console.log(`📸 Bulk uploading ${req.files.length} pictures`);
+
+    const results = {
+      success: [],
+      errors: []
+    };
+
+    // Prepare list of files
+    for (const file of req.files) {
+      const originalName = file.originalname;
+      const fileNameWithoutExt = originalName.substring(0, originalName.lastIndexOf('.')).trim();
+      
+      if (!fileNameWithoutExt) {
+        results.errors.push({ file: originalName, message: "Invalid filename" });
+        continue;
+      }
+
+      // Try to match student by admission number or full name
+      let student = await Student.findOne({ 
+        school: req.user.school, 
+        admissionNumber: fileNameWithoutExt 
+      }).populate('user', 'name');
+
+      if (!student) {
+        // Fallback to name search
+        const users = await User.find({ 
+          school: req.user.school, 
+          role: 'student', 
+          name: new RegExp(`^${fileNameWithoutExt}$`, 'i') 
+        });
+        
+        if (users.length === 1) {
+          student = await Student.findOne({ school: req.user.school, user: users[0]._id }).populate('user', 'name');
+        } else if (users.length > 1) {
+          results.errors.push({ file: originalName, message: `Multiple students found with name "${fileNameWithoutExt}". Please use Admission Number instead.` });
+          continue;
+        }
+      }
+
+      if (!student) {
+        results.errors.push({ file: originalName, message: `Student not found for identifier "${fileNameWithoutExt}"` });
+        continue;
+      }
+
+      // Upload the picture
+      try {
+        const publicUrl = await uploadFile(file, 'profiles', req.user.school);
+        student.profilePicture = publicUrl;
+        await student.save();
+        results.success.push({ 
+          file: originalName, 
+          name: student.user?.name || "Unknown", 
+          admissionNumber: student.admissionNumber || "" 
+        });
+      } catch (uploadErr) {
+        console.error(`Upload error for ${originalName}:`, uploadErr);
+        results.errors.push({ file: originalName, message: "Failed to upload image to storage" });
+      }
+    }
+
+    res.status(200).json({
+      message: `Processed ${req.files.length} pictures`,
+      summary: {
+        total: req.files.length,
+        successCount: results.success.length,
+        errorCount: results.errors.length
+      },
+      results
+    });
+
+  } catch (err) {
+    console.error('❌ Error in bulkUploadPictures:', err);
+    res.status(500).json({ message: 'Error in bulk picture upload', error: err.message });
+  }
+};
+

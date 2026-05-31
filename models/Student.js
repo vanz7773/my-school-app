@@ -82,6 +82,8 @@ const studentSchema = new mongoose.Schema({
   dateOfLeaving: { type: Date },
   causeForLeaving: { type: String },
   remarks: { type: String },
+  
+  profilePicture: { type: String, default: "" },
 
   isExemptFromFeedingFee: {
     type: Boolean,

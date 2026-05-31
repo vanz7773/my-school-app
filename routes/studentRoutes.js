@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { protect, restrictTo } = require('../middlewares/authMiddleware');
+const upload = require('../middlewares/upload');
 const studentController = require('../controllers/studentController');
 
 const {
@@ -13,16 +14,18 @@ const {
   getStudentByUserId,
   getStudentById, // ✅ newly added import
   bulkCreateStudents,
+  bulkUploadPictures, // ✅ bulk pictures import
   deleteStudentsByClass
 } = studentController;
 
 // 🧭 Admin-only: Admit student
-router.post('/', protect, restrictTo('admin'), createStudent);
+router.post('/', protect, restrictTo('admin'), upload.single('profilePicture'), createStudent);
 router.post('/bulk', protect, restrictTo('admin'), bulkCreateStudents);
+router.post('/bulk-pictures', protect, restrictTo('admin'), upload.array('pictures', 100), bulkUploadPictures);
 
 // 🧭 Admin-only: View, update, delete students
 router.get('/', protect, restrictTo('admin'), getAllStudents);
-router.put('/:id', protect, restrictTo('admin'), updateStudent);
+router.put('/:id', protect, restrictTo('admin'), upload.single('profilePicture'), updateStudent);
 router.delete('/:id', protect, restrictTo('admin'), deleteStudent);
 router.delete('/class/:classId', protect, restrictTo('admin'), deleteStudentsByClass);
 
