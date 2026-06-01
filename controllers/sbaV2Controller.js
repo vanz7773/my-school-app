@@ -1,6 +1,7 @@
 const SbaRecord = require("../models/SbaRecord");
 const Student = require("../models/Student");
 const Class = require("../models/Class");
+const User = require("../models/User");
 
 // Calculate total and grade automatically if not provided or to ensure accuracy
 const calculateGrade = (total) => {
@@ -51,26 +52,22 @@ exports.getSubjectMarks = async (req, res) => {
 
     const mergedRecords = students.map((student) => {
       // Use the Student's linked User ID for records, OR the Student ID itself.
-      // Wait, legacy SBA stores Student._id or User._id? We built SBA V2 to use User ID previously. 
-      // Let's use the User ID for consistency if we want. But wait! The previous change used User ID.
-      // Let's stick to using Student._id to be safe, or student.user._id.
-      // Actually, since this is a new module, either is fine. I'll use student.user._id.
-      const studentId = String(student.user._id);
+      const studentId = String(student.user?._id || student.user);
       const existingRecord = recordsMap[studentId];
 
       if (existingRecord) {
         return {
           ...existingRecord,
-          studentName: student.user.name || "Unknown",
-          profilePicture: student.profilePicture || student.user.profilePicture || "",
+          studentName: student.user?.name || "Unknown",
+          profilePicture: student.profilePicture || student.user?.profilePicture || "",
         };
       }
 
       // Default empty record for new student
       return {
         student: studentId,
-        studentName: student.user.name || "Unknown",
-        profilePicture: student.profilePicture || student.user.profilePicture || "",
+        studentName: student.user?.name || "Unknown",
+        profilePicture: student.profilePicture || student.user?.profilePicture || "",
         classWork: "",
         homework: "",
         projectWork: "",
