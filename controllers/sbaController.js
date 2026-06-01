@@ -508,6 +508,7 @@ exports.downloadClassTemplate = async (req, res) => {
         targetClassId = classDocByTeacher._id;
       }
     }
+
     log("🎯 Target class resolved", { targetClassId });
 
     if (!targetClassId) {
@@ -1298,13 +1299,27 @@ exports.uploadClassTemplate = async (req, res) => {
     console.log(`👨‍🏫 Teacher found: ${teacherName}, Subject: ${teacher.subject}`);
     console.log(`📚 Assigned classes: ${teacher.assignedClasses}`);
 
-    const classId = teacher.assignedClasses[0];
+    const reqClassId = req.body.classId || req.query.classId;
+    const classId = reqClassId || teacher.assignedClasses[0];
     console.log(`🎯 Processing class ID: ${classId}`);
 
     const classDoc = await Class.findById(classId).lean();
     if (!classDoc) return res.status(404).json({ message: "Class not found" });
 
-
+    // Enhanced class teacher detection
+    const classTeacherId = classDoc.classTeacher;
+    const coClassTeacherId = classDoc.coClassTeacher;
+    const teacherUserId = teacher.user?._id || teacher.user;
+    
+    const isClassTeacherByUser = teacherUserId && (
+      String(classTeacherId) === String(teacherUserId) || 
+      String(coClassTeacherId) === String(teacherUserId)
+    );
+    const isClassTeacherByDocId = String(classTeacherId) === String(teacher._id) || String(coClassTeacherId) === String(teacher._id);
+    const isClassTeacherByArray = classDoc.teachers?.some(
+      (tId) => String(tId) === String(teacher._id)
+    );
+    const isClassTeacher = isClassTeacherByUser || isClassTeacherByDocId || isClassTeacherByArray;
 
     // --------------------------------------------------
     // ✅ Resolve subject from request (UPLOAD)
@@ -1316,55 +1331,60 @@ exports.uploadClassTemplate = async (req, res) => {
     log("📥 Subject from upload request", {
       subjectId,
       teacherId: teacher._id,
-      classId: classDoc._id
+      classId: classDoc._id,
+      isClassTeacher
     });
 
-    if (!subjectId) {
-      log("❌ Subject missing for subject teacher upload");
+    if (!isClassTeacher) {
+      if (!subjectId) {
+        log("❌ Subject missing for subject teacher upload");
 
-      return res.status(400).json({
-        message: "Subject selection required for subject teacher upload"
-      });
-    }
+        return res.status(400).json({
+          message: "Subject selection required for subject teacher upload"
+        });
+      }
 
-    // ✅ FIX: Subject is GLOBAL — do NOT scope to school
-    const subjectDoc = await Subject.findById(subjectId).lean();
+      // ✅ FIX: Subject is GLOBAL — do NOT scope to school
+      const subjectDoc = await Subject.findById(subjectId).lean();
 
-    log("📘 Subject lookup result (upload)", {
-      found: !!subjectDoc,
-      subjectId
-    });
-
-    if (!subjectDoc) {
-      log("❌ Invalid subject selection (subject not found)", {
+      log("📘 Subject lookup result (upload)", {
+        found: !!subjectDoc,
         subjectId
       });
 
-      return res.status(400).json({
-        message: "Invalid subject selection"
-      });
-    }
+      if (!subjectDoc) {
+        log("❌ Invalid subject selection (subject not found)", {
+          subjectId
+        });
 
-    // ⚠️ OPTIONAL VISIBILITY LOG (legacy / mixed data)
-    if (subjectDoc.school && String(subjectDoc.school) !== String(classDoc.school)) {
-      log("⚠️ Subject-school mismatch (legacy/global subject)", {
+        return res.status(400).json({
+          message: "Invalid subject selection"
+        });
+      }
+
+      // ⚠️ OPTIONAL VISIBILITY LOG (legacy / mixed data)
+      if (subjectDoc.school && String(subjectDoc.school) !== String(classDoc.school)) {
+        log("⚠️ Subject-school mismatch (legacy/global subject)", {
+          subjectId: subjectDoc._id,
+          subjectSchool: subjectDoc.school,
+          classSchool: classDoc.school
+        });
+      }
+
+      // ✅ ALWAYS use FULL NAME for Excel
+      const subjectName = subjectDoc.name?.trim();
+      const subjectShort = subjectDoc.shortName?.trim();
+
+      subject = subjectName;
+
+      log("✅ Subject resolved for upload (Excel-safe)", {
         subjectId: subjectDoc._id,
-        subjectSchool: subjectDoc.school,
-        classSchool: classDoc.school
+        subject,
+        subjectShort
       });
+    } else {
+      log("✅ Class teacher upload - Subject validation bypassed");
     }
-
-    // ✅ ALWAYS use FULL NAME for Excel
-    const subjectName = subjectDoc.name?.trim();
-    const subjectShort = subjectDoc.shortName?.trim();
-
-    subject = subjectName;
-
-    log("✅ Subject resolved for upload (Excel-safe)", {
-      subjectId: subjectDoc._id,
-      subject,
-      subjectShort
-    });
 
 
 
@@ -1425,15 +1445,6 @@ exports.uploadClassTemplate = async (req, res) => {
     }
 
 
-    // Enhanced class teacher detection
-    const classTeacherId = classDoc.classTeacher;
-    const isClassTeacherByUser =
-      teacher.user && String(classTeacherId) === String(teacher.user._id);
-    const isClassTeacherByDocId = String(classTeacherId) === String(teacher._id);
-    const isClassTeacherByArray = classDoc.teachers?.some(
-      (tId) => String(tId) === String(teacher._id)
-    );
-    const isClassTeacher = isClassTeacherByUser || isClassTeacherByDocId || isClassTeacherByArray;
     const isSubjectTeacher = teacher.subject && teacher.assignedClasses?.includes(classId);
 
     console.log(`ℹ️ Teacher roles for class ${className}:`);
@@ -1638,7 +1649,7 @@ exports.uploadSchoolSpecificTemplate = [
     let tempPath = null;
     try {
       if (!req.file) return res.status(400).json({ message: "No file uploaded" });
-      
+
       const { schoolId, classLevelKey } = req.body;
       if (!schoolId || !classLevelKey) {
         return res.status(400).json({ message: "schoolId and classLevelKey are required" });
@@ -1650,7 +1661,7 @@ exports.uploadSchoolSpecificTemplate = [
 
       const bucket = admin.storage().bucket();
       const schoolPath = `templates/${schoolId}/${classLevelKey}_master.xlsx`;
-      
+
       await bucket.upload(tempPath, {
         destination: schoolPath,
         metadata: { contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
@@ -2129,27 +2140,6 @@ exports.uploadReportSheetPDF = [
 
         }
 
-        const student = students[pageIndex];
-        if (student && student.profilePicture) {
-          try {
-            const picBuf = await fetchImage(student.profilePicture);
-            if (picBuf) {
-              const picImage =
-                picBuf[0] === 0x89
-                  ? await pdfDoc.embedPng(picBuf)
-                  : await pdfDoc.embedJpg(picBuf);
-                  
-              page.drawImage(picImage, {
-                x: width - 150,
-                y: height - 160,
-                width: 65,
-                height: 65
-              });
-            }
-          } catch (picErr) {
-            console.warn(`Failed to embed picture for student ${student._id}:`, picErr.message);
-          }
-        }
 
         const sigPos = await findTextPosition(rawPdfBuffer, pageIndex, "HEADTEACHER");
         if (sigPos && signatureImage) {
@@ -2267,7 +2257,7 @@ exports.uploadReportSheetPDF = [
       if (notifications.length) {
         try {
           await Notification.insertMany(notifications);
-          
+
           // 🔥 Send Push Notifications
           // Group by message so each recipient gets the exact right text
           const pushesByMessage = {};
@@ -2279,7 +2269,7 @@ exports.uploadReportSheetPDF = [
               n.recipientUsers.forEach(u => pushesByMessage[n.message].add(String(u)));
             }
           });
-          
+
           for (const [msg, userSet] of Object.entries(pushesByMessage)) {
             if (userSet.size > 0) {
               const pushTitle = "New Report Card Available";
