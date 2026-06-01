@@ -34,7 +34,12 @@ const sbaRecordSchema = new mongoose.Schema(
           default: 0,
           min: 0,
         },
-        homework: {
+        classTest1: {
+          type: Number,
+          default: 0,
+          min: 0,
+        },
+        classTest2: {
           type: Number,
           default: 0,
           min: 0,

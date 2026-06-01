@@ -69,7 +69,8 @@ exports.getSubjectMarks = async (req, res) => {
         studentName: student.user?.name || "Unknown",
         profilePicture: student.profilePicture || student.user?.profilePicture || "",
         classWork: "",
-        homework: "",
+        classTest1: "",
+        classTest2: "",
         projectWork: "",
         exams: "",
         total: "",
@@ -108,16 +109,23 @@ exports.saveSubjectMarks = async (req, res) => {
     // Calculate totals and grades for all records
     const processedRecords = records.map((record) => {
       const classWork = Number(record.classWork) || 0;
-      const homework = Number(record.homework) || 0;
+      const classTest1 = Number(record.classTest1) || 0;
+      const classTest2 = Number(record.classTest2) || 0;
       const projectWork = Number(record.projectWork) || 0;
       const exams = Number(record.exams) || 0;
-      const total = classWork + homework + projectWork + exams;
+      
+      const sbaTotal = classWork + classTest1 + classTest2 + projectWork;
+      const scaledSba = Math.round((sbaTotal / 60) * 50) || 0;
+      const scaledExams = Math.round((exams / 100) * 50) || 0;
+      
+      const total = scaledSba + scaledExams;
       const grade = calculateGrade(total);
 
       return {
         student: record.student,
         classWork,
-        homework,
+        classTest1,
+        classTest2,
         projectWork,
         exams,
         total,
