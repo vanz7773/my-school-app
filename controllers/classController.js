@@ -289,63 +289,61 @@ exports.assignClassTeacher = async (req, res) => {
     const { teacherId, isCoTeacher } = req.body; // isCoTeacher is a boolean flag
     const schoolId = req.user.school;
 
+    if (classId === 'none') {
+      // Global unassign for this teacher
+      if (teacherId && teacherId !== 'none') {
+        const query = isCoTeacher ? { coClassTeacher: teacherId } : { classTeacher: teacherId };
+        const update = isCoTeacher ? { coClassTeacher: null } : { classTeacher: null };
+        
+        await Class.updateMany({ school: schoolId, ...query }, update);
+        return res.status(200).json({
+          success: true,
+          message: `Teacher unassigned from ${isCoTeacher ? 'all Co-Class Teacher' : 'all Primary Class Teacher'} roles.`,
+          class: null
+        });
+      }
+      return res.status(400).json({ message: 'Teacher ID required to unassign.' });
+    }
+
     const classDoc = await Class.findOne({ _id: classId, school: schoolId });
     if (!classDoc) {
       return res.status(404).json({ message: 'Class not found' });
     }
 
-    const teacher = await User.findOne({
-      _id: teacherId,
-      role: 'teacher',
-      school: schoolId
-    });
-
-    if (!teacher) {
-      return res.status(400).json({ message: 'Teacher not found in your school' });
-    }
-
     let previousClassMessage = null;
 
-    if (isCoTeacher) {
-      // Teacher cannot be both Primary and Co-Teacher in the SAME class
-      if (String(classDoc.classTeacher) === String(teacherId)) {
-        classDoc.classTeacher = null; // Removing from primary role
+    if (teacherId === 'none') {
+      if (isCoTeacher) {
+        classDoc.coClassTeacher = null;
+      } else {
+        classDoc.classTeacher = null;
       }
-
-      // 🔥 AUTO-REMOVE teacher from previous Co-Teacher class
-      const previousClass = await Class.findOne({
-        school: schoolId,
-        coClassTeacher: teacherId,
-        _id: { $ne: classId }
-      });
-
-      if (previousClass) {
-        previousClass.coClassTeacher = null;
-        await previousClass.save();
-        previousClassMessage = `Teacher moved from ${previousClass.displayName || previousClass.name} to ${classDoc.displayName || classDoc.name} as Co-Class Teacher`;
-      }
-
-      classDoc.coClassTeacher = teacherId;
     } else {
-      // Teacher cannot be both Primary and Co-Teacher in the SAME class
-      if (String(classDoc.coClassTeacher) === String(teacherId)) {
-        classDoc.coClassTeacher = null; // Removing from co-teacher role
-      }
-
-      // 🔥 AUTO-REMOVE teacher from previous Primary class
-      const previousClass = await Class.findOne({
-        school: schoolId,
-        classTeacher: teacherId,
-        _id: { $ne: classId }
+      const teacher = await User.findOne({
+        _id: teacherId,
+        role: 'teacher',
+        school: schoolId
       });
 
-      if (previousClass) {
-        previousClass.classTeacher = null;
-        await previousClass.save();
-        previousClassMessage = `Teacher moved from ${previousClass.displayName || previousClass.name} to ${classDoc.displayName || classDoc.name} as Primary Class Teacher`;
+      if (!teacher) {
+        return res.status(400).json({ message: 'Teacher not found in your school' });
       }
 
-      classDoc.classTeacher = teacherId;
+      if (isCoTeacher) {
+        // Teacher cannot be both Primary and Co-Teacher in the SAME class
+        if (String(classDoc.classTeacher) === String(teacherId)) {
+          classDoc.classTeacher = null; // Removing from primary role
+        }
+
+        classDoc.coClassTeacher = teacherId;
+      } else {
+        // Teacher cannot be both Primary and Co-Teacher in the SAME class
+        if (String(classDoc.coClassTeacher) === String(teacherId)) {
+          classDoc.coClassTeacher = null; // Removing from co-teacher role
+        }
+
+        classDoc.classTeacher = teacherId;
+      }
     }
 
     await classDoc.save();
