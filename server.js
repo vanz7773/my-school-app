@@ -124,6 +124,8 @@ const movementRoutes = require('./routes/movementRoutes');
 const schoolRoutes = require('./routes/schoolRoutes');
 const deviceBindingRoutes = require('./routes/deviceBindingRoutes');
 const sbaRoutes = require('./routes/sbaRoutes');
+const sbaV2Routes = require('./routes/sbaV2Routes');
+
 const subjectRoutes = require("./routes/subjectRoutes");
 const questionSourceRoutes = require("./routes/questionSource.routes");
 const questionBlock = require("./routes/questionBlock.routes");
@@ -166,6 +168,8 @@ app.use('/api/movements', movementRoutes);
 app.use('/api/school', schoolRoutes);
 app.use('/api/device-binding', deviceBindingRoutes);
 app.use('/api/sba', sbaRoutes);
+app.use('/api/sba-v2', sbaV2Routes);
+
 app.use("/api/subjects", subjectRoutes);
 app.use("/api/question-sources", questionSourceRoutes);
 app.use("/api/question-blocks", questionBlock);
