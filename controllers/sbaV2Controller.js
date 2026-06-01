@@ -24,16 +24,18 @@ exports.getSubjectMarks = async (req, res) => {
       return res.status(400).json({ message: "Missing required parameters: schoolId, classId, termId, subjectId" });
     }
 
-    // 1. Find all active students in the class
-    const students = await Student.find({
-      school: schoolId,
-      class: classId,
-      $or: [{ status: "active" }, { status: { $exists: false } }, { status: null }]
-    })
-      .populate("user", "name profilePicture")
+    // 1. Find all active students in the class using the Class model's students array
+    const classDoc = await Class.findOne({ _id: classId, school: schoolId })
+      .populate("students", "name profilePicture")
       .lean();
-    
-    console.log(`Found ${students.length} students for class ${classId}`);
+
+    if (!classDoc) {
+      return res.status(404).json({ message: "Class not found" });
+    }
+
+    // Students are references to the User model in the Class.students array
+    const students = classDoc.students || [];
+    console.log(`Found ${students.length} students in Class.students array for class ${classId}`);
 
     // 2. Find existing marks
     const sbaRecord = await SbaRecord.findOne({
@@ -51,23 +53,23 @@ exports.getSubjectMarks = async (req, res) => {
       });
     }
 
-    const mergedRecords = students.map((student) => {
-      const studentId = String(student._id);
+    const mergedRecords = students.map((studentUser) => {
+      const studentId = String(studentUser._id);
       const existingRecord = recordsMap[studentId];
 
       if (existingRecord) {
         return {
           ...existingRecord,
-          studentName: student.user?.name || `${student.surname || ""} ${student.otherNames || ""}`.trim() || "Unknown",
-          profilePicture: student.profilePicture || student.user?.profilePicture || "",
+          studentName: studentUser.name || "Unknown",
+          profilePicture: studentUser.profilePicture || "",
         };
       }
 
       // Default empty record for new student
       return {
         student: studentId,
-        studentName: student.user?.name || `${student.surname || ""} ${student.otherNames || ""}`.trim() || "Unknown",
-        profilePicture: student.profilePicture || student.user?.profilePicture || "",
+        studentName: studentUser.name || "Unknown",
+        profilePicture: studentUser.profilePicture || "",
         classWork: "",
         homework: "",
         projectWork: "",
