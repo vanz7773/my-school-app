@@ -28,10 +28,12 @@ exports.getSubjectMarks = async (req, res) => {
     const students = await Student.find({
       school: schoolId,
       class: classId,
-      status: "active",
+      $or: [{ status: "active" }, { status: { $exists: false } }, { status: null }]
     })
       .populate("user", "name profilePicture")
       .lean();
+    
+    console.log(`Found ${students.length} students for class ${classId}`);
 
     // 2. Find existing marks
     const sbaRecord = await SbaRecord.findOne({
