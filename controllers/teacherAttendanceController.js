@@ -590,7 +590,9 @@ const getAdminDailyRecords = async (req, res) => {
         const day = recordDate.toLocaleDateString('en-US', { weekday: 'long' });
 
         if (weekdays.includes(day)) {
-          dayCounts[day].total += 1;
+          if (record.status !== 'Holiday') {
+            dayCounts[day].total += 1;
+          }
 
           // Present = On Time or Late
           if (['On Time', 'Late', 'Present'].includes(record.status)) {
@@ -742,7 +744,7 @@ const getAdminWeeklySummary = async (req, res) => {
             },
             teacher: "$teacher"
           },
-          total: { $sum: 1 },
+          total: { $sum: { $cond: [{ $eq: ["$status", "Holiday"] }, 0, 1] } },
           present: { $sum: { $cond: [{ $in: ["$status", ["On Time", "Late"]] }, 1, 0] } },
           late: { $sum: { $cond: [{ $eq: ["$status", "Late"] }, 1, 0] } },
           holiday: { $sum: { $cond: [{ $eq: ["$status", "Holiday"] }, 1, 0] } }
@@ -906,7 +908,9 @@ const getTeacherWeeklySummary = async (req, res) => {
         };
       }
 
-      weeklySummary[boundedWeek].total++;
+      if (record.status !== 'Holiday') {
+        weeklySummary[boundedWeek].total++;
+      }
 
       if (record.status === 'On Time' || record.status === 'Late') {
         weeklySummary[boundedWeek].present++;
@@ -980,7 +984,7 @@ const getTeacherMonthlySummary = async (req, res) => {
             year: { $year: '$date' },
             month: { $month: '$date' }
           },
-          total: { $sum: 1 },
+          total: { $sum: { $cond: [{ $eq: ["$status", "Holiday"] }, 0, 1] } },
           present: {
             $sum: {
               $cond: [{ $in: ['$status', ['On Time', 'Late']] }, 1, 0]
@@ -1056,7 +1060,7 @@ const getAdminMonthlySummary = async (req, res) => {
             month: { $month: '$date' },
             teacher: '$teacher'
           },
-          total: { $sum: 1 },
+          total: { $sum: { $cond: [{ $eq: ["$status", "Holiday"] }, 0, 1] } },
           present: {
             $sum: {
               $cond: [{ $in: ['$status', ['On Time', 'Late']] }, 1, 0]
