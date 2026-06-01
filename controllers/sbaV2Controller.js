@@ -24,18 +24,14 @@ exports.getSubjectMarks = async (req, res) => {
       return res.status(400).json({ message: "Missing required parameters: schoolId, classId, termId, subjectId" });
     }
 
-    // 1. Find all active students in the class using the Class model's students array
-    const classDoc = await Class.findOne({ _id: classId, school: schoolId })
-      .populate("students", "name profilePicture")
+    // 1. Find all students in the class using the Student collection
+    const studentDocs = await Student.find({ class: classId })
+      .populate("user", "name profilePicture")
       .lean();
 
-    if (!classDoc) {
-      return res.status(404).json({ message: "Class not found" });
-    }
-
-    // Students are references to the User model in the Class.students array
-    const students = classDoc.students || [];
-    console.log(`Found ${students.length} students in Class.students array for class ${classId}`);
+    const students = studentDocs.filter(s => s.user); // Ensure user is not null
+    
+    console.log(`Found ${students.length} students in Student collection for class ${classId}`);
 
     // 2. Find existing marks
     const sbaRecord = await SbaRecord.findOne({
@@ -53,23 +49,28 @@ exports.getSubjectMarks = async (req, res) => {
       });
     }
 
-    const mergedRecords = students.map((studentUser) => {
-      const studentId = String(studentUser._id);
+    const mergedRecords = students.map((student) => {
+      // Use the Student's linked User ID for records, OR the Student ID itself.
+      // Wait, legacy SBA stores Student._id or User._id? We built SBA V2 to use User ID previously. 
+      // Let's use the User ID for consistency if we want. But wait! The previous change used User ID.
+      // Let's stick to using Student._id to be safe, or student.user._id.
+      // Actually, since this is a new module, either is fine. I'll use student.user._id.
+      const studentId = String(student.user._id);
       const existingRecord = recordsMap[studentId];
 
       if (existingRecord) {
         return {
           ...existingRecord,
-          studentName: studentUser.name || "Unknown",
-          profilePicture: studentUser.profilePicture || "",
+          studentName: student.user.name || "Unknown",
+          profilePicture: student.profilePicture || student.user.profilePicture || "",
         };
       }
 
       // Default empty record for new student
       return {
         student: studentId,
-        studentName: studentUser.name || "Unknown",
-        profilePicture: studentUser.profilePicture || "",
+        studentName: student.user.name || "Unknown",
+        profilePicture: student.profilePicture || student.user.profilePicture || "",
         classWork: "",
         homework: "",
         projectWork: "",
