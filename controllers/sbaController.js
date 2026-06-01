@@ -477,27 +477,37 @@ exports.downloadClassTemplate = async (req, res) => {
       queryClassId: req.query.classId
     });
 
-    const classDocByTeacher = await Class.findOne({
-      $or: [
-        { classTeacher: userId },
-        { coClassTeacher: userId }
-      ]
-    }).lean();
-    const isClassTeacher = !!classDocByTeacher;
+    let targetClassId = req.query.classId;
 
-    log("👨‍🏫 Class-teacher check", {
-      isClassTeacher,
-      classTeacherClassId: classDocByTeacher?._id || null
-    });
+    // Check if the teacher is a class teacher/co-class teacher for the requested class
+    let isClassTeacher = false;
+    let classDocByTeacher = null;
 
-    let targetClassId;
-
-    if (isClassTeacher) {
-      targetClassId = classDocByTeacher._id;
-    } else {
-      targetClassId = req.query.classId;
+    if (targetClassId) {
+      classDocByTeacher = await Class.findOne({
+        _id: targetClassId,
+        $or: [
+          { classTeacher: userId },
+          { coClassTeacher: userId }
+        ]
+      }).lean();
+      isClassTeacher = !!classDocByTeacher;
     }
 
+    // Fallback: If no class provided, check if they are a class teacher for ANY class
+    if (!targetClassId) {
+      classDocByTeacher = await Class.findOne({
+        $or: [
+          { classTeacher: userId },
+          { coClassTeacher: userId }
+        ]
+      }).lean();
+      
+      if (classDocByTeacher) {
+        isClassTeacher = true;
+        targetClassId = classDocByTeacher._id;
+      }
+    }
     log("🎯 Target class resolved", { targetClassId });
 
     if (!targetClassId) {
