@@ -2119,6 +2119,27 @@ exports.uploadReportSheetPDF = [
 
         }
 
+        const student = students[pageIndex];
+        if (student && student.profilePicture) {
+          try {
+            const picBuf = await fetchImage(student.profilePicture);
+            if (picBuf) {
+              const picImage =
+                picBuf[0] === 0x89
+                  ? await pdfDoc.embedPng(picBuf)
+                  : await pdfDoc.embedJpg(picBuf);
+                  
+              page.drawImage(picImage, {
+                x: width - 150,
+                y: height - 160,
+                width: 65,
+                height: 65
+              });
+            }
+          } catch (picErr) {
+            console.warn(`Failed to embed picture for student ${student._id}:`, picErr.message);
+          }
+        }
 
         const sigPos = await findTextPosition(rawPdfBuffer, pageIndex, "HEADTEACHER");
         if (sigPos && signatureImage) {
