@@ -3,14 +3,23 @@ const Student = require("../models/Student");
 const Class = require("../models/Class");
 const User = require("../models/User");
 
-// Calculate total and grade automatically if not provided or to ensure accuracy
-const calculateGrade = (total) => {
-  if (total >= 80) return "A";
-  if (total >= 70) return "B";
-  if (total >= 60) return "C";
-  if (total >= 50) return "D";
-  if (total >= 40) return "E";
-  return "F";
+// Calculate total and grade automatically based on class level
+const calculateGrade = (total, className = "") => {
+  const upperName = className.toUpperCase();
+  
+  // Nursery / KG Grading
+  if (upperName.includes("NURSERY") || upperName.includes("KG") || upperName.includes("CRECHE")) {
+    if (total >= 70) return "Gold (G)";
+    if (total >= 40) return "Silver (S)";
+    return "Bronze (B)";
+  }
+
+  // Basic School (BS1 - BS9) Grading
+  if (total >= 80) return "Advance (A)";
+  if (total >= 75) return "Proficient (P)";
+  if (total >= 70) return "Approaching Proficiency (AP)";
+  if (total >= 65) return "Developing (D)";
+  return "Beginning (B)";
 };
 
 /**
@@ -103,8 +112,9 @@ exports.saveSubjectMarks = async (req, res) => {
       return res.status(400).json({ message: "Missing required parameters or records payload" });
     }
 
-    // Optional: Validation to check if user is class teacher or subject teacher
-    // We assume frontend guards this, but in production we might want backend auth checks here.
+    // Fetch the class to determine the grading system based on class name
+    const classObj = await Class.findById(classId).lean();
+    const className = classObj ? (classObj.name || "") : "";
 
     // Calculate totals and grades for all records
     const processedRecords = records.map((record) => {
@@ -119,7 +129,7 @@ exports.saveSubjectMarks = async (req, res) => {
       const scaledExams = Math.round((exams / 100) * 50) || 0;
       
       const total = scaledSba + scaledExams;
-      const grade = calculateGrade(total);
+      const grade = calculateGrade(total, className);
 
       return {
         student: record.student,
@@ -162,3 +172,4 @@ exports.saveSubjectMarks = async (req, res) => {
     return res.status(500).json({ message: "Internal server error", error: error.message });
   }
 };
+
