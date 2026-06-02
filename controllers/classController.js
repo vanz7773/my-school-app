@@ -5,7 +5,7 @@ const Teacher = require('../models/Teacher');
 // ✅ Create class (admin only)
 exports.createClass = async (req, res) => {
   try {
-    const { name, stream, teachers } = req.body;
+    const { name, stream, teachers, subjects } = req.body;
     const schoolId = req.user.school;
 
     if (!schoolId) {
@@ -56,6 +56,7 @@ exports.createClass = async (req, res) => {
       school: schoolId,
       teachers: validTeachers,
       classTeacher: null,
+      subjects: Array.isArray(subjects) ? subjects : [],
     });
 
     await newClass.save();
@@ -65,7 +66,8 @@ exports.createClass = async (req, res) => {
       .populate('teachers', 'name email')
       .populate('classTeacher', 'name email')
       .populate('coClassTeacher', 'name email')
-      .populate('students', 'name email');
+      .populate('students', 'name email')
+      .populate('subjects', 'name code');
 
     res.status(201).json({
       message: 'Class created successfully',
@@ -93,6 +95,7 @@ exports.getAllClasses = async (req, res) => {
       .populate('classTeacher', 'name email')
       .populate('coClassTeacher', 'name email')
       .populate('students', 'name email')
+      .populate('subjects', 'name code')
       .sort({ name: 1, stream: 1 });
 
     res.status(200).json({ success: true, classes });
@@ -145,7 +148,8 @@ exports.getTeacherClasses = async (req, res) => {
         { coClassTeacher: userId }
       ]
     })
-      .select('_id name stream displayName classTeacher coClassTeacher')
+      .populate('subjects', 'name code')
+      .select('_id name stream displayName classTeacher coClassTeacher subjects')
       .sort({ name: 1, stream: 1 })
       .lean();
 
@@ -185,7 +189,7 @@ exports.getTeacherClasses = async (req, res) => {
 exports.updateClass = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, stream, teachers } = req.body;
+    const { name, stream, teachers, subjects } = req.body;
     const schoolId = req.user.school;
 
     if (!schoolId) {
@@ -240,6 +244,10 @@ exports.updateClass = async (req, res) => {
       classToUpdate.teachers = foundTeachers.map(t => t._id);
     }
 
+    if (subjects !== undefined) {
+      classToUpdate.subjects = Array.isArray(subjects) ? subjects : [];
+    }
+
     await classToUpdate.save();
 
     // ✅ Populate before returning
@@ -247,7 +255,8 @@ exports.updateClass = async (req, res) => {
       .populate('teachers', 'name email')
       .populate('classTeacher', 'name email')
       .populate('coClassTeacher', 'name email')
-      .populate('students', 'name email');
+      .populate('students', 'name email')
+      .populate('subjects', 'name code');
 
     res.status(200).json({
       message: 'Class updated successfully',

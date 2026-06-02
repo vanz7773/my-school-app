@@ -61,6 +61,14 @@ const classSchema = new mongoose.Schema(
       default: null,
     },
 
+    // 📚 Specific subjects assigned to this class
+    subjects: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Subject",
+      },
+    ],
+
     // 🗓️ Optional future expansion: store multiple reports by term
     reportSheetsByTerm: {
       type: Map,

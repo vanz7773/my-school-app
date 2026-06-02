@@ -5,6 +5,7 @@ const {
   createClass,
   getAllClasses,
   deleteClass,
+  updateClass,
   assignClassTeacher,
   getTeacherClassesWithStudents,
   getTeacherClasses // new endpoint
@@ -13,6 +14,7 @@ const {
 // ---------------- Admin Routes ----------------
 router.post('/', protect, restrictTo('admin'), createClass);
 router.get('/', protect, restrictTo('admin'), getAllClasses);
+router.put('/:id', protect, restrictTo('admin'), updateClass);
 router.delete('/:id', protect, restrictTo('admin'), deleteClass);
 
 // Assign/change class teacher (admin and teacher)
