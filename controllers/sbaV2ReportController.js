@@ -51,7 +51,7 @@ exports.getClassReportCards = async (req, res) => {
       };
     });
 
-    // Populate marks from sbaRecords
+    // Populate marks from sbaRecords and compute ranks
     sbaRecords.forEach(sba => {
       const subjectInfo = {
         id: String(sba.subject?._id || sba.subject),
@@ -59,7 +59,42 @@ exports.getClassReportCards = async (req, res) => {
       };
 
       if (sba.records && Array.isArray(sba.records)) {
-        sba.records.forEach(record => {
+        // Compute scaled marks
+        const recordsWithScaled = sba.records.map(record => {
+          const classWork = Number(record.classWork) || 0;
+          const classTest1 = Number(record.classTest1) || 0;
+          const classTest2 = Number(record.classTest2) || 0;
+          const projectWork = Number(record.projectWork) || 0;
+          const exams = Number(record.exams) || 0;
+          
+          const sbaTotal = classWork + classTest1 + classTest2 + projectWork;
+          const scaledSba = parseFloat(((sbaTotal / 60) * 50).toFixed(1)) || 0;
+          const scaledExams = parseFloat(((exams / 100) * 50).toFixed(1)) || 0;
+          
+          return {
+            ...record,
+            scaledSba,
+            scaledExams
+          };
+        });
+
+        // Sort by total for rank (descending)
+        recordsWithScaled.sort((a, b) => (Number(b.total) || 0) - (Number(a.total) || 0));
+        
+        let currentRank = 1;
+        let previousTotal = null;
+
+        recordsWithScaled.forEach((record, index) => {
+          const total = Number(record.total) || 0;
+          if (total !== previousTotal) {
+            currentRank = index + 1;
+            previousTotal = total;
+          }
+          record.subjectRank = currentRank;
+        });
+
+        // Add to student marks map
+        recordsWithScaled.forEach(record => {
           const studentId = String(record.student);
           if (studentMarksMap[studentId]) {
             studentMarksMap[studentId].subjects.push({
@@ -69,9 +104,12 @@ exports.getClassReportCards = async (req, res) => {
               classTest2: record.classTest2 || 0,
               projectWork: record.projectWork || 0,
               exams: record.exams || 0,
+              scaledSba: record.scaledSba,
+              scaledExams: record.scaledExams,
               total: record.total || 0,
               grade: record.grade || "-",
-              remarks: record.remarks || ""
+              remarks: record.remarks || "",
+              subjectRank: record.subjectRank
             });
             // Accrue total marks
             studentMarksMap[studentId].totalMarks += Number(record.total) || 0;
