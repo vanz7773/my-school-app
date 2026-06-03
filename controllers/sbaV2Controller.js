@@ -118,14 +118,14 @@ exports.saveSubjectMarks = async (req, res) => {
 
     // Calculate totals and grades for all records
     const processedRecords = records.map((record) => {
-      const classWork = Number(record.classWork) || 0;
-      const classTest1 = Number(record.classTest1) || 0;
-      const classTest2 = Number(record.classTest2) || 0;
-      const projectWork = Number(record.projectWork) || 0;
-      const exams = Number(record.exams) || 0;
+      const classWork = Math.min(Number(record.classWork) || 0, 10);
+      const classTest1 = Math.min(Number(record.classTest1) || 0, 20);
+      const classTest2 = Math.min(Number(record.classTest2) || 0, 30);
+      const projectWork = Math.min(Number(record.projectWork) || 0, 10);
+      const exams = Math.min(Number(record.exams) || 0, 100);
       
       const sbaTotal = classWork + classTest1 + classTest2 + projectWork;
-      const scaledSba = Math.round((sbaTotal / 60) * 50) || 0;
+      const scaledSba = Math.round((sbaTotal / 70) * 50) || 0;
       const scaledExams = Math.round((exams / 100) * 50) || 0;
       
       const total = scaledSba + scaledExams;
