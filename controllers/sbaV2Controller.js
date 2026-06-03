@@ -141,6 +141,9 @@ exports.saveSubjectMarks = async (req, res) => {
         total,
         grade,
         remarks: record.remarks || "",
+        conduct: record.conduct || "",
+        interest: record.interest || "",
+        teacherRemarks: record.teacherRemarks || "",
       };
     });
 

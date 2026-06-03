@@ -67,6 +67,18 @@ const sbaRecordSchema = new mongoose.Schema(
           type: String,
           default: "",
         },
+        conduct: {
+          type: String,
+          default: "",
+        },
+        interest: {
+          type: String,
+          default: "",
+        },
+        teacherRemarks: {
+          type: String,
+          default: "",
+        },
       },
     ],
   },

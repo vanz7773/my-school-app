@@ -44,6 +44,9 @@ exports.getClassReportCards = async (req, res) => {
           name: student.user?.name || "Unknown",
           profilePicture: student.profilePicture || student.user?.profilePicture || "",
           studentId: student.studentId || "", // some models have an explicit string ID
+          conduct: "",
+          interest: "",
+          teacherRemarks: "",
         },
         subjects: [],
         totalMarks: 0,
@@ -111,6 +114,18 @@ exports.getClassReportCards = async (req, res) => {
               remarks: record.remarks || "",
               subjectRank: record.subjectRank
             });
+
+            // Extract conduct, interest, and teacherRemarks if present (takes the first non-empty value found across subjects)
+            if (!studentMarksMap[studentId].studentInfo.conduct && record.conduct) {
+              studentMarksMap[studentId].studentInfo.conduct = record.conduct;
+            }
+            if (!studentMarksMap[studentId].studentInfo.interest && record.interest) {
+              studentMarksMap[studentId].studentInfo.interest = record.interest;
+            }
+            if (!studentMarksMap[studentId].studentInfo.teacherRemarks && record.teacherRemarks) {
+              studentMarksMap[studentId].studentInfo.teacherRemarks = record.teacherRemarks;
+            }
+
             // Accrue total marks
             studentMarksMap[studentId].totalMarks += Number(record.total) || 0;
           }
