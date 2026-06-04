@@ -1426,8 +1426,165 @@ module.exports = {
       await session.endSession();
     }
   },
+  async reversePayment(req, res) {
+    const session = await mongoose.startSession();
+    let transactionCommitted = false;
 
+    try {
+      await session.startTransaction();
 
+      const { paymentId, billId } = req.params;
+
+      if (!paymentId || !billId) {
+        throw new Error('Missing paymentId or billId');
+      }
+
+      // 🔍 Fetch bill
+      const bill = await TermBill.findOne({
+        _id: billId,
+        school: req.user.school
+      }).session(session);
+
+      if (!bill) throw new Error('Bill not found');
+
+      // 🔍 Fetch payment
+      const payment = await Payment.findOne({
+        _id: paymentId,
+        school: req.user.school
+      }).session(session);
+
+      if (!payment) throw new Error('Payment not found');
+
+      const amountToReverse = payment.amount;
+
+      // Ensure the payment belongs to this bill
+      if (payment.bill.toString() !== billId) {
+        throw new Error('Payment does not belong to this bill');
+      }
+
+      const billingMode = normalizeBillingMode(bill.billingMode);
+      const isDailyVariable = isDailyVariableMode(billingMode);
+
+      let updatedItems;
+      let totalPaid;
+      let newBalance;
+      let status;
+
+      if (isDailyVariable) {
+        totalPaid = Math.max(0, (Number(bill.totalPaid) || 0) - amountToReverse);
+        newBalance = 0;
+        status = totalPaid > 0 ? 'Paid' : 'Unpaid';
+        updatedItems = buildDailyVariableItems(bill.dailyFeeLabel || DEFAULT_DAILY_FEE_LABEL, totalPaid);
+      } else {
+        totalPaid = Math.max(0, bill.totalPaid - amountToReverse);
+        newBalance = bill.totalAmount - totalPaid;
+        status = totalPaid === 0 ? 'Unpaid' : (newBalance <= 0 ? 'Paid' : 'Partial');
+
+        // 💰 Apply reverse logic to fixed bill items by redistributing the new totalPaid
+        let remainingPaid = totalPaid;
+        updatedItems = bill.items.map(item => {
+          const itemAmount = item.amount;
+          const paidForItem = Math.min(remainingPaid, itemAmount);
+          remainingPaid = Math.max(0, remainingPaid - paidForItem);
+          return {
+            ...item.toObject(),
+            paid: paidForItem,
+            balance: itemAmount - paidForItem
+          };
+        });
+      }
+
+      // 🧾 Update bill: remove payment from array and update numbers
+      await TermBill.findByIdAndUpdate(
+        billId,
+        {
+          items: updatedItems,
+          totalPaid,
+          balance: newBalance,
+          status,
+          $pull: {
+            payments: { _id: paymentId }
+          }
+        },
+        { session }
+      );
+
+      // Delete payment record
+      await Payment.findByIdAndDelete(paymentId).session(session);
+
+      // 🔄 Re-fetch populated + lean
+      const updatedBill = await TermBill.findById(billId)
+        .populate({
+          path: 'student',
+          populate: [
+            { path: 'user', select: 'name' },
+            { path: 'class', select: 'name stream displayName' }
+          ]
+        })
+        .populate('class', 'name stream displayName')
+        .populate('template', 'name')
+        .session(session)
+        .lean();
+
+      await session.commitTransaction();
+      transactionCommitted = true;
+
+      // 🟦 Use EXISTING resolver
+      const { className, classDisplayName } = resolveClassNames(
+        updatedBill.class || updatedBill.student?.class
+      );
+
+      const responseData = {
+        ...transformBill(updatedBill),
+        student: {
+          _id: updatedBill.student?._id,
+          name: updatedBill.student?.user?.name || 'N/A'
+        },
+        class: {
+          _id: updatedBill.class?._id || null,
+          name: className,
+          displayName: classDisplayName
+        },
+        items: updatedBill.items.map(item => ({
+          _id: item._id,
+          name: item.name,
+          amount: item.amount,
+          paid: item.paid,
+          balance: item.balance,
+          isVariable: item.isVariable === true
+        })),
+        payments: updatedBill.payments.map(p => ({
+          _id: p._id,
+          amount: p.amount,
+          method: p.method,
+          billingMode: p.billingMode || billingMode,
+          note: p.note || '',
+          date: p.date
+        }))
+      };
+
+      res.status(200).json({
+        success: true,
+        message: 'Payment reversed successfully',
+        updatedBill: responseData
+      });
+
+    } catch (error) {
+      if (!transactionCommitted && session.inTransaction()) {
+        await session.abortTransaction();
+      }
+
+      console.error('Payment reversal error:', error);
+
+      const statusCode = error.message.includes('not found') ? 404 : 400;
+      res.status(statusCode).json({
+        message: error.message || 'Error reversing payment',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    } finally {
+      await session.endSession();
+    }
+  },
   async updateOrCreateBill(req, res) {
     const session = await mongoose.startSession();
     let committed = false;

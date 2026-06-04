@@ -8,6 +8,7 @@ router.post('/fee-templates', protect, requirePrivateSchool, allcontrollers.crea
 router.post('/bills/generate', protect, requirePrivateSchool, allcontrollers.generateBills);
 router.post('/bills/preview', protect, requirePrivateSchool, allcontrollers.previewBills);
 router.post('/payments', protect, requirePrivateSchool, allcontrollers.recordPayment);
+router.delete('/payments/:paymentId/bill/:billId', protect, requirePrivateSchool, allcontrollers.reversePayment);
 router.put('/bills/update-or-create', protect, requirePrivateSchool, allcontrollers.updateOrCreateBill);
 router.get('/fee-templates', protect, requirePrivateSchool, allcontrollers.getFeeTemplates);
 router.get('/term-bills', protect, requirePrivateSchool, allcontrollers.getTermBills);
