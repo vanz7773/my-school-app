@@ -114,6 +114,7 @@ exports.getTeacherClasses = async (req, res) => {
     const schoolId = req.user.school;
 
     let userId;
+    let assignedClassIds = [];
 
     // 1️⃣ If ID belongs to Teacher collection
     const teacherDoc = await Teacher.findOne({
@@ -124,6 +125,7 @@ exports.getTeacherClasses = async (req, res) => {
     if (teacherDoc) {
       // Teacher._id ➜ User._id
       userId = teacherDoc.user;
+      assignedClassIds = teacherDoc.assignedClasses || [];
     } else {
       // 2️⃣ Fallback: ID is already User._id
       const user = await User.findOne({
@@ -137,15 +139,18 @@ exports.getTeacherClasses = async (req, res) => {
       }
 
       userId = user._id;
+      const teacherByUserId = await Teacher.findOne({ user: userId, school: schoolId }).lean();
+      assignedClassIds = teacherByUserId?.assignedClasses || [];
     }
 
-    // 3️⃣ Fetch classes using USER ID
+    // 3️⃣ Fetch classes using USER ID or assignedClassIds
     const classes = await Class.find({
       school: schoolId,
       $or: [
         { teachers: userId },
         { classTeacher: userId },
-        { coClassTeacher: userId }
+        { coClassTeacher: userId },
+        { _id: { $in: assignedClassIds } }
       ]
     })
       .populate('subjects', 'name code')
