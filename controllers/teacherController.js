@@ -285,7 +285,7 @@ exports.getAllTeachers = async (req, res) => {
       .populate("user", "name email gender profilePicture")
       .populate({
         path: "assignedClasses",
-        select: "name stream displayName subjects",
+        select: "name stream displayName subjects classTeacher coClassTeacher",
         populate: { path: "subjects", select: "name code" }
       })
       .populate("subjects", "name shortName")
@@ -323,7 +323,7 @@ exports.getTeacherById = async (req, res) => {
       .populate("user", "name email role gender profilePicture")
       .populate({
         path: "assignedClasses",
-        select: "name stream displayName subjects",
+        select: "name stream displayName subjects classTeacher coClassTeacher",
         populate: { path: "subjects", select: "name code" }
       })
       .populate("subjects", "name shortName")
@@ -650,7 +650,7 @@ exports.getMyProfile = async (req, res) => {
     const teacher = await Teacher.findOne({ user: userId, school: currentSchool })
       .populate({
         path: "assignedClasses",
-        select: "name stream displayName subjects",
+        select: "name stream displayName subjects classTeacher coClassTeacher",
         populate: { path: "subjects", select: "name code" }
       })
       .populate("subjects", "name shortName")
@@ -686,7 +686,7 @@ exports.getTeacherByUser = async (req, res) => {
     const teacher = await Teacher.findOne({ user: req.params.userId })
       .populate({
         path: "assignedClasses",
-        select: "name stream displayName subjects",
+        select: "name stream displayName subjects classTeacher coClassTeacher",
         populate: { path: "subjects", select: "name code" }
       })
       .populate("subjects", "name shortName")
