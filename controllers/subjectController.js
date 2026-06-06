@@ -18,11 +18,67 @@ const defaultSubjects = [
   { name: "Literacy", shortName: "LIT", aliases: [] },
   { name: "Numeracy", shortName: "NUM", aliases: [] },
   { name: "Nature and Environment", shortName: "N&E", aliases: ["NATURE", "ENVIRONMENT"] },
+  { name: "Social Skills", shortName: "SOC SKILLS", aliases: ["SOCIAL SKILLS"] },
+  { name: "Writing", shortName: "WRITING", aliases: [] },
+  { name: "OWOP", shortName: "OWOP", aliases: ["OUR WORLD OUR PEOPLE", "OUR WORLD AND OUR PEOPLE"] },
 ];
 
 // helper to escape regex special chars
 function escapeRegex(str = "") {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function formatDefaultSubject(subject) {
+  return {
+    name: subject.name.trim().toUpperCase(),
+    shortName: subject.shortName.trim().toUpperCase(),
+    aliases: subject.aliases.map((a) => a.trim().toUpperCase()),
+  };
+}
+
+async function ensureDefaultSubjects() {
+  let created = 0;
+  let updated = 0;
+
+  for (const subject of defaultSubjects.map(formatDefaultSubject)) {
+    const nameRegex = new RegExp(`^${escapeRegex(subject.name)}$`, "i");
+    const shortNameRegex = new RegExp(`^${escapeRegex(subject.shortName)}$`, "i");
+    const aliasRegexes = subject.aliases.map((alias) => new RegExp(`^${escapeRegex(alias)}$`, "i"));
+
+    let existing = await Subject.findOne({
+      $or: [
+        { name: nameRegex },
+        { shortName: shortNameRegex },
+        ...aliasRegexes.map((aliasRegex) => ({ aliases: { $elemMatch: aliasRegex } })),
+      ],
+    });
+
+    if (!existing) {
+      await Subject.create(subject);
+      created += 1;
+      continue;
+    }
+
+    let changed = false;
+    if (!existing.shortName) {
+      existing.shortName = subject.shortName;
+      changed = true;
+    }
+
+    const existingAliases = (existing.aliases || []).map((alias) => alias.trim().toUpperCase());
+    const mergedAliases = Array.from(new Set([...existingAliases, ...subject.aliases]));
+    if (mergedAliases.length !== existingAliases.length) {
+      existing.aliases = mergedAliases;
+      changed = true;
+    }
+
+    if (changed) {
+      await existing.save();
+      updated += 1;
+    }
+  }
+
+  return { created, updated };
 }
 
 /**
@@ -31,12 +87,7 @@ function escapeRegex(str = "") {
  */
 exports.getGlobalSubjects = async (req, res) => {
   try {
-    const formatted = defaultSubjects.map((s) => ({
-      ...s,
-      name: s.name.trim().toUpperCase(),
-      shortName: s.shortName.trim().toUpperCase(),
-      aliases: s.aliases.map((a) => a.trim().toUpperCase()),
-    }));
+    const formatted = defaultSubjects.map(formatDefaultSubject);
     return res.status(200).json(formatted);
   } catch (err) {
     console.error("❌ Error fetching global subjects:", err);
@@ -113,16 +164,9 @@ exports.createSubject = async (req, res) => {
  */
 exports.getSubjects = async (req, res) => {
   try {
-    const totalCount = await Subject.countDocuments({});
-    if (totalCount === 0) {
-      // create global defaults once
-      const newGlobals = defaultSubjects.map((s) => ({
-        name: s.name.trim().toUpperCase(),
-        shortName: s.shortName.trim().toUpperCase(),
-        aliases: s.aliases.map((a) => a.trim().toUpperCase()),
-      }));
-      await Subject.insertMany(newGlobals);
-      console.log("✅ Global default subjects created.");
+    const { created, updated } = await ensureDefaultSubjects();
+    if (created || updated) {
+      console.log(`✅ Global default subjects synced. Created: ${created}, updated: ${updated}.`);
     }
 
     const subjects = await Subject.find({}).sort("name");
@@ -189,19 +233,12 @@ exports.normalizeTeacherSubjects = async (req, res) => {
  */
 exports.syncDefaultSubjectsForAllSchools = async (req, res) => {
   try {
-    const globalCount = await Subject.countDocuments({});
-    if (globalCount === 0) {
-      const newGlobals = defaultSubjects.map((s) => ({
-        name: s.name.trim().toUpperCase(),
-        shortName: s.shortName.trim().toUpperCase(),
-        aliases: s.aliases.map((a) => a.trim().toUpperCase()),
-      }));
-      const inserted = await Subject.insertMany(newGlobals);
-      console.log(`🌍 Created ${inserted.length} global default subjects.`);
-      return res.json({ message: "✅ Global default subjects created", totalCreated: inserted.length });
-    }
-
-    return res.json({ message: "✅ Global default subjects already exist", totalCreated: 0 });
+    const { created, updated } = await ensureDefaultSubjects();
+    return res.json({
+      message: "✅ Global default subjects synced",
+      totalCreated: created,
+      totalUpdated: updated,
+    });
   } catch (err) {
     console.error("❌ Error ensuring global default subjects:", err);
     return res.status(500).json({ message: "Internal server error" });
