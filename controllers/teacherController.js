@@ -283,7 +283,11 @@ exports.getAllTeachers = async (req, res) => {
   try {
     const teachers = await Teacher.find({ school: req.user.school })
       .populate("user", "name email gender profilePicture")
-      .populate("assignedClasses", "name")
+      .populate({
+        path: "assignedClasses",
+        select: "name stream displayName subjects",
+        populate: { path: "subjects", select: "name code" }
+      })
       .populate("subjects", "name shortName")
       .populate("school", "name schoolType lockedFeatures");
 
@@ -317,7 +321,11 @@ exports.getTeacherById = async (req, res) => {
       school: req.user.school
     })
       .populate("user", "name email role gender profilePicture")
-      .populate("assignedClasses", "name")
+      .populate({
+        path: "assignedClasses",
+        select: "name stream displayName subjects",
+        populate: { path: "subjects", select: "name code" }
+      })
       .populate("subjects", "name shortName")
       .populate("school", "name schoolType lockedFeatures");
 
@@ -640,7 +648,11 @@ exports.getMyProfile = async (req, res) => {
     const currentSchool = req.user.school;
 
     const teacher = await Teacher.findOne({ user: userId, school: currentSchool })
-      .populate("assignedClasses", "name")
+      .populate({
+        path: "assignedClasses",
+        select: "name stream displayName subjects",
+        populate: { path: "subjects", select: "name code" }
+      })
       .populate("subjects", "name shortName")
       .populate("school", "name schoolType lockedFeatures")
       .populate("user", "name email role gender profilePicture");
@@ -672,7 +684,11 @@ exports.getMyProfile = async (req, res) => {
 exports.getTeacherByUser = async (req, res) => {
   try {
     const teacher = await Teacher.findOne({ user: req.params.userId })
-      .populate("assignedClasses", "name")
+      .populate({
+        path: "assignedClasses",
+        select: "name stream displayName subjects",
+        populate: { path: "subjects", select: "name code" }
+      })
       .populate("subjects", "name shortName")
       .populate("school", "name schoolType lockedFeatures")
       .populate("user", "name email role gender profilePicture");
