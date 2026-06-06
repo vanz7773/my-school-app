@@ -740,7 +740,9 @@ exports.getTeacherClasses = async (req, res) => {
         { classTeacher: teacher.user._id },
         { coClassTeacher: teacher.user._id }
       ]
-    }).select("name classTeacher coClassTeacher classDisplayName displayName stream");
+    })
+      .select("name classTeacher coClassTeacher classDisplayName displayName stream subjects")
+      .populate("subjects", "name code");
 
     res.json({
       success: true,
