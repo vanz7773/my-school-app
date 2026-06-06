@@ -49,7 +49,7 @@ async function ensureDefaultSubjects() {
       $or: [
         { name: nameRegex },
         { shortName: shortNameRegex },
-        ...aliasRegexes.map((aliasRegex) => ({ aliases: { $elemMatch: aliasRegex } })),
+        ...aliasRegexes.map((aliasRegex) => ({ aliases: aliasRegex })),
       ],
     });
 
@@ -118,7 +118,7 @@ exports.createSubject = async (req, res) => {
       $or: [
         { name: regexName },
         { shortName: new RegExp(`^${escapeRegex(normalizedShort)}$`, "i") },
-        { aliases: { $elemMatch: new RegExp(`^${escapeRegex(normalizedName)}$`, "i") } },
+        { aliases: new RegExp(`^${escapeRegex(normalizedName)}$`, "i") },
       ],
     });
 
@@ -201,7 +201,7 @@ exports.normalizeTeacherSubjects = async (req, res) => {
         $or: [
           { name: nameRegex },
           { shortName: nameRegex },
-          { aliases: { $elemMatch: nameRegex } },
+          { aliases: nameRegex },
         ],
       });
 
