@@ -85,6 +85,10 @@ exports.getSubjectMarks = async (req, res) => {
         total: "",
         grade: "",
         remarks: "",
+        conduct: "",
+        interest: "",
+        teacherRemarks: "",
+        promotedTo: "",
       };
     });
 
@@ -144,6 +148,7 @@ exports.saveSubjectMarks = async (req, res) => {
         conduct: record.conduct || "",
         interest: record.interest || "",
         teacherRemarks: record.teacherRemarks || "",
+        promotedTo: record.promotedTo || "",
       };
     });
 
@@ -175,4 +180,3 @@ exports.saveSubjectMarks = async (req, res) => {
     return res.status(500).json({ message: "Internal server error", error: error.message });
   }
 };
-

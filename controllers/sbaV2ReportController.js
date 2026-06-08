@@ -47,6 +47,7 @@ exports.getClassReportCards = async (req, res) => {
           conduct: "",
           interest: "",
           teacherRemarks: "",
+          promotedTo: "",
         },
         subjects: [],
         totalMarks: 0,
@@ -115,7 +116,7 @@ exports.getClassReportCards = async (req, res) => {
               subjectRank: record.subjectRank
             });
 
-            // Extract conduct, interest, and teacherRemarks if present (takes the first non-empty value found across subjects)
+            // Extract report comments if present (takes the first non-empty value found across subjects)
             if (!studentMarksMap[studentId].studentInfo.conduct && record.conduct) {
               studentMarksMap[studentId].studentInfo.conduct = record.conduct;
             }
@@ -124,6 +125,9 @@ exports.getClassReportCards = async (req, res) => {
             }
             if (!studentMarksMap[studentId].studentInfo.teacherRemarks && record.teacherRemarks) {
               studentMarksMap[studentId].studentInfo.teacherRemarks = record.teacherRemarks;
+            }
+            if (!studentMarksMap[studentId].studentInfo.promotedTo && record.promotedTo) {
+              studentMarksMap[studentId].studentInfo.promotedTo = record.promotedTo;
             }
 
             // Accrue total marks

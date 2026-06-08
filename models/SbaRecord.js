@@ -79,6 +79,10 @@ const sbaRecordSchema = new mongoose.Schema(
           type: String,
           default: "",
         },
+        promotedTo: {
+          type: String,
+          default: "",
+        },
       },
     ],
   },
