@@ -33,6 +33,21 @@ const addRecordAlias = (map, id, record) => {
   if (key && !map[key]) map[key] = record;
 };
 
+const addCommentAlias = (map, id, record) => {
+  const key = toIdString(id);
+  if (!key) return;
+
+  const current = map[key] || {};
+  const merged = {
+    conduct: current.conduct || record.conduct || "",
+    interest: current.interest || record.interest || "",
+    teacherRemarks: current.teacherRemarks || record.teacherRemarks || "",
+    promotedTo: current.promotedTo || record.promotedTo || "",
+  };
+
+  map[key] = merged;
+};
+
 /**
  * Get SBA Marks for a specific class, subject, and term.
  * Returns the saved marks and combines them with any students currently enrolled who don't have marks yet.
@@ -61,6 +76,11 @@ exports.getSubjectMarks = async (req, res) => {
       term: termId,
       subject: subjectId,
     }).lean();
+    const termSbaRecords = await SbaRecord.find({
+      school: schoolId,
+      class: classId,
+      term: termId,
+    }).select("records updatedAt").sort({ updatedAt: -1 }).lean();
 
     // 3. Map students to their marks, generating an empty mark object if none exists
     const recordsMap = {};
@@ -72,11 +92,21 @@ exports.getSubjectMarks = async (req, res) => {
         addRecordAlias(recordsMap, record.studentUserId, record);
       });
     }
+    const reportCommentsMap = {};
+    termSbaRecords.forEach((termRecord) => {
+      (termRecord.records || []).forEach((record) => {
+        addCommentAlias(reportCommentsMap, record.student, record);
+        addCommentAlias(reportCommentsMap, record.studentUser, record);
+        addCommentAlias(reportCommentsMap, record.studentDocId, record);
+        addCommentAlias(reportCommentsMap, record.studentUserId, record);
+      });
+    });
 
     const mergedRecords = students.map((student) => {
       const studentDocId = toIdString(student._id);
       const studentUserId = toIdString(student.user?._id || student.user);
       const existingRecord = recordsMap[studentDocId] || recordsMap[studentUserId];
+      const existingComments = reportCommentsMap[studentDocId] || reportCommentsMap[studentUserId] || {};
 
       if (existingRecord) {
         return {
@@ -87,6 +117,10 @@ exports.getSubjectMarks = async (req, res) => {
           studentUserId,
           studentName: student.user?.name || "Unknown",
           profilePicture: student.profilePicture || student.user?.profilePicture || "",
+          conduct: existingComments.conduct || existingRecord.conduct || "",
+          interest: existingComments.interest || existingRecord.interest || "",
+          teacherRemarks: existingComments.teacherRemarks || existingRecord.teacherRemarks || "",
+          promotedTo: existingComments.promotedTo || existingRecord.promotedTo || "",
         };
       }
 
@@ -106,10 +140,10 @@ exports.getSubjectMarks = async (req, res) => {
         total: "",
         grade: "",
         remarks: "",
-        conduct: "",
-        interest: "",
-        teacherRemarks: "",
-        promotedTo: "",
+        conduct: existingComments.conduct || "",
+        interest: existingComments.interest || "",
+        teacherRemarks: existingComments.teacherRemarks || "",
+        promotedTo: existingComments.promotedTo || "",
       };
     });
 
