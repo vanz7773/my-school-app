@@ -29,6 +29,11 @@ const sbaRecordSchema = new mongoose.Schema(
           ref: "Student",
           required: true,
         },
+        studentUser: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          default: null,
+        },
         classWork: {
           type: Number,
           default: 0,

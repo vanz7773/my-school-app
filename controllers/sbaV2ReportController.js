@@ -4,6 +4,12 @@ const Class = require("../models/Class");
 const User = require("../models/User");
 const Subject = require("../models/Subject");
 
+const toIdString = (value) => {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  return String(value._id || value.id || value);
+};
+
 /**
  * Get aggregated SBA Marks for all subjects for a specific class and term.
  * Returns an array of students, each with a list of their subject marks.
@@ -37,10 +43,13 @@ exports.getClassReportCards = async (req, res) => {
     
     // Initialize map
     students.forEach(student => {
-      const studentId = String(student.user?._id || student.user);
-      studentMarksMap[studentId] = {
+      const studentDocId = toIdString(student._id);
+      const studentUserId = toIdString(student.user?._id || student.user);
+      const reportEntry = {
         studentInfo: {
-          id: studentId,
+          id: studentUserId || studentDocId,
+          studentDocId,
+          studentUserId,
           name: student.user?.name || "Unknown",
           profilePicture: student.profilePicture || student.user?.profilePicture || "",
           studentId: student.studentId || "", // some models have an explicit string ID
@@ -53,6 +62,9 @@ exports.getClassReportCards = async (req, res) => {
         totalMarks: 0,
         averageMarks: 0,
       };
+
+      if (studentDocId) studentMarksMap[studentDocId] = reportEntry;
+      if (studentUserId) studentMarksMap[studentUserId] = reportEntry;
     });
 
     // Populate marks from sbaRecords and compute ranks
@@ -99,7 +111,12 @@ exports.getClassReportCards = async (req, res) => {
 
         // Add to student marks map
         recordsWithScaled.forEach(record => {
-          const studentId = String(record.student);
+          const studentId = [
+            toIdString(record.student),
+            toIdString(record.studentUser),
+            toIdString(record.studentDocId),
+            toIdString(record.studentUserId),
+          ].find(id => id && studentMarksMap[id]);
           if (studentMarksMap[studentId]) {
             studentMarksMap[studentId].subjects.push({
               subject: subjectInfo,
@@ -138,7 +155,7 @@ exports.getClassReportCards = async (req, res) => {
     });
 
     // 4. Format the final output and calculate averages/positions
-    let reportCards = Object.values(studentMarksMap);
+    let reportCards = Array.from(new Set(Object.values(studentMarksMap)));
 
     // Calculate averages and sort for positions
     reportCards = reportCards.map(report => {

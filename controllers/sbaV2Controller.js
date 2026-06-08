@@ -22,6 +22,17 @@ const calculateGrade = (total, className = "") => {
   return "Beginning (B)";
 };
 
+const toIdString = (value) => {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  return String(value._id || value.id || value);
+};
+
+const addRecordAlias = (map, id, record) => {
+  const key = toIdString(id);
+  if (key && !map[key]) map[key] = record;
+};
+
 /**
  * Get SBA Marks for a specific class, subject, and term.
  * Returns the saved marks and combines them with any students currently enrolled who don't have marks yet.
@@ -55,18 +66,25 @@ exports.getSubjectMarks = async (req, res) => {
     const recordsMap = {};
     if (sbaRecord && sbaRecord.records) {
       sbaRecord.records.forEach((record) => {
-        recordsMap[String(record.student)] = record;
+        addRecordAlias(recordsMap, record.student, record);
+        addRecordAlias(recordsMap, record.studentUser, record);
+        addRecordAlias(recordsMap, record.studentDocId, record);
+        addRecordAlias(recordsMap, record.studentUserId, record);
       });
     }
 
     const mergedRecords = students.map((student) => {
-      // Use the Student's linked User ID for records, OR the Student ID itself.
-      const studentId = String(student.user?._id || student.user);
-      const existingRecord = recordsMap[studentId];
+      const studentDocId = toIdString(student._id);
+      const studentUserId = toIdString(student.user?._id || student.user);
+      const existingRecord = recordsMap[studentDocId] || recordsMap[studentUserId];
 
       if (existingRecord) {
         return {
           ...existingRecord,
+          student: studentDocId,
+          studentDocId,
+          studentUser: studentUserId || null,
+          studentUserId,
           studentName: student.user?.name || "Unknown",
           profilePicture: student.profilePicture || student.user?.profilePicture || "",
         };
@@ -74,7 +92,10 @@ exports.getSubjectMarks = async (req, res) => {
 
       // Default empty record for new student
       return {
-        student: studentId,
+        student: studentDocId,
+        studentDocId,
+        studentUser: studentUserId || null,
+        studentUserId,
         studentName: student.user?.name || "Unknown",
         profilePicture: student.profilePicture || student.user?.profilePicture || "",
         classWork: "",
@@ -119,9 +140,26 @@ exports.saveSubjectMarks = async (req, res) => {
     // Fetch the class to determine the grading system based on class name
     const classObj = await Class.findById(classId).lean();
     const className = classObj ? (classObj.name || "") : "";
+    const studentDocs = await Student.find({ class: classId }).select("_id user").lean();
+    const studentLookup = {};
+    studentDocs.forEach((student) => {
+      const studentDocId = toIdString(student._id);
+      const studentUserId = toIdString(student.user);
+      const entry = { studentDocId, studentUserId };
+      if (studentDocId) studentLookup[studentDocId] = entry;
+      if (studentUserId) studentLookup[studentUserId] = entry;
+    });
 
     // Calculate totals and grades for all records
     const processedRecords = records.map((record) => {
+      const matchedStudent =
+        studentLookup[toIdString(record.student)] ||
+        studentLookup[toIdString(record.studentDocId)] ||
+        studentLookup[toIdString(record.studentUser)] ||
+        studentLookup[toIdString(record.studentUserId)] ||
+        {};
+      const studentDocId = matchedStudent.studentDocId || toIdString(record.studentDocId) || toIdString(record.student);
+      const studentUserId = matchedStudent.studentUserId || toIdString(record.studentUser) || toIdString(record.studentUserId) || null;
       const classWork = Math.min(Number(record.classWork) || 0, 10);
       const classTest1 = Math.min(Number(record.classTest1) || 0, 20);
       const classTest2 = Math.min(Number(record.classTest2) || 0, 30);
@@ -136,7 +174,8 @@ exports.saveSubjectMarks = async (req, res) => {
       const grade = calculateGrade(total, className);
 
       return {
-        student: record.student,
+        student: studentDocId,
+        studentUser: studentUserId,
         classWork,
         classTest1,
         classTest2,
