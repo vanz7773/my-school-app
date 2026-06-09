@@ -30,13 +30,23 @@ exports.getClassReportCards = async (req, res) => {
     const students = studentDocs.filter(s => s.user);
     
     // 2. Fetch all SBA records for this class and term across all subjects
-    const sbaRecords = await SbaRecord.find({
+    const allSbaRecords = await SbaRecord.find({
       school: schoolId,
       class: classId,
       term: termId,
     })
       .populate("subject", "name subjectName code")
+      .sort({ updatedAt: -1 })
       .lean();
+    const seenSubjectIds = new Set();
+    const sbaRecords = [];
+
+    allSbaRecords.forEach((sba) => {
+      const subjectId = toIdString(sba.subject);
+      if (!subjectId || seenSubjectIds.has(subjectId)) return;
+      seenSubjectIds.add(subjectId);
+      sbaRecords.push(sba);
+    });
 
     // 3. Build a map of studentId -> list of subject marks
     const studentMarksMap = {};

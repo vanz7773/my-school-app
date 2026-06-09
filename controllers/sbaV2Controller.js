@@ -76,7 +76,7 @@ exports.getSubjectMarks = async (req, res) => {
       class: classId,
       term: termId,
       subject: subjectId,
-    }).lean();
+    }).sort({ updatedAt: -1 }).lean();
     const termSbaRecords = await SbaRecord.find({
       school: schoolId,
       class: classId,
@@ -244,6 +244,8 @@ exports.saveSubjectMarks = async (req, res) => {
       {
         new: true,
         upsert: true,
+        sort: { updatedAt: -1 },
+        setDefaultsOnInsert: true,
       }
     );
 
