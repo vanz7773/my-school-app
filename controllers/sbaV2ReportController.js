@@ -56,6 +56,7 @@ exports.getClassReportCards = async (req, res) => {
           conduct: "",
           interest: "",
           teacherRemarks: "",
+          nextTermBegins: "",
           promotedTo: "",
         },
         subjects: [],
@@ -142,6 +143,9 @@ exports.getClassReportCards = async (req, res) => {
             }
             if (!studentMarksMap[studentId].studentInfo.teacherRemarks && record.teacherRemarks) {
               studentMarksMap[studentId].studentInfo.teacherRemarks = record.teacherRemarks;
+            }
+            if (!studentMarksMap[studentId].studentInfo.nextTermBegins && record.nextTermBegins) {
+              studentMarksMap[studentId].studentInfo.nextTermBegins = record.nextTermBegins;
             }
             if (!studentMarksMap[studentId].studentInfo.promotedTo && record.promotedTo) {
               studentMarksMap[studentId].studentInfo.promotedTo = record.promotedTo;

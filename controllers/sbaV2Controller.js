@@ -42,6 +42,7 @@ const addCommentAlias = (map, id, record) => {
     conduct: current.conduct || record.conduct || "",
     interest: current.interest || record.interest || "",
     teacherRemarks: current.teacherRemarks || record.teacherRemarks || "",
+    nextTermBegins: current.nextTermBegins || record.nextTermBegins || "",
     promotedTo: current.promotedTo || record.promotedTo || "",
   };
 
@@ -120,6 +121,7 @@ exports.getSubjectMarks = async (req, res) => {
           conduct: existingComments.conduct || existingRecord.conduct || "",
           interest: existingComments.interest || existingRecord.interest || "",
           teacherRemarks: existingComments.teacherRemarks || existingRecord.teacherRemarks || "",
+          nextTermBegins: existingComments.nextTermBegins || existingRecord.nextTermBegins || "",
           promotedTo: existingComments.promotedTo || existingRecord.promotedTo || "",
         };
       }
@@ -143,6 +145,7 @@ exports.getSubjectMarks = async (req, res) => {
         conduct: existingComments.conduct || "",
         interest: existingComments.interest || "",
         teacherRemarks: existingComments.teacherRemarks || "",
+        nextTermBegins: existingComments.nextTermBegins || "",
         promotedTo: existingComments.promotedTo || "",
       };
     });
@@ -221,6 +224,7 @@ exports.saveSubjectMarks = async (req, res) => {
         conduct: record.conduct || "",
         interest: record.interest || "",
         teacherRemarks: record.teacherRemarks || "",
+        nextTermBegins: record.nextTermBegins || "",
         promotedTo: record.promotedTo || "",
       };
     });
