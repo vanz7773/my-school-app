@@ -1983,7 +1983,13 @@ exports.uploadReportSheetPDF = [
       if (!req.file)
         return res.status(400).json({ message: "No REPORT PDF uploaded" });
 
-      const { classId, termId, schoolId, studentOrder: studentOrderRaw } = req.body;
+      const {
+        classId,
+        termId,
+        schoolId,
+        studentOrder: studentOrderRaw,
+        skipReportCardBranding: skipReportCardBrandingRaw,
+      } = req.body;
 
       // 🔒 HARD REQUIRE — NEVER GUESS TERM
       if (!classId || !termId || !schoolId) {
@@ -2006,6 +2012,9 @@ exports.uploadReportSheetPDF = [
           return [];
         }
       })();
+      const skipReportCardBranding = ["true", "1", "yes"].includes(
+        String(skipReportCardBrandingRaw || "").toLowerCase()
+      );
 
       // ✅ 1️⃣ STRICTLY VALIDATE TERM ID
       // ====================================================
@@ -2135,10 +2144,12 @@ exports.uploadReportSheetPDF = [
         }
       };
 
-      const [crestBuf, sigBuf] = await Promise.all([
-        fetchImage(schoolInfo?.logo),
-        fetchImage(schoolInfo?.headTeacherSignature)
-      ]);
+      const [crestBuf, sigBuf] = skipReportCardBranding
+        ? [null, null]
+        : await Promise.all([
+          fetchImage(schoolInfo?.logo),
+          fetchImage(schoolInfo?.headTeacherSignature)
+        ]);
 
       let crestImage = null;
       let signatureImage = null;
