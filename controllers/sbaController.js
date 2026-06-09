@@ -1983,7 +1983,7 @@ exports.uploadReportSheetPDF = [
       if (!req.file)
         return res.status(400).json({ message: "No REPORT PDF uploaded" });
 
-      const { classId, termId, schoolId } = req.body;
+      const { classId, termId, schoolId, studentOrder: studentOrderRaw } = req.body;
 
       // 🔒 HARD REQUIRE — NEVER GUESS TERM
       if (!classId || !termId || !schoolId) {
@@ -1991,6 +1991,21 @@ exports.uploadReportSheetPDF = [
           message: "classId, termId, and schoolId are required (no auto-resolution allowed)"
         });
       }
+
+      const studentOrder = (() => {
+        if (!studentOrderRaw) return [];
+        try {
+          const parsed = Array.isArray(studentOrderRaw)
+            ? studentOrderRaw
+            : JSON.parse(studentOrderRaw);
+          return Array.isArray(parsed)
+            ? parsed.map(value => String(value)).filter(Boolean)
+            : [];
+        } catch (error) {
+          console.warn("Invalid studentOrder payload ignored:", error.message || error);
+          return [];
+        }
+      })();
 
       // ✅ 1️⃣ STRICTLY VALIDATE TERM ID
       // ====================================================
@@ -2070,6 +2085,25 @@ exports.uploadReportSheetPDF = [
 
       if (!students.length)
         return res.status(400).json({ message: "No students found for this class" });
+
+      if (studentOrder.length > 0) {
+        const orderById = new Map(studentOrder.map((id, index) => [id, index]));
+        const getStudentOrderIndex = (student) => {
+          const possibleIds = [
+            student._id,
+            student.id,
+            student.user?._id,
+            student.user?.id,
+          ].map(value => String(value || "")).filter(Boolean);
+
+          for (const id of possibleIds) {
+            if (orderById.has(id)) return orderById.get(id);
+          }
+          return Number.MAX_SAFE_INTEGER;
+        };
+
+        students.sort((a, b) => getStudentOrderIndex(a) - getStudentOrderIndex(b));
+      }
 
       // Load master PDF
       const pdfBytes = fs.readFileSync(tempFilePath);
