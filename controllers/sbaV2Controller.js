@@ -211,6 +211,53 @@ async function sendPush(userIds, title, body) {
         ticketSummary,
       });
 
+      const receiptIds = (Array.isArray(tickets) ? tickets : [])
+        .map(ticket => ticket?.id)
+        .filter(Boolean);
+
+      if (receiptIds.length > 0) {
+        console.log("[SBA V2 Push] Expo receipt check scheduled", {
+          recipientIds,
+          receiptCount: receiptIds.length,
+          receiptIds,
+        });
+
+        setTimeout(async () => {
+          try {
+            const receiptIdChunks = expo.chunkPushNotificationReceiptIds(receiptIds);
+            for (const receiptIdChunk of receiptIdChunks) {
+              const receipts = await expo.getPushNotificationReceiptsAsync(receiptIdChunk);
+              const receiptSummary = Object.values(receipts || {}).reduce((summary, receipt) => {
+                const status = receipt?.status || "unknown";
+                summary[status] = (summary[status] || 0) + 1;
+                return summary;
+              }, {});
+
+              console.log("[SBA V2 Push] Expo receipt result", {
+                recipientIds,
+                receiptSummary,
+              });
+
+              Object.entries(receipts || {}).forEach(([receiptId, receipt]) => {
+                if (receipt?.status === "error") {
+                  console.error("[SBA V2 Push] Expo receipt error", {
+                    recipientIds,
+                    receiptId,
+                    message: receipt.message,
+                    details: receipt.details,
+                  });
+                }
+              });
+            }
+          } catch (receiptError) {
+            console.error("[SBA V2 Push] Expo receipt lookup error", {
+              recipientIds,
+              error: receiptError,
+            });
+          }
+        }, 15000);
+      }
+
       (Array.isArray(tickets) ? tickets : []).forEach((ticket) => {
         if (ticket?.status === "error") {
           console.error("[SBA V2 Push] Expo ticket error", {
