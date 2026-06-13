@@ -131,7 +131,7 @@ async function sendPush(userIds, title, body) {
   }).lean();
 
   const validTokens = tokens
-    .map(tokenDoc => tokenDoc.token)
+    .map(t => t.token)
     .filter(token => Expo.isExpoPushToken(token));
 
   if (validTokens.length === 0) return;
@@ -141,15 +141,15 @@ async function sendPush(userIds, title, body) {
     sound: "default",
     title,
     body,
-    data: { type: "report-card" },
+    data: { type: "report-card" }
   }));
 
   const chunks = expo.chunkPushNotifications(messages);
   for (const chunk of chunks) {
     try {
       await expo.sendPushNotificationsAsync(chunk);
-    } catch (error) {
-      console.error("Push error:", error);
+    } catch (err) {
+      console.error("Push error:", err);
     }
   }
 }
