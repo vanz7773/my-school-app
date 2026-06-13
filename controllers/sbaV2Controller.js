@@ -125,13 +125,21 @@ const applyStudentOrder = (students, studentOrder) => {
 async function sendPush(userIds, title, body) {
   if (!Array.isArray(userIds) || userIds.length === 0) return;
 
+  const recipientIds = userIds.map(userId => String(userId));
+  console.log("[SBA V2 Push] Starting push lookup", {
+    recipientCount: recipientIds.length,
+    recipientIds,
+    title,
+    body,
+  });
+
   const [users, tokens] = await Promise.all([
     User.find({
-      _id: { $in: userIds },
+      _id: { $in: recipientIds },
       pushToken: { $exists: true, $ne: null },
     }).select("pushToken").lean(),
     PushToken.find({
-      userId: { $in: userIds },
+      userId: { $in: recipientIds },
       disabled: false,
       token: { $exists: true, $ne: null },
     }).select("token").lean(),
@@ -147,7 +155,31 @@ async function sendPush(userIds, title, body) {
 
   const validTokens = [...tokenSet].filter(token => Expo.isExpoPushToken(token));
 
-  if (validTokens.length === 0) return;
+  console.log("[SBA V2 Push] Token lookup result", {
+    recipientCount: recipientIds.length,
+    recipientIds,
+    userPushTokenCount: users.length,
+    pushTokenDocCount: tokens.length,
+    uniqueTokenCount: tokenSet.size,
+    validExpoTokenCount: validTokens.length,
+  });
+
+  if (validTokens.length === 0) {
+    console.warn("[SBA V2 Push] No valid Expo tokens found for recipients", {
+      recipientIds,
+      title,
+      body,
+    });
+    return;
+  }
+
+  const invalidTokenCount = tokenSet.size - validTokens.length;
+  if (invalidTokenCount > 0) {
+    console.warn("[SBA V2 Push] Ignored invalid Expo tokens", {
+      recipientIds,
+      invalidTokenCount,
+    });
+  }
 
   const messages = validTokens.map(token => ({
     to: token,
@@ -158,11 +190,38 @@ async function sendPush(userIds, title, body) {
   }));
 
   const chunks = expo.chunkPushNotifications(messages);
+  console.log("[SBA V2 Push] Sending Expo push chunks", {
+    recipientIds,
+    messageCount: messages.length,
+    chunkCount: chunks.length,
+  });
+
   for (const chunk of chunks) {
     try {
-      await expo.sendPushNotificationsAsync(chunk);
+      const tickets = await expo.sendPushNotificationsAsync(chunk);
+      const ticketSummary = (Array.isArray(tickets) ? tickets : []).reduce((summary, ticket) => {
+        const status = ticket?.status || "unknown";
+        summary[status] = (summary[status] || 0) + 1;
+        return summary;
+      }, {});
+
+      console.log("[SBA V2 Push] Expo ticket result", {
+        recipientIds,
+        chunkSize: chunk.length,
+        ticketSummary,
+      });
+
+      (Array.isArray(tickets) ? tickets : []).forEach((ticket) => {
+        if (ticket?.status === "error") {
+          console.error("[SBA V2 Push] Expo ticket error", {
+            recipientIds,
+            message: ticket.message,
+            details: ticket.details,
+          });
+        }
+      });
     } catch (err) {
-      console.error("Push error:", err);
+      console.error("[SBA V2 Push] Push send error:", err);
     }
   }
 }
@@ -501,6 +560,14 @@ exports.uploadGeneratedReportCards = [
           const parentIds = getParentIds(student);
           const studentUserId = student.user?._id ? String(student.user._id) : null;
 
+          console.log("[SBA V2 Reports] Notification recipients resolved", {
+            studentId: String(student._id),
+            studentName,
+            studentUserId,
+            parentCount: parentIds.length,
+            parentIds,
+          });
+
           const baseNotification = {
             title: "New Report Card Available",
             type: "report-card",
@@ -547,6 +614,16 @@ exports.uploadGeneratedReportCards = [
               pushesByMessage[notification.message] = new Set();
             }
             notification.recipientUsers.forEach(userId => pushesByMessage[notification.message].add(String(userId)));
+          });
+
+          console.log("[SBA V2 Reports] Notifications inserted; push groups prepared", {
+            notificationCount: notifications.length,
+            pushGroupCount: Object.keys(pushesByMessage).length,
+            pushGroups: Object.entries(pushesByMessage).map(([message, userSet]) => ({
+              message,
+              recipientCount: userSet.size,
+              recipientIds: [...userSet],
+            })),
           });
 
           for (const [message, userSet] of Object.entries(pushesByMessage)) {
