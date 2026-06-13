@@ -80,20 +80,24 @@ class SmsService {
         throw new Error('No valid phone numbers after formatting');
       }
 
-      // Check for duplicates in last 24 hours
-      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      const recentLogs = await SmsLog.find({
-        school: schoolId,
-        message,
-        sentAt: { $gte: twentyFourHoursAgo },
-        recipientPhone: { $in: formattedRecipients }
-      });
+      let newRecipients = formattedRecipients;
 
-      const recentPhones = new Set(recentLogs.map(log => log.recipientPhone));
-      const newRecipients = formattedRecipients.filter(phone => !recentPhones.has(phone));
+      // Report cards may be resent after corrections, so do not suppress repeat report SMS.
+      if (messageType !== 'reports') {
+        const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const recentLogs = await SmsLog.find({
+          school: schoolId,
+          message,
+          sentAt: { $gte: twentyFourHoursAgo },
+          recipientPhone: { $in: formattedRecipients }
+        });
 
-      if (newRecipients.length === 0) {
-        return { success: true, message: 'All recipients already received this exact message recently. Skipping.' };
+        const recentPhones = new Set(recentLogs.map(log => log.recipientPhone));
+        newRecipients = formattedRecipients.filter(phone => !recentPhones.has(phone));
+
+        if (newRecipients.length === 0) {
+          return { success: true, message: 'All recipients already received this exact message recently. Skipping.' };
+        }
       }
 
       // SAAS BILLING: Check and deduct internal school balance
