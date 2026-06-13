@@ -142,28 +142,15 @@ async function sendPush(userIds, title, body) {
       userId: { $in: recipientIds },
       disabled: false,
       token: { $exists: true, $ne: null },
-    }).select("token userId").lean(),
+    }).select("token").lean(),
   ]);
 
   const tokenSet = new Set();
-  const tokenSources = new Map();
-  const addTokenSource = (token, source) => {
-    if (!token) return;
-    tokenSet.add(token);
-    const current = tokenSources.get(token) || { pushTokenIds: new Set(), userIds: new Set() };
-    if (source.pushTokenId) current.pushTokenIds.add(String(source.pushTokenId));
-    if (source.userId) current.userIds.add(String(source.userId));
-    tokenSources.set(token, current);
-  };
-
   users.forEach(user => {
-    addTokenSource(user.pushToken, { userId: user._id });
+    if (user.pushToken) tokenSet.add(user.pushToken);
   });
   tokens.forEach(tokenDoc => {
-    addTokenSource(tokenDoc.token, {
-      pushTokenId: tokenDoc._id,
-      userId: tokenDoc.userId,
-    });
+    if (tokenDoc.token) tokenSet.add(tokenDoc.token);
   });
 
   const validTokens = [...tokenSet].filter(token => Expo.isExpoPushToken(token));
@@ -209,44 +196,6 @@ async function sendPush(userIds, title, body) {
     chunkCount: chunks.length,
   });
 
-  const disableDeviceToken = async (token, receiptId, receipt) => {
-    const source = tokenSources.get(token);
-    if (!source) return;
-
-    const pushTokenIds = [...source.pushTokenIds];
-    const userIdsForLegacyToken = [...source.userIds];
-
-    if (pushTokenIds.length > 0) {
-      await PushToken.updateMany(
-        { _id: { $in: pushTokenIds } },
-        {
-          $set: {
-            disabled: true,
-            lastSeen: new Date(),
-          },
-        }
-      );
-    }
-
-    if (userIdsForLegacyToken.length > 0) {
-      await User.updateMany(
-        {
-          _id: { $in: userIdsForLegacyToken },
-          pushToken: token,
-        },
-        { $unset: { pushToken: "" } }
-      );
-    }
-
-    console.warn("[SBA V2 Push] Disabled unregistered Expo token", {
-      recipientIds,
-      receiptId,
-      pushTokenRecordCount: pushTokenIds.length,
-      legacyUserTokenCount: userIdsForLegacyToken.length,
-      error: receipt?.details?.error,
-    });
-  };
-
   for (const chunk of chunks) {
     try {
       const tickets = await expo.sendPushNotificationsAsync(chunk);
@@ -262,13 +211,9 @@ async function sendPush(userIds, title, body) {
         ticketSummary,
       });
 
-      const receiptTokenById = new Map();
-      (Array.isArray(tickets) ? tickets : []).forEach((ticket, index) => {
-        if (ticket?.id && chunk[index]?.to) {
-          receiptTokenById.set(ticket.id, chunk[index].to);
-        }
-      });
-      const receiptIds = [...receiptTokenById.keys()];
+      const receiptIds = (Array.isArray(tickets) ? tickets : [])
+        .map(ticket => ticket?.id)
+        .filter(Boolean);
 
       if (receiptIds.length > 0) {
         console.log("[SBA V2 Push] Expo receipt check scheduled", {
@@ -293,7 +238,7 @@ async function sendPush(userIds, title, body) {
                 receiptSummary,
               });
 
-              for (const [receiptId, receipt] of Object.entries(receipts || {})) {
+              Object.entries(receipts || {}).forEach(([receiptId, receipt]) => {
                 if (receipt?.status === "error") {
                   console.error("[SBA V2 Push] Expo receipt error", {
                     recipientIds,
@@ -301,12 +246,8 @@ async function sendPush(userIds, title, body) {
                     message: receipt.message,
                     details: receipt.details,
                   });
-
-                  if (receipt?.details?.error === "DeviceNotRegistered") {
-                    await disableDeviceToken(receiptTokenById.get(receiptId), receiptId, receipt);
-                  }
                 }
-              }
+              });
             }
           } catch (receiptError) {
             console.error("[SBA V2 Push] Expo receipt lookup error", {
