@@ -125,14 +125,27 @@ const applyStudentOrder = (students, studentOrder) => {
 async function sendPush(userIds, title, body) {
   if (!Array.isArray(userIds) || userIds.length === 0) return;
 
-  const tokens = await PushToken.find({
-    userId: { $in: userIds },
-    disabled: false,
-  }).lean();
+  const [users, tokens] = await Promise.all([
+    User.find({
+      _id: { $in: userIds },
+      pushToken: { $exists: true, $ne: null },
+    }).select("pushToken").lean(),
+    PushToken.find({
+      userId: { $in: userIds },
+      disabled: false,
+      token: { $exists: true, $ne: null },
+    }).select("token").lean(),
+  ]);
 
-  const validTokens = tokens
-    .map(t => t.token)
-    .filter(token => Expo.isExpoPushToken(token));
+  const tokenSet = new Set();
+  users.forEach(user => {
+    if (user.pushToken) tokenSet.add(user.pushToken);
+  });
+  tokens.forEach(tokenDoc => {
+    if (tokenDoc.token) tokenSet.add(tokenDoc.token);
+  });
+
+  const validTokens = [...tokenSet].filter(token => Expo.isExpoPushToken(token));
 
   if (validTokens.length === 0) return;
 
