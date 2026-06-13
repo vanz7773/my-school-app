@@ -143,6 +143,18 @@ const notificationSchema = new mongoose.Schema(
       index: true,
     },
 
+    termId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Term',
+      index: true,
+      default: null,
+    },
+
+    fileUrl: {
+      type: String,
+      default: '',
+    },
+
     announcementId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Announcement',

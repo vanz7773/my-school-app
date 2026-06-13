@@ -81,6 +81,12 @@ async function sendPush(userIds, title, body) {
   }
 }
 
+function formatTermLabel(termValue) {
+  const value = String(termValue || "").trim();
+  if (!value) return "Term Unknown";
+  return /^term\b/i.test(value) ? value : `Term ${value}`;
+}
+
 // ------------------ Multer setup ------------------
 const upload = multer({ dest: "uploads/" });
 exports.uploadMiddleware = upload.single("file");
@@ -2036,6 +2042,7 @@ exports.uploadReportSheetPDF = [
       // ✅ 2️⃣ NORMALIZE ONCE AND USE AS SINGLE SOURCE OF TRUTH
       // ====================================================
       const termKey = termDoc._id.toString(); // 🔥 Single, canonical term identifier
+      const termLabel = formatTermLabel(termDoc.term);
       console.log("✅ Validated term:", {
         termId: termKey,
         termNumber: termDoc.term,
@@ -2267,6 +2274,7 @@ exports.uploadReportSheetPDF = [
 
           const baseNotification = {
             title: "New Report Card Available",
+            type: "report-card",
             category: "report",
             audience: "specific",
             class: classId,
@@ -2282,7 +2290,7 @@ exports.uploadReportSheetPDF = [
           if (sId) {
             notifications.push({
               ...baseNotification,
-              message: `Your Term ${termDoc.term || 'Unknown'} report card has been uploaded.`,
+              message: `Your ${termLabel} report card has been uploaded.`,
               recipientUsers: [sId]
             });
           }
@@ -2290,7 +2298,7 @@ exports.uploadReportSheetPDF = [
           if (pIds.length > 0) {
             notifications.push({
               ...baseNotification,
-              message: `The Term ${termDoc.term || 'Unknown'} report card for ${studentName} is now available.`,
+              message: `The ${termLabel} report card for ${studentName} is now available.`,
               recipientUsers: pIds
             });
           }
@@ -2327,16 +2335,16 @@ exports.uploadReportSheetPDF = [
             const smsService = require('../services/smsService');
             const settings = await smsService.getSchoolSettings(schoolId);
             if (settings.smsEnabled && settings.autoTriggers?.examReports) {
-              const allRecipientIds = [...new Set(notifications.flatMap(n => n.recipientUsers || []))];
-              if (allRecipientIds.length > 0) {
+              for (const [msg, userSet] of Object.entries(pushesByMessage)) {
+                if (userSet.size === 0) continue;
                 const User = require('../models/User');
-                const targetUsers = await User.find({ _id: { $in: allRecipientIds } }).select('phone').lean();
+                const targetUsers = await User.find({ _id: { $in: [...userSet] } }).select('phone').lean();
                 const phones = targetUsers.map(u => u.phone).filter(Boolean);
                 if (phones.length > 0) {
                   await smsService.sendSms({
                     schoolId,
                     recipients: phones,
-                    message: `New Report Card: The Term ${termDoc.term || 'Unknown'} report card is now available on your portal.`,
+                    message: `New Report Card: ${msg}`,
                     messageType: 'reports'
                   });
                 }

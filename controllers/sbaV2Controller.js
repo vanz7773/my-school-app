@@ -40,6 +40,12 @@ const toIdString = (value) => {
   return String(value._id || value.id || value);
 };
 
+const formatTermLabel = (termValue) => {
+  const value = String(termValue || "").trim();
+  if (!value) return "Term Unknown";
+  return /^term\b/i.test(value) ? value : `Term ${value}`;
+};
+
 const addRecordAlias = (map, id, record) => {
   const key = toIdString(id);
   if (key && !map[key]) map[key] = record;
@@ -389,6 +395,7 @@ exports.uploadGeneratedReportCards = [
       }
 
       const termKey = termDoc._id.toString();
+      const termLabel = formatTermLabel(termDoc.term);
       const studentOrder = parseStringArray(studentOrderRaw);
 
       tempFilePath = req.file.path;
@@ -483,6 +490,7 @@ exports.uploadGeneratedReportCards = [
 
           const baseNotification = {
             title: "New Report Card Available",
+            type: "report-card",
             category: "report",
             audience: "specific",
             class: classId,
@@ -498,7 +506,7 @@ exports.uploadGeneratedReportCards = [
           if (studentUserId) {
             notifications.push({
               ...baseNotification,
-              message: `Your Term ${termDoc.term || "Unknown"} report card has been uploaded.`,
+              message: `Your ${termLabel} report card has been uploaded.`,
               recipientUsers: [studentUserId],
             });
           }
@@ -506,7 +514,7 @@ exports.uploadGeneratedReportCards = [
           if (parentIds.length > 0) {
             notifications.push({
               ...baseNotification,
-              message: `The Term ${termDoc.term || "Unknown"} report card for ${studentName} is now available.`,
+              message: `The ${termLabel} report card for ${studentName} is now available.`,
               recipientUsers: parentIds,
             });
           }
@@ -539,15 +547,15 @@ exports.uploadGeneratedReportCards = [
             const smsService = require("../services/smsService");
             const settings = await smsService.getSchoolSettings(schoolId);
             if (settings.smsEnabled && settings.autoTriggers?.examReports) {
-              const allRecipientIds = [...new Set(notifications.flatMap(notification => notification.recipientUsers || []))];
-              if (allRecipientIds.length > 0) {
-                const targetUsers = await User.find({ _id: { $in: allRecipientIds } }).select("phone").lean();
+              for (const [message, userSet] of Object.entries(pushesByMessage)) {
+                if (userSet.size === 0) continue;
+                const targetUsers = await User.find({ _id: { $in: [...userSet] } }).select("phone").lean();
                 const phones = targetUsers.map(user => user.phone).filter(Boolean);
                 if (phones.length > 0) {
                   await smsService.sendSms({
                     schoolId,
                     recipients: phones,
-                    message: `New Report Card: The Term ${termDoc.term || "Unknown"} report card is now available on your portal.`,
+                    message: `New Report Card: ${message}`,
                     messageType: "reports",
                   });
                 }

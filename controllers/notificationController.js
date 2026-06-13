@@ -253,6 +253,9 @@ exports.broadcastNotification = async function (req, notification) {
               title: notification.title,
               message: notification.message,
               type: notification.type,
+              studentId: notification.studentId || null,
+              termId: notification.termId || null,
+              fileUrl: notification.fileUrl || '',
               createdAt: notification.createdAt,
               sender: notification.sender ? { _id: notification.sender, name: notification.senderName || null } : null,
             });
@@ -281,6 +284,9 @@ exports.broadcastNotification = async function (req, notification) {
             title: notification.title,
             message: notification.message,
             type: notification.type,
+            studentId: notification.studentId || null,
+            termId: notification.termId || null,
+            fileUrl: notification.fileUrl || '',
             createdAt: notification.createdAt,
             sender: notification.sender ? { _id: notification.sender, name: notification.senderName || null } : null,
           });
