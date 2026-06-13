@@ -1,7 +1,19 @@
+const fs = require("fs");
+const multer = require("multer");
+const admin = require("firebase-admin");
+const mongoose = require("mongoose");
+const { PDFDocument } = require("pdf-lib");
+const { Expo } = require("expo-server-sdk");
 const SbaRecord = require("../models/SbaRecord");
 const Student = require("../models/Student");
 const Class = require("../models/Class");
 const User = require("../models/User");
+const Term = require("../models/term");
+const Notification = require("../models/Notification");
+const PushToken = require("../models/PushToken");
+
+const upload = multer({ dest: "uploads/" });
+const expo = new Expo();
 
 // Calculate total and grade automatically based on class level
 const calculateGrade = (total, className = "") => {
@@ -48,6 +60,93 @@ const addCommentAlias = (map, id, record) => {
 
   map[key] = merged;
 };
+
+const parseStringArray = (value) => {
+  if (!value) return [];
+  try {
+    const parsed = Array.isArray(value) ? value : JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(item => String(item)).filter(Boolean) : [];
+  } catch (error) {
+    console.warn("Invalid string array payload ignored:", error.message || error);
+    return [];
+  }
+};
+
+const getParentIds = (student) => {
+  const set = new Set();
+  if (student.parent) {
+    if (typeof student.parent === "string") set.add(student.parent);
+    else if (student.parent._id) set.add(String(student.parent._id));
+  }
+  if (Array.isArray(student.parentIds)) {
+    student.parentIds.forEach((parent) => {
+      if (!parent) return;
+      if (typeof parent === "string") set.add(parent);
+      else if (parent._id) set.add(String(parent._id));
+    });
+  }
+  return [...set];
+};
+
+const applyStudentOrder = (students, studentOrder) => {
+  if (!Array.isArray(studentOrder) || studentOrder.length === 0) {
+    students.sort((a, b) => {
+      const aName = a.user?.name || a.name || "";
+      const bName = b.user?.name || b.name || "";
+      return aName.localeCompare(bName);
+    });
+    return;
+  }
+
+  const orderById = new Map(studentOrder.map((id, index) => [id, index]));
+  const getStudentOrderIndex = (student) => {
+    const possibleIds = [
+      student._id,
+      student.id,
+      student.user?._id,
+      student.user?.id,
+    ].map(item => String(item || "")).filter(Boolean);
+
+    for (const id of possibleIds) {
+      if (orderById.has(id)) return orderById.get(id);
+    }
+    return Number.MAX_SAFE_INTEGER;
+  };
+
+  students.sort((a, b) => getStudentOrderIndex(a) - getStudentOrderIndex(b));
+};
+
+async function sendPush(userIds, title, body) {
+  if (!Array.isArray(userIds) || userIds.length === 0) return;
+
+  const tokens = await PushToken.find({
+    userId: { $in: userIds },
+    disabled: false,
+  }).lean();
+
+  const validTokens = tokens
+    .map(tokenDoc => tokenDoc.token)
+    .filter(token => Expo.isExpoPushToken(token));
+
+  if (validTokens.length === 0) return;
+
+  const messages = validTokens.map(token => ({
+    to: token,
+    sound: "default",
+    title,
+    body,
+    data: { type: "report-card" },
+  }));
+
+  const chunks = expo.chunkPushNotifications(messages);
+  for (const chunk of chunks) {
+    try {
+      await expo.sendPushNotificationsAsync(chunk);
+    } catch (error) {
+      console.error("Push error:", error);
+    }
+  }
+}
 
 /**
  * Get SBA Marks for a specific class, subject, and term.
@@ -259,3 +358,238 @@ exports.saveSubjectMarks = async (req, res) => {
     return res.status(500).json({ message: "Internal server error", error: error.message });
   }
 };
+
+exports.uploadGeneratedReportCards = [
+  upload.single("reportPdf"),
+  async (req, res) => {
+    let tempFilePath = null;
+
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: "No report PDF uploaded" });
+      }
+
+      const { classId, termId, schoolId, studentOrder: studentOrderRaw } = req.body;
+
+      if (!classId || !termId || !schoolId) {
+        return res.status(400).json({
+          message: "classId, termId, and schoolId are required",
+        });
+      }
+
+      if (!mongoose.Types.ObjectId.isValid(termId)) {
+        return res.status(400).json({
+          message: "Invalid termId format. A valid MongoDB ObjectId is required.",
+        });
+      }
+
+      const termDoc = await Term.findById(termId).lean();
+      if (!termDoc) {
+        return res.status(400).json({ message: "Term not found" });
+      }
+
+      const termKey = termDoc._id.toString();
+      const studentOrder = parseStringArray(studentOrderRaw);
+
+      tempFilePath = req.file.path;
+      const bucket = admin.storage().bucket();
+      const destination = `reportcards/${schoolId}/${classId}/${termKey}/REPORT.pdf`;
+
+      await bucket.upload(tempFilePath, {
+        destination,
+        metadata: { contentType: "application/pdf" },
+      });
+
+      const [pdfUrl] = await bucket.file(destination).getSignedUrl({
+        action: "read",
+        expires: Date.now() + 365 * 24 * 60 * 60 * 1000,
+      });
+
+      const classDoc = await Class.findByIdAndUpdate(
+        classId,
+        { $set: { reportSheetPdfUrl: pdfUrl } },
+        { new: true, runValidators: true }
+      );
+
+      if (!classDoc) {
+        return res.status(404).json({ message: "Class not found" });
+      }
+
+      const students = await Student.find({ class: classId })
+        .populate("user", "name")
+        .populate("parent parentIds")
+        .lean();
+
+      if (!students.length) {
+        return res.status(400).json({ message: "No students found for this class" });
+      }
+
+      applyStudentOrder(students, studentOrder);
+
+      const pdfBytes = fs.readFileSync(tempFilePath);
+      const finalDoc = await PDFDocument.load(pdfBytes);
+      const pageCount = finalDoc.getPageCount();
+
+      if (pageCount !== students.length) {
+        console.warn("SBA V2 report PDF page/student count mismatch", {
+          pageCount,
+          studentCount: students.length,
+        });
+      }
+
+      const uploadedReports = {};
+      const notifications = [];
+      const pagesToProcess = Math.min(pageCount, students.length);
+
+      for (let i = 0; i < pagesToProcess; i += 1) {
+        const student = students[i];
+
+        try {
+          const studentPdf = await PDFDocument.create();
+          const [copiedPage] = await studentPdf.copyPages(finalDoc, [i]);
+          studentPdf.addPage(copiedPage);
+
+          const studentBytes = await studentPdf.save();
+          const studentDest = `reportcards/${schoolId}/${classId}/${termKey}/${student._id}.pdf`;
+          const file = bucket.file(studentDest);
+
+          await file.save(studentBytes, {
+            metadata: { contentType: "application/pdf" },
+          });
+
+          const [studentUrl] = await file.getSignedUrl({
+            action: "read",
+            expires: Date.now() + 365 * 24 * 60 * 60 * 1000,
+          });
+
+          uploadedReports[student._id] = studentUrl;
+
+          await Student.findByIdAndUpdate(student._id, {
+            $set: {
+              [`reportCards.${termKey}`]: studentUrl,
+              [`reportCardMetadata.${termKey}`]: {
+                termNumber: termDoc.term,
+                academicYear: termDoc.academicYear,
+                uploadedAt: new Date(),
+                uploadedBy: req.user?._id,
+                source: "sba-v2",
+              },
+            },
+          });
+
+          const studentName = student.user?.name || student.name || "your child";
+          const parentIds = getParentIds(student);
+          const studentUserId = student.user?._id ? String(student.user._id) : null;
+
+          const baseNotification = {
+            title: "New Report Card Available",
+            category: "report",
+            audience: "specific",
+            class: classId,
+            studentId: student._id,
+            termId: termKey,
+            termNumber: termDoc.term,
+            academicYear: termDoc.academicYear,
+            fileUrl: studentUrl,
+            school: schoolId,
+            sender: req.user?._id,
+          };
+
+          if (studentUserId) {
+            notifications.push({
+              ...baseNotification,
+              message: `Your Term ${termDoc.term || "Unknown"} report card has been uploaded.`,
+              recipientUsers: [studentUserId],
+            });
+          }
+
+          if (parentIds.length > 0) {
+            notifications.push({
+              ...baseNotification,
+              message: `The Term ${termDoc.term || "Unknown"} report card for ${studentName} is now available.`,
+              recipientUsers: parentIds,
+            });
+          }
+        } catch (error) {
+          console.error(`Failed processing SBA V2 report for student ${student._id}:`, error);
+        }
+      }
+
+      if (notifications.length) {
+        try {
+          await Notification.insertMany(notifications);
+
+          const pushesByMessage = {};
+          notifications.forEach((notification) => {
+            if (!notification.recipientUsers || notification.recipientUsers.length === 0) return;
+            if (!pushesByMessage[notification.message]) {
+              pushesByMessage[notification.message] = new Set();
+            }
+            notification.recipientUsers.forEach(userId => pushesByMessage[notification.message].add(String(userId)));
+          });
+
+          for (const [message, userSet] of Object.entries(pushesByMessage)) {
+            if (userSet.size > 0) {
+              await sendPush([...userSet], "New Report Card Available", message)
+                .catch(error => console.error("Push Error:", error));
+            }
+          }
+
+          try {
+            const smsService = require("../services/smsService");
+            const settings = await smsService.getSchoolSettings(schoolId);
+            if (settings.smsEnabled && settings.autoTriggers?.examReports) {
+              const allRecipientIds = [...new Set(notifications.flatMap(notification => notification.recipientUsers || []))];
+              if (allRecipientIds.length > 0) {
+                const targetUsers = await User.find({ _id: { $in: allRecipientIds } }).select("phone").lean();
+                const phones = targetUsers.map(user => user.phone).filter(Boolean);
+                if (phones.length > 0) {
+                  await smsService.sendSms({
+                    schoolId,
+                    recipients: phones,
+                    message: `New Report Card: The Term ${termDoc.term || "Unknown"} report card is now available on your portal.`,
+                    messageType: "reports",
+                  });
+                }
+              }
+            }
+          } catch (smsError) {
+            console.error("SMS Auto-Trigger error in SBA V2 report cards:", smsError);
+          }
+        } catch (error) {
+          console.warn("Failed to insert or push SBA V2 report notifications:", error.message || error);
+        }
+      }
+
+      await Term.findByIdAndUpdate(termKey, {
+        $set: { [`reportSheets.${classId}`]: pdfUrl },
+      });
+
+      return res.json({
+        success: true,
+        message: "SBA V2 report-card upload complete",
+        class: classDoc.displayName || classDoc.name || "Class",
+        term: {
+          id: termKey,
+          number: termDoc.term,
+          academicYear: termDoc.academicYear,
+        },
+        totalStudents: students.length,
+        uploadedCount: Object.keys(uploadedReports).length,
+        classPdfUrl: pdfUrl,
+        storagePath: `reportcards/${schoolId}/${classId}/${termKey}/`,
+        perStudent: uploadedReports,
+      });
+    } catch (error) {
+      console.error("Error in SBA V2 report-card upload:", error);
+      return res.status(500).json({
+        message: "Failed to process SBA V2 report cards",
+        error: error.message,
+      });
+    } finally {
+      if (tempFilePath && fs.existsSync(tempFilePath)) {
+        fs.unlinkSync(tempFilePath);
+      }
+    }
+  },
+];
