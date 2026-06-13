@@ -186,6 +186,8 @@ async function sendPush(userIds, title, body) {
     sound: "default",
     title,
     body,
+    priority: "high",
+    ttl: 3600,
     data: { type: "report-card" }
   }));
 
