@@ -122,6 +122,96 @@ const applyStudentOrder = (students, studentOrder) => {
   students.sort((a, b) => getStudentOrderIndex(a) - getStudentOrderIndex(b));
 };
 
+const resolveClassDisplayName = (classDoc) => {
+  if (!classDoc) return "Unassigned";
+  return classDoc.displayName || (classDoc.stream ? `${classDoc.name}${classDoc.stream}` : classDoc.name) || "Class";
+};
+
+const hasSavedMarks = (record = {}) => {
+  return ["classWork", "classTest1", "classTest2", "projectWork", "exams", "total"].some((field) => {
+    const value = Number(record[field]);
+    return Number.isFinite(value) && value > 0;
+  });
+};
+
+const calculateFinalScore = (record = {}) => {
+  const savedTotal = Number(record.total);
+  if (Number.isFinite(savedTotal) && savedTotal > 0) {
+    return savedTotal;
+  }
+
+  const classWork = Math.min(Number(record.classWork) || 0, 10);
+  const classTest1 = Math.min(Number(record.classTest1) || 0, 20);
+  const classTest2 = Math.min(Number(record.classTest2) || 0, 30);
+  const projectWork = Math.min(Number(record.projectWork) || 0, 10);
+  const exams = Math.min(Number(record.exams) || 0, 100);
+
+  const sbaTotal = classWork + classTest1 + classTest2 + projectWork;
+  const scaledSba = Math.round((sbaTotal / 70) * 50) || 0;
+  const scaledExams = Math.round((exams / 100) * 50) || 0;
+
+  return scaledSba + scaledExams;
+};
+
+const getLatestTermRecords = (records) => {
+  const recordsByTerm = new Map();
+
+  records.forEach((recordDoc) => {
+    const termKey = toIdString(recordDoc.term) || "unknown";
+    const existing = recordsByTerm.get(termKey) || {
+      termId: termKey,
+      records: [],
+      latestUpdatedAt: 0,
+    };
+    const updatedAtMs = recordDoc.updatedAt ? new Date(recordDoc.updatedAt).getTime() : 0;
+
+    existing.records.push(recordDoc);
+    existing.latestUpdatedAt = Math.max(existing.latestUpdatedAt, updatedAtMs);
+    recordsByTerm.set(termKey, existing);
+  });
+
+  return Array.from(recordsByTerm.values()).sort((a, b) => b.latestUpdatedAt - a.latestUpdatedAt)[0] || {
+    termId: "",
+    records: [],
+  };
+};
+
+const calculateClassAverageFromRecords = (records) => {
+  let totalSubjectAverages = 0;
+  let validSubjects = 0;
+  const studentIds = new Set();
+
+  records.forEach((subjectRecord) => {
+    let subjectTotalMarks = 0;
+    let studentCount = 0;
+
+    (subjectRecord.records || []).forEach((record) => {
+      if (!hasSavedMarks(record)) return;
+
+      subjectTotalMarks += calculateFinalScore(record);
+      studentCount++;
+
+      const studentId = toIdString(record.student);
+      if (studentId) studentIds.add(studentId);
+    });
+
+    if (studentCount > 0) {
+      totalSubjectAverages += subjectTotalMarks / studentCount;
+      validSubjects++;
+    }
+  });
+
+  if (validSubjects === 0) {
+    return null;
+  }
+
+  return {
+    average: parseFloat((totalSubjectAverages / validSubjects).toFixed(2)),
+    subjectCount: validSubjects,
+    studentCount: studentIds.size,
+  };
+};
+
 async function sendPush(userIds, title, body) {
   if (!Array.isArray(userIds) || userIds.length === 0) return;
 
@@ -274,6 +364,90 @@ async function sendPush(userIds, title, body) {
     }
   }
 }
+
+/**
+ * Get SBA V2 class averages for the admin class performance chart.
+ * Uses saved marks from sba-entry instead of the legacy SBA workbook.
+ */
+exports.getClassAveragesForChart = async (req, res) => {
+  try {
+    let schoolId = req.query.schoolId || req.user?.school?._id || req.user?.school?.id || req.user?.school;
+    if (typeof schoolId === "object" && schoolId?._id) schoolId = String(schoolId._id);
+    if (!schoolId) {
+      return res.status(400).json({ message: "schoolId is required" });
+    }
+
+    const requestedTermId =
+      req.query.termId && mongoose.Types.ObjectId.isValid(String(req.query.termId))
+        ? String(req.query.termId)
+        : "";
+
+    const classes = await Class.find({ school: schoolId })
+      .select("name displayName stream students")
+      .lean();
+
+    if (!classes.length) {
+      return res.status(404).json({ message: "No classes found for this school" });
+    }
+
+    const recordQuery = { school: schoolId };
+    if (requestedTermId) recordQuery.term = requestedTermId;
+
+    const sbaRecords = await SbaRecord.find(recordQuery)
+      .select("class term subject records updatedAt")
+      .lean();
+
+    const recordsByClass = new Map();
+    sbaRecords.forEach((recordDoc) => {
+      const classKey = toIdString(recordDoc.class);
+      if (!classKey) return;
+
+      const existing = recordsByClass.get(classKey) || [];
+      existing.push(recordDoc);
+      recordsByClass.set(classKey, existing);
+    });
+
+    const classAverages = [];
+
+    classes.forEach((classDoc) => {
+      const classId = toIdString(classDoc._id);
+      const classRecords = recordsByClass.get(classId) || [];
+      if (!classRecords.length) return;
+
+      const selectedTerm = requestedTermId
+        ? { termId: requestedTermId, records: classRecords }
+        : getLatestTermRecords(classRecords);
+
+      const result = calculateClassAverageFromRecords(selectedTerm.records);
+      if (!result) return;
+
+      classAverages.push({
+        classId: classDoc._id,
+        className: resolveClassDisplayName(classDoc),
+        average: result.average,
+        subjectCount: result.subjectCount,
+        studentCount: result.studentCount || classDoc.students?.length || 0,
+        source: "sba-v2",
+        termId: selectedTerm.termId,
+      });
+    });
+
+    classAverages.sort((a, b) => b.average - a.average);
+
+    return res.json({
+      message: "SBA V2 class averages fetched successfully",
+      data: classAverages,
+      bestClass: classAverages[0] || null,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("Error fetching SBA V2 class averages:", error);
+    return res.status(500).json({
+      message: "Failed to fetch SBA V2 class averages",
+      error: error.message,
+    });
+  }
+};
 
 /**
  * Get SBA Marks for a specific class, subject, and term.

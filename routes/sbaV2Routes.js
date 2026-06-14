@@ -7,6 +7,14 @@ const { protect, restrictTo } = require("../middlewares/authMiddleware");
 // GET /api/v1/sba-v2/marks
 router.get("/marks", protect, sbaV2Controller.getSubjectMarks);
 
+// GET /api/v1/sba-v2/class-averages-chart
+router.get(
+  "/class-averages-chart",
+  protect,
+  restrictTo("admin", "superadmin"),
+  sbaV2Controller.getClassAveragesForChart
+);
+
 // POST /api/v1/sba-v2/marks
 router.post("/marks", protect, sbaV2Controller.saveSubjectMarks);
 
