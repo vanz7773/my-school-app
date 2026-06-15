@@ -355,7 +355,7 @@ exports.getTeacherById = async (req, res) => {
 // ====================================================================================
 exports.updateTeacher = async (req, res) => {
   try {
-    const { name, email, gender, phone, bio, assignedClasses, subjects } = req.body;
+    const { name, email, gender, phone, bio, assignedClasses, subjects, password } = req.body;
     const teacherId = req.params.id;
     const currentSchool = req.user.school;
 
@@ -369,6 +369,16 @@ exports.updateTeacher = async (req, res) => {
     if (name) user.name = name;
     if (email) user.email = email;
     if (gender) user.gender = gender;
+    const nextPassword = password !== undefined ? String(password).trim() : "";
+    if (nextPassword) {
+      if (nextPassword.length < 6) {
+        return res.status(400).json({
+          success: false,
+          message: "Password must be at least 6 characters",
+        });
+      }
+      user.password = nextPassword;
+    }
     await user.save();
 
     // Update teacher fields
