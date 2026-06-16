@@ -237,7 +237,27 @@ exports.updateSchoolFeatures = async (req, res) => {
             return sendError(res, 400, "lockedFeatures must be an array");
         }
 
-        const validFeatures = ["exams", "reports", "feeding_fee", "attendance", "transport", "billing"];
+        const validFeatures = [
+            "exams",
+            "reports",
+            "feeding_fee",
+            "attendance",
+            "transport",
+            "billing",
+            "teacher_attendance_card",
+            "student_attendance_card",
+            "teacher_feeding_fee_card",
+            "teacher_events_card",
+            "teacher_announcements_card",
+            "teacher_assignments_card",
+            "teacher_online_quiz_card",
+            "teacher_transport_card",
+            "teacher_timetable_card",
+            "teacher_weekly_exercise_card",
+            "teacher_exams_report_card",
+            "teacher_sba_direct_entry_card",
+            "teacher_payslips_card",
+        ];
         const sanitizedFeatures = lockedFeatures.filter(f => validFeatures.includes(f));
 
         const school = await School.findByIdAndUpdate(
@@ -543,5 +563,4 @@ exports.getSchoolSmsLogs = async (req, res) => {
         return sendError(res, 500, "Server error fetching school SMS logs");
     }
 };
-
 
