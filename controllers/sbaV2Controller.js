@@ -134,23 +134,45 @@ const hasSavedMarks = (record = {}) => {
   });
 };
 
+const hasRawMarks = (record = {}) => {
+  return ["classWork", "classTest1", "classTest2", "projectWork", "exams"].some((field) => {
+    const value = Number(record[field]);
+    return Number.isFinite(value) && value > 0;
+  });
+};
+
+const getClampedMarks = (record = {}) => ({
+  classWork: Math.min(Number(record.classWork) || 0, 10),
+  classTest1: Math.min(Number(record.classTest1) || 0, 20),
+  classTest2: Math.min(Number(record.classTest2) || 0, 20),
+  projectWork: Math.min(Number(record.projectWork) || 0, 10),
+  exams: Math.min(Number(record.exams) || 0, 100),
+});
+
 const calculateFinalScore = (record = {}) => {
   const savedTotal = Number(record.total);
-  if (Number.isFinite(savedTotal) && savedTotal > 0) {
+  if (!hasRawMarks(record) && Number.isFinite(savedTotal) && savedTotal > 0) {
     return savedTotal;
   }
 
-  const classWork = Math.min(Number(record.classWork) || 0, 10);
-  const classTest1 = Math.min(Number(record.classTest1) || 0, 20);
-  const classTest2 = Math.min(Number(record.classTest2) || 0, 30);
-  const projectWork = Math.min(Number(record.projectWork) || 0, 10);
-  const exams = Math.min(Number(record.exams) || 0, 100);
-
+  const { classWork, classTest1, classTest2, projectWork, exams } = getClampedMarks(record);
   const sbaTotal = classWork + classTest1 + classTest2 + projectWork;
-  const scaledSba = Math.round((sbaTotal / 70) * 50) || 0;
+  const scaledSba = Math.round((sbaTotal / 60) * 50) || 0;
   const scaledExams = Math.round((exams / 100) * 50) || 0;
 
   return scaledSba + scaledExams;
+};
+
+const buildScoredRecord = (record = {}, className = "") => {
+  const marks = getClampedMarks(record);
+  const total = calculateFinalScore(record);
+
+  return {
+    ...record,
+    ...marks,
+    total,
+    grade: total > 0 ? calculateGrade(total, className) : record.grade || "",
+  };
 };
 
 const getLatestTermRecords = (records) => {
@@ -467,6 +489,8 @@ exports.getSubjectMarks = async (req, res) => {
       .lean();
 
     const students = studentDocs.filter(s => s.user); // Ensure user is not null
+    const classObj = await Class.findById(classId).select("name displayName stream").lean();
+    const className = classObj?.displayName || (classObj?.stream ? `${classObj.name}${classObj.stream}` : classObj?.name) || "";
     
     console.log(`Found ${students.length} students in Student collection for class ${classId}`);
 
@@ -510,19 +534,20 @@ exports.getSubjectMarks = async (req, res) => {
       const existingComments = reportCommentsMap[studentDocId] || reportCommentsMap[studentUserId] || {};
 
       if (existingRecord) {
+        const scoredRecord = buildScoredRecord(existingRecord, className);
         return {
-          ...existingRecord,
+          ...scoredRecord,
           student: studentDocId,
           studentDocId,
           studentUser: studentUserId || null,
           studentUserId,
           studentName: student.user?.name || "Unknown",
           profilePicture: student.profilePicture || student.user?.profilePicture || "",
-          conduct: existingComments.conduct || existingRecord.conduct || "",
-          interest: existingComments.interest || existingRecord.interest || "",
-          teacherRemarks: existingComments.teacherRemarks || existingRecord.teacherRemarks || "",
-          nextTermBegins: existingComments.nextTermBegins || existingRecord.nextTermBegins || "",
-          promotedTo: existingComments.promotedTo || existingRecord.promotedTo || "",
+          conduct: existingComments.conduct || scoredRecord.conduct || "",
+          interest: existingComments.interest || scoredRecord.interest || "",
+          teacherRemarks: existingComments.teacherRemarks || scoredRecord.teacherRemarks || "",
+          nextTermBegins: existingComments.nextTermBegins || scoredRecord.nextTermBegins || "",
+          promotedTo: existingComments.promotedTo || scoredRecord.promotedTo || "",
         };
       }
 
@@ -599,12 +624,12 @@ exports.saveSubjectMarks = async (req, res) => {
       const studentUserId = matchedStudent.studentUserId || toIdString(record.studentUser) || toIdString(record.studentUserId) || null;
       const classWork = Math.min(Number(record.classWork) || 0, 10);
       const classTest1 = Math.min(Number(record.classTest1) || 0, 20);
-      const classTest2 = Math.min(Number(record.classTest2) || 0, 30);
+      const classTest2 = Math.min(Number(record.classTest2) || 0, 20);
       const projectWork = Math.min(Number(record.projectWork) || 0, 10);
       const exams = Math.min(Number(record.exams) || 0, 100);
       
       const sbaTotal = classWork + classTest1 + classTest2 + projectWork;
-      const scaledSba = Math.round((sbaTotal / 70) * 50) || 0;
+      const scaledSba = Math.round((sbaTotal / 60) * 50) || 0;
       const scaledExams = Math.round((exams / 100) * 50) || 0;
       
       const total = scaledSba + scaledExams;

@@ -10,6 +10,22 @@ const toIdString = (value) => {
   return String(value._id || value.id || value);
 };
 
+const calculateGrade = (total, className = "") => {
+  const upperName = String(className || "").toUpperCase();
+
+  if (upperName.includes("NURSERY") || upperName.includes("KG") || upperName.includes("CRECHE")) {
+    if (total >= 70) return "Gold (G)";
+    if (total >= 40) return "Silver (S)";
+    return "Bronze (B)";
+  }
+
+  if (total >= 80) return "Advance (A)";
+  if (total >= 75) return "Proficient (P)";
+  if (total >= 70) return "Approaching Proficiency (AP)";
+  if (total >= 65) return "Developing (D)";
+  return "Beginning (B)";
+};
+
 /**
  * Get aggregated SBA Marks for all subjects for a specific class and term.
  * Returns an array of students, each with a list of their subject marks.
@@ -28,6 +44,10 @@ exports.getClassReportCards = async (req, res) => {
       .lean();
 
     const students = studentDocs.filter(s => s.user);
+    const classDoc = await Class.findOne({ _id: classId, school: schoolId })
+      .select("name displayName stream")
+      .lean();
+    const className = classDoc?.displayName || (classDoc?.stream ? `${classDoc.name}${classDoc.stream}` : classDoc?.name) || "";
     
     // 2. Fetch all SBA records for this class and term across all subjects
     const allSbaRecords = await SbaRecord.find({
@@ -90,18 +110,26 @@ exports.getClassReportCards = async (req, res) => {
         const recordsWithScaled = sba.records.map(record => {
           const classWork = Math.min(Number(record.classWork) || 0, 10);
           const classTest1 = Math.min(Number(record.classTest1) || 0, 20);
-          const classTest2 = Math.min(Number(record.classTest2) || 0, 30);
+          const classTest2 = Math.min(Number(record.classTest2) || 0, 20);
           const projectWork = Math.min(Number(record.projectWork) || 0, 10);
           const exams = Math.min(Number(record.exams) || 0, 100);
           
           const sbaTotal = classWork + classTest1 + classTest2 + projectWork;
-          const scaledSba = parseFloat(((sbaTotal / 70) * 50).toFixed(1)) || 0;
-          const scaledExams = parseFloat(((exams / 100) * 50).toFixed(1)) || 0;
+          const scaledSba = Math.round((sbaTotal / 60) * 50) || 0;
+          const scaledExams = Math.round((exams / 100) * 50) || 0;
+          const total = scaledSba + scaledExams;
           
           return {
             ...record,
+            classWork,
+            classTest1,
+            classTest2,
+            projectWork,
+            exams,
             scaledSba,
-            scaledExams
+            scaledExams,
+            total,
+            grade: calculateGrade(total, className),
           };
         });
 
