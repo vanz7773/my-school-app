@@ -18,6 +18,26 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "";
 const sendError = (res, code, message) =>
   res.status(code).json({ success: false, message });
 
+const GHANA_PHONE_PATTERN = /^0\d{9}$/;
+const GHANA_PHONE_MESSAGE = "Phone number must be 10 digits and start with 0";
+
+const normalizeOptionalPhone = (phone) => {
+  if (phone === undefined) {
+    return { provided: false, value: undefined };
+  }
+
+  const normalized = String(phone || "").trim();
+  if (!normalized) {
+    return { provided: true, value: null };
+  }
+
+  if (!GHANA_PHONE_PATTERN.test(normalized)) {
+    return { provided: true, error: GHANA_PHONE_MESSAGE };
+  }
+
+  return { provided: true, value: normalized };
+};
+
 const getSchoolId = (userOrSchool) => {
   if (!userOrSchool) return null;
   const school = userOrSchool.school || userOrSchool;
@@ -385,10 +405,15 @@ exports.createAdmin = async (req, res) => {
     const existing = await User.findOne({ email: normalizedEmail }).lean();
     if (existing) return sendError(res, 400, "User already exists");
 
+    const normalizedPhone = normalizeOptionalPhone(phone);
+    if (normalizedPhone.error) {
+      return sendError(res, 400, normalizedPhone.error);
+    }
+
     const admin = await User.create({
       name: String(name).trim(),
       email: normalizedEmail,
-      phone: phone ? String(phone).trim() : null,
+      phone: normalizedPhone.value,
       password,
       role: "admin",
       school: schoolId,
@@ -445,7 +470,12 @@ exports.updateAdmin = async (req, res) => {
     }
 
     if (name !== undefined) admin.name = String(name).trim();
-    if (phone !== undefined) admin.phone = phone ? String(phone).trim() : null;
+    const normalizedPhone = normalizeOptionalPhone(phone);
+    if (normalizedPhone.error) {
+      return sendError(res, 400, normalizedPhone.error);
+    }
+    if (normalizedPhone.provided) admin.phone = normalizedPhone.value;
+
     if (email !== undefined) {
       const normalizedEmail = String(email).toLowerCase().trim();
       const existing = await User.findOne({
