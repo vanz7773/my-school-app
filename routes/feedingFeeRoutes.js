@@ -17,31 +17,32 @@ const {
   setStudentCustomFeedingFee
 } = require('../controllers/feedingFeeController');
 const { protect, requirePrivateSchool } = require('../middlewares/authMiddleware');
+const { checkPermissionForAdmin } = require('../middlewares/permissionMiddleware');
 
 // ----------------- Configuration Routes -----------------
-router.get('/config', protect, requirePrivateSchool, getFeedingFeeConfig);
-router.post('/config', protect, requirePrivateSchool, setFeedingFeeConfig);
+router.get('/config', protect, checkPermissionForAdmin('canViewFeedingFee'), requirePrivateSchool, getFeedingFeeConfig);
+router.post('/config', protect, checkPermissionForAdmin('canEditFeedingFee'), requirePrivateSchool, setFeedingFeeConfig);
 
 // ----------------- Utility & Helper Routes -----------------
-router.get('/classes-with-bands', protect, requirePrivateSchool, getClassesWithFeeBands);
-router.get('/absentees', protect, requirePrivateSchool, getAbsenteesForWeek);
-router.get('/debtors', protect, requirePrivateSchool, getDebtorsForWeek);
+router.get('/classes-with-bands', protect, checkPermissionForAdmin('canViewFeedingFee'), requirePrivateSchool, getClassesWithFeeBands);
+router.get('/absentees', protect, checkPermissionForAdmin('canViewFeedingFee'), requirePrivateSchool, getAbsenteesForWeek);
+router.get('/debtors', protect, checkPermissionForAdmin('canViewFeedingFee'), requirePrivateSchool, getDebtorsForWeek);
 
 // ----------------- Core Fee Collection Routes -----------------
-router.post('/calculate', protect, requirePrivateSchool, calculateFeedingFeeCollection);
+router.post('/calculate', protect, checkPermissionForAdmin('canEditFeedingFee'), requirePrivateSchool, calculateFeedingFeeCollection);
 
 // ----------------- Student-Focused Routes -----------------
-router.get('/student/:studentId', protect, requirePrivateSchool, getFeedingFeeForStudent);
+router.get('/student/:studentId', protect, checkPermissionForAdmin('canViewFeedingFee'), requirePrivateSchool, getFeedingFeeForStudent);
 
 // ----------------- Reporting Routes -----------------
-router.get('/summary', protect, requirePrivateSchool, getFeedingFeeSummary);
-router.get('/daily-summary', protect, requirePrivateSchool, getDailyTotalSummary);
-router.get('/audit-report', protect, requirePrivateSchool, getFeedingFeeAuditReport);
+router.get('/summary', protect, checkPermissionForAdmin('canViewFeedingFee'), requirePrivateSchool, getFeedingFeeSummary);
+router.get('/daily-summary', protect, checkPermissionForAdmin('canViewFeedingFee'), requirePrivateSchool, getDailyTotalSummary);
+router.get('/audit-report', protect, checkPermissionForAdmin('canViewFeedingFee'), requirePrivateSchool, getFeedingFeeAuditReport);
 
 // ----------------- Manual Marking Routes -----------------
-router.post("/mark", protect, requirePrivateSchool, markFeeding);
-router.post("/mark-bulk", protect, requirePrivateSchool, markFeedingBulk);
-router.post("/student/:studentId/custom-fee", protect, requirePrivateSchool, setStudentCustomFeedingFee);
-router.post("/exempt/:studentId", protect, requirePrivateSchool, require('../controllers/feedingFeeController').toggleFeedingFeeExemption);
+router.post("/mark", protect, checkPermissionForAdmin('canEditFeedingFee'), requirePrivateSchool, markFeeding);
+router.post("/mark-bulk", protect, checkPermissionForAdmin('canEditFeedingFee'), requirePrivateSchool, markFeedingBulk);
+router.post("/student/:studentId/custom-fee", protect, checkPermissionForAdmin('canEditFeedingFee'), requirePrivateSchool, setStudentCustomFeedingFee);
+router.post("/exempt/:studentId", protect, checkPermissionForAdmin('canEditFeedingFee'), requirePrivateSchool, require('../controllers/feedingFeeController').toggleFeedingFeeExemption);
 
 module.exports = router;

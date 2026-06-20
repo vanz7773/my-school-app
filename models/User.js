@@ -11,6 +11,10 @@ const PERMISSION_KEYS = [
   "canEditAttendance",
   "canApproveMovement",
   "canExportReports",
+  "canViewFees",
+  "canEditFees",
+  "canViewFeedingFee",
+  "canEditFeedingFee",
   "canManageAdmins",
 ];
 
@@ -85,6 +89,10 @@ const userSchema = new mongoose.Schema(
       canEditAttendance: { type: Boolean, default: false },
       canApproveMovement: { type: Boolean, default: false },
       canExportReports: { type: Boolean, default: false },
+      canViewFees: { type: Boolean, default: false },
+      canEditFees: { type: Boolean, default: false },
+      canViewFeedingFee: { type: Boolean, default: false },
+      canEditFeedingFee: { type: Boolean, default: false },
       canManageAdmins: { type: Boolean, default: false },
     },
 
