@@ -150,7 +150,9 @@ exports.login = async (req, res) => {
 
     if (!user) return sendError(res, 401, "Invalid email or password");
 
-    if (user.isActive === false) {
+    const isPrimaryAdmin = user.role === "admin" && !user.audit?.createdBy;
+
+    if (user.isActive === false && !isPrimaryAdmin) {
       return sendError(res, 403, "This account has been disabled. Please contact your administrator.");
     }
 
@@ -205,6 +207,7 @@ exports.login = async (req, res) => {
       role: user.role,
       permissions: getEffectivePermissions(user),
       permissionsConfigured: Boolean(user.permissionsConfigured),
+      isPrimaryAdmin,
       school: user.school
         ? {
           id: user.school._id || user.school,
@@ -287,6 +290,7 @@ const formatAdmin = (admin) => ({
   school: admin.school,
   permissions: getEffectivePermissions(admin),
   permissionsConfigured: Boolean(admin.permissionsConfigured),
+  isPrimaryAdmin: !admin.audit?.createdBy,
   isActive: admin.isActive !== false,
   audit: admin.audit || {},
   createdAt: admin.createdAt,
@@ -401,6 +405,10 @@ exports.updateAdmin = async (req, res) => {
     const admin = await User.findOne(filter).select("+password");
     if (!admin) return sendError(res, 404, "Admin not found");
 
+    if (!admin.audit?.createdBy && String(admin._id) !== String(req.user._id)) {
+      return sendError(res, 403, "The primary admin account cannot be modified by another admin");
+    }
+
     if (name !== undefined) admin.name = String(name).trim();
     if (phone !== undefined) admin.phone = phone ? String(phone).trim() : null;
     if (email !== undefined) {
@@ -479,6 +487,10 @@ exports.deleteAdmin = async (req, res) => {
 
     const admin = await User.findOne(filter);
     if (!admin) return sendError(res, 404, "Admin not found");
+
+    if (!admin.audit?.createdBy) {
+      return sendError(res, 403, "The primary admin account cannot be deleted");
+    }
 
     admin.isActive = false;
     admin.deletedAt = new Date();

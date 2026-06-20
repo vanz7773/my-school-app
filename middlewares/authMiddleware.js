@@ -45,7 +45,9 @@ const protect = async (req, res, next) => {
       return res.status(401).json({ message: 'User not found' });
     }
 
-    if (user.isActive === false) {
+    const isPrimaryAdmin = user.role === 'admin' && !user.audit?.createdBy;
+
+    if (user.isActive === false && !isPrimaryAdmin) {
       console.warn('❌ Disabled user attempted authenticated access:', decoded.id);
       return res.status(403).json({ message: 'This account has been disabled. Please contact your administrator.' });
     }
