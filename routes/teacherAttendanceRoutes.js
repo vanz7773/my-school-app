@@ -27,6 +27,7 @@ const {
 } = require('../controllers/teacherAttendanceController');
 
 const { protect, restrictTo } = require('../middlewares/authMiddleware');
+const { checkPermission } = require('../middlewares/permissionMiddleware');
 
 // ─────────────────────────────────────────────────────────────
 // 🧑‍🏫 TEACHER ROUTES
@@ -59,13 +60,13 @@ router.get('/history', protect, restrictTo('teacher'), getTeacherAttendanceHisto
 // 🛠️ ADMIN ROUTES
 // ─────────────────────────────────────────────────────────────
 
-router.get('/admin/daily-records', protect, restrictTo('admin'), getAdminDailyRecords);
-router.get('/admin/weekly-summary', protect, restrictTo('admin'), getAdminWeeklySummary);
-router.get('/admin/monthly-summary', protect, restrictTo('admin'), getAdminMonthlySummary);
-router.get('/admin/history', protect, restrictTo('admin'), getAdminAttendanceHistory);
+router.get('/admin/daily-records', protect, restrictTo('admin'), checkPermission('canViewAttendance'), getAdminDailyRecords);
+router.get('/admin/weekly-summary', protect, restrictTo('admin'), checkPermission('canViewAttendance'), getAdminWeeklySummary);
+router.get('/admin/monthly-summary', protect, restrictTo('admin'), checkPermission('canViewAttendance'), getAdminMonthlySummary);
+router.get('/admin/history', protect, restrictTo('admin'), checkPermission('canViewAttendance'), getAdminAttendanceHistory);
 
 // ✅ Admin manual attendance override (including Holidays)
-router.post('/admin/manual-attendance', protect, restrictTo('admin'), markManualAttendance);
+router.post('/admin/manual-attendance', protect, restrictTo('admin'), checkPermission('canEditAttendance'), markManualAttendance);
 
 // ─────────────────────────────────────────────────────────────
 // EXPORT

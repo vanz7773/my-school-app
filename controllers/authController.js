@@ -6,6 +6,8 @@ const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const AdminResetRequest = require("../models/AdminResetRequest");
 const Notifications = require("../models/Notification");
+const AuditLog = require("../models/AuditLog");
+const { getEffectivePermissions } = require("../middlewares/permissionMiddleware");
 
 // ------------------------------
 // Helpers
@@ -16,12 +18,36 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "";
 const sendError = (res, code, message) =>
   res.status(code).json({ success: false, message });
 
+const getSchoolId = (userOrSchool) => {
+  if (!userOrSchool) return null;
+  const school = userOrSchool.school || userOrSchool;
+  return school?._id || school?.id || school || null;
+};
+
+const recordAudit = async ({ req, action, resourceType, resourceId, metadata = {} }) => {
+  try {
+    if (!req.user?._id) return;
+    await AuditLog.create({
+      actor: req.user._id,
+      school: getSchoolId(req.user),
+      action,
+      resourceType,
+      resourceId,
+      metadata,
+    });
+  } catch (err) {
+    console.error("Audit log write failed:", err.message);
+  }
+};
+
 const generateToken = (user) =>
   jwt.sign(
     {
       id: user._id,
       role: user.role,
       school: user.school ? (user.school._id || user.school) : null,
+      permissions: getEffectivePermissions(user),
+      permissionsConfigured: Boolean(user.permissionsConfigured),
     },
     JWT_SECRET,
     { expiresIn: "7d" }
@@ -62,6 +88,10 @@ exports.register = async (req, res) => {
       password,
       role,
       school: school._id || school.id,
+      permissions: role === "admin" || role === "superadmin"
+        ? User.fullAdminPermissions()
+        : User.emptyPermissions(),
+      permissionsConfigured: role === "admin" || role === "superadmin",
     });
 
     // Send Welcome SMS
@@ -86,6 +116,8 @@ exports.register = async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        permissions: getEffectivePermissions(user),
+        permissionsConfigured: user.permissionsConfigured,
         school: {
           id: school._id || school.id,
           name: school.name,
@@ -117,6 +149,10 @@ exports.login = async (req, res) => {
       .lean({ virtuals: true });
 
     if (!user) return sendError(res, 401, "Invalid email or password");
+
+    if (user.isActive === false) {
+      return sendError(res, 403, "This account has been disabled. Please contact your administrator.");
+    }
 
     // 🚫 CHECK SCHOOL STATUS
     if (user.school && user.school.status === 'restricted' && user.role !== 'superadmin') {
@@ -167,6 +203,8 @@ exports.login = async (req, res) => {
       name: user.name,
       email: user.email,
       role: user.role,
+      permissions: getEffectivePermissions(user),
+      permissionsConfigured: Boolean(user.permissionsConfigured),
       school: user.school
         ? {
           id: user.school._id || user.school,
@@ -235,6 +273,242 @@ exports.logout = (req, res) => {
 };
 
 // ------------------------------
+// ADMIN MANAGEMENT
+// ------------------------------
+const adminSelect = "_id name email phone role school permissions permissionsConfigured isActive deletedAt audit createdAt updatedAt";
+
+const formatAdmin = (admin) => ({
+  id: admin._id,
+  _id: admin._id,
+  name: admin.name,
+  email: admin.email,
+  phone: admin.phone || "",
+  role: admin.role,
+  school: admin.school,
+  permissions: getEffectivePermissions(admin),
+  permissionsConfigured: Boolean(admin.permissionsConfigured),
+  isActive: admin.isActive !== false,
+  audit: admin.audit || {},
+  createdAt: admin.createdAt,
+  updatedAt: admin.updatedAt,
+});
+
+const getAdminManagementSchoolId = (req) => {
+  if (req.user?.role === "superadmin") {
+    return req.body.school || req.query.school || getSchoolId(req.user);
+  }
+
+  return getSchoolId(req.user);
+};
+
+exports.listAdmins = async (req, res) => {
+  try {
+    const schoolId = getAdminManagementSchoolId(req);
+    const filter = {
+      role: "admin",
+      isActive: { $ne: false },
+    };
+
+    if (schoolId) filter.school = schoolId;
+
+    const admins = await User.find(filter)
+      .select(adminSelect)
+      .populate("school", "name schoolType")
+      .populate("audit.createdBy audit.updatedBy audit.deletedBy audit.lastActionBy", "name email")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return res.json({
+      success: true,
+      admins: admins.map(formatAdmin),
+      permissionKeys: User.permissionKeys,
+    });
+  } catch (err) {
+    console.error("listAdmins error:", err);
+    return sendError(res, 500, "Failed to load admins");
+  }
+};
+
+exports.createAdmin = async (req, res) => {
+  try {
+    const { name, email, phone, password, permissions = {} } = req.body;
+    const schoolId = getAdminManagementSchoolId(req);
+
+    if (!schoolId) return sendError(res, 400, "School is required");
+    if (!name || !email || !password) {
+      return sendError(res, 400, "Name, email, and password are required");
+    }
+
+    if (String(password).length < 6) {
+      return sendError(res, 400, "Password must be at least 6 characters");
+    }
+
+    const normalizedEmail = String(email).toLowerCase().trim();
+    const existing = await User.findOne({ email: normalizedEmail }).lean();
+    if (existing) return sendError(res, 400, "User already exists");
+
+    const admin = await User.create({
+      name: String(name).trim(),
+      email: normalizedEmail,
+      phone: phone ? String(phone).trim() : null,
+      password,
+      role: "admin",
+      school: schoolId,
+      permissions: User.normalizePermissions(permissions),
+      permissionsConfigured: true,
+      audit: {
+        createdBy: req.user._id,
+        lastActionBy: req.user._id,
+        lastActionAt: new Date(),
+      },
+    });
+
+    await recordAudit({
+      req,
+      action: "admin.created",
+      resourceType: "User",
+      resourceId: admin._id,
+      metadata: { email: admin.email, name: admin.name },
+    });
+
+    const populated = await User.findById(admin._id)
+      .select(adminSelect)
+      .populate("school", "name schoolType")
+      .lean();
+
+    return res.status(201).json({
+      success: true,
+      message: "Admin created successfully",
+      admin: formatAdmin(populated),
+    });
+  } catch (err) {
+    console.error("createAdmin error:", err);
+    return sendError(res, 500, "Failed to create admin");
+  }
+};
+
+exports.updateAdmin = async (req, res) => {
+  try {
+    const { name, email, phone, password, permissions, isActive } = req.body;
+    const schoolId = getAdminManagementSchoolId(req);
+
+    const filter = {
+      _id: req.params.id,
+      role: "admin",
+    };
+    if (schoolId) filter.school = schoolId;
+
+    const admin = await User.findOne(filter).select("+password");
+    if (!admin) return sendError(res, 404, "Admin not found");
+
+    if (name !== undefined) admin.name = String(name).trim();
+    if (phone !== undefined) admin.phone = phone ? String(phone).trim() : null;
+    if (email !== undefined) {
+      const normalizedEmail = String(email).toLowerCase().trim();
+      const existing = await User.findOne({
+        email: normalizedEmail,
+        _id: { $ne: admin._id },
+      }).lean();
+      if (existing) return sendError(res, 400, "Email already exists");
+      admin.email = normalizedEmail;
+    }
+
+    if (password !== undefined && String(password).trim()) {
+      const nextPassword = String(password).trim();
+      if (nextPassword.length < 6) {
+        return sendError(res, 400, "Password must be at least 6 characters");
+      }
+      admin.password = nextPassword;
+    }
+
+    if (permissions !== undefined) {
+      admin.permissions = User.normalizePermissions(permissions);
+      admin.permissionsConfigured = true;
+    }
+
+    if (isActive !== undefined) {
+      admin.isActive = Boolean(isActive);
+      admin.deletedAt = admin.isActive ? null : new Date();
+    }
+
+    admin.audit = {
+      ...(admin.audit?.toObject ? admin.audit.toObject() : admin.audit || {}),
+      updatedBy: req.user._id,
+      lastActionBy: req.user._id,
+      lastActionAt: new Date(),
+    };
+
+    await admin.save();
+
+    await recordAudit({
+      req,
+      action: "admin.updated",
+      resourceType: "User",
+      resourceId: admin._id,
+      metadata: { email: admin.email, name: admin.name },
+    });
+
+    const populated = await User.findById(admin._id)
+      .select(adminSelect)
+      .populate("school", "name schoolType")
+      .lean();
+
+    return res.json({
+      success: true,
+      message: "Admin updated successfully",
+      admin: formatAdmin(populated),
+    });
+  } catch (err) {
+    console.error("updateAdmin error:", err);
+    return sendError(res, 500, "Failed to update admin");
+  }
+};
+
+exports.deleteAdmin = async (req, res) => {
+  try {
+    if (String(req.params.id) === String(req.user._id)) {
+      return sendError(res, 400, "You cannot delete your own admin account");
+    }
+
+    const schoolId = getAdminManagementSchoolId(req);
+    const filter = {
+      _id: req.params.id,
+      role: "admin",
+    };
+    if (schoolId) filter.school = schoolId;
+
+    const admin = await User.findOne(filter);
+    if (!admin) return sendError(res, 404, "Admin not found");
+
+    admin.isActive = false;
+    admin.deletedAt = new Date();
+    admin.audit = {
+      ...(admin.audit?.toObject ? admin.audit.toObject() : admin.audit || {}),
+      deletedBy: req.user._id,
+      lastActionBy: req.user._id,
+      lastActionAt: new Date(),
+    };
+    await admin.save();
+
+    await recordAudit({
+      req,
+      action: "admin.deleted",
+      resourceType: "User",
+      resourceId: admin._id,
+      metadata: { email: admin.email, name: admin.name },
+    });
+
+    return res.json({
+      success: true,
+      message: "Admin deleted successfully",
+    });
+  } catch (err) {
+    console.error("deleteAdmin error:", err);
+    return sendError(res, 500, "Failed to delete admin");
+  }
+};
+
+// ------------------------------
 // ADMIN: Issue Reset Token
 // ------------------------------
 exports.issueResetToken = async (req, res) => {
@@ -242,7 +516,7 @@ exports.issueResetToken = async (req, res) => {
     const admin = req.user;
     const { userId } = req.body;
 
-    if (!admin || admin.role !== "admin")
+    if (!admin || !["admin", "superadmin"].includes(admin.role))
       return sendError(res, 403, "Admins only");
 
     if (!userId) return sendError(res, 400, "Missing userId");
@@ -546,7 +820,7 @@ exports.approveAdminResetRequest = async (req, res) => {
     const { id } = req.params;
     const admin = req.user;
 
-    if (!admin || admin.role !== "admin") return sendError(res, 403, "Admins only");
+    if (!admin || !["admin", "superadmin"].includes(admin.role)) return sendError(res, 403, "Admins only");
     if (!newPassword || newPassword.length < 6) return sendError(res, 400, "New password must be at least 6 characters");
 
     const reqDoc = await AdminResetRequest.findById(id).populate("user");
@@ -570,6 +844,14 @@ exports.approveAdminResetRequest = async (req, res) => {
     reqDoc.handledAt = new Date();
     reqDoc.result = { note: note || "Password reset by admin" };
     await reqDoc.save();
+
+    await recordAudit({
+      req,
+      action: "admin-reset.approved",
+      resourceType: "AdminResetRequest",
+      resourceId: reqDoc._id,
+      metadata: { userId: user._id, email: user.email },
+    });
 
     // create notification (non-blocking)
     Notifications.create({
@@ -596,7 +878,7 @@ exports.rejectAdminResetRequest = async (req, res) => {
     const { id } = req.params;
     const admin = req.user;
 
-    if (!admin || admin.role !== "admin") return sendError(res, 403, "Admins only");
+    if (!admin || !["admin", "superadmin"].includes(admin.role)) return sendError(res, 403, "Admins only");
 
     const reqDoc = await AdminResetRequest.findById(id).populate("user");
     if (!reqDoc) return sendError(res, 404, "Request not found");
@@ -611,6 +893,14 @@ exports.rejectAdminResetRequest = async (req, res) => {
     reqDoc.handledAt = new Date();
     reqDoc.note = req.body.note || "Rejected by admin";
     await reqDoc.save();
+
+    await recordAudit({
+      req,
+      action: "admin-reset.rejected",
+      resourceType: "AdminResetRequest",
+      resourceId: reqDoc._id,
+      metadata: { userId: reqDoc.user?._id, email: reqDoc.user?.email },
+    });
 
     // create notification (non-blocking)
     Notifications.create({

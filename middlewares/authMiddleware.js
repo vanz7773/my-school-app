@@ -45,6 +45,11 @@ const protect = async (req, res, next) => {
       return res.status(401).json({ message: 'User not found' });
     }
 
+    if (user.isActive === false) {
+      console.warn('❌ Disabled user attempted authenticated access:', decoded.id);
+      return res.status(403).json({ message: 'This account has been disabled. Please contact your administrator.' });
+    }
+
     // 🛡️ Super Admin Bypass Checks
     if (user.role === 'superadmin') {
       req.user = user;

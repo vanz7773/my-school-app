@@ -4,7 +4,23 @@ const Student = require('../models/Student');
 const Notification = require('../models/Notification');
 const Class = require('../models/Class');
 const Subject = require('../models/Subject');
+const AuditLog = require('../models/AuditLog');
 
+const recordAudit = async (req, action, resourceType, resourceId, metadata = {}) => {
+  try {
+    if (!req.user?._id) return;
+    await AuditLog.create({
+      actor: req.user._id,
+      school: req.user.school || null,
+      action,
+      resourceType,
+      resourceId,
+      metadata,
+    });
+  } catch (err) {
+    console.error("Audit log write failed:", err.message);
+  }
+};
 
 // ====================================================================================
 //  CREATE TEACHER  (multi-class + multi-subject support)
@@ -103,6 +119,11 @@ exports.createTeacher = async (req, res) => {
       role: "teacher",
       gender: gender || null,
       school: currentSchool,
+      audit: {
+        createdBy: req.user._id,
+        lastActionBy: req.user._id,
+        lastActionAt: new Date(),
+      },
     });
     await user.save();
 
@@ -118,6 +139,12 @@ exports.createTeacher = async (req, res) => {
       school: currentSchool,
     });
     await teacher.save();
+
+    await recordAudit(req, "teacher.created", "Teacher", teacher._id, {
+      teacherUserId: user._id,
+      teacherName: name,
+      email,
+    });
 
     // Sync teacher to class teachers list
     if (classIds.length > 0) {
@@ -214,6 +241,11 @@ exports.bulkCreateTeachers = async (req, res) => {
           role: "teacher",
           gender: t.gender || null,
           school: currentSchool,
+          audit: {
+            createdBy: req.user._id,
+            lastActionBy: req.user._id,
+            lastActionAt: new Date(),
+          },
         });
         await user.save();
 
@@ -227,6 +259,13 @@ exports.bulkCreateTeachers = async (req, res) => {
           school: currentSchool,
         });
         await teacher.save();
+
+        await recordAudit(req, "teacher.created", "Teacher", teacher._id, {
+          teacherUserId: user._id,
+          teacherName: t.name,
+          email: t.email,
+          source: "bulk",
+        });
 
         successCount++;
       } catch (error) {
@@ -379,6 +418,12 @@ exports.updateTeacher = async (req, res) => {
       }
       user.password = nextPassword;
     }
+    user.audit = {
+      ...(user.audit?.toObject ? user.audit.toObject() : user.audit || {}),
+      updatedBy: req.user._id,
+      lastActionBy: req.user._id,
+      lastActionAt: new Date(),
+    };
     await user.save();
 
     // Update teacher fields
@@ -456,6 +501,12 @@ exports.updateTeacher = async (req, res) => {
     }
 
     await teacher.save();
+
+    await recordAudit(req, "teacher.updated", "Teacher", teacher._id, {
+      teacherUserId: user._id,
+      teacherName: user.name,
+      email: user.email,
+    });
 
     const populatedTeacher = await Teacher.findById(teacher._id)
       .populate("subjects", "name shortName");
@@ -586,8 +637,15 @@ exports.deleteTeacher = async (req, res) => {
       });
     }
 
+    const linkedUser = await User.findById(teacher.user).select("name email");
     await User.findByIdAndDelete(teacher.user);
     await Teacher.findByIdAndDelete(req.params.id);
+
+    await recordAudit(req, "teacher.deleted", "Teacher", teacher._id, {
+      teacherUserId: teacher.user,
+      teacherName: linkedUser?.name || null,
+      email: linkedUser?.email || null,
+    });
 
     res.json({
       success: true,

@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/authController');
-const { protect, requireAdmin, isAdmin } = require('../middlewares/authMiddleware'); // ✅ unified middleware imports
+const { protect } = require('../middlewares/authMiddleware'); // ✅ unified middleware imports
+const { checkPermission } = require('../middlewares/permissionMiddleware');
 
 // ===============================
 // AUTH & PASSWORD MANAGEMENT ROUTES
@@ -20,8 +21,37 @@ router.post('/logout', authController.logout);
 router.post(
   '/admin/issue-reset',
   protect,
-  requireAdmin,
+  checkPermission('canManageAdmins'),
   authController.issueResetToken
+);
+
+// ✅ Admin management: create restricted admin accounts for the same school
+router.get(
+  '/admins',
+  protect,
+  checkPermission('canManageAdmins'),
+  authController.listAdmins
+);
+
+router.post(
+  '/admins',
+  protect,
+  checkPermission('canManageAdmins'),
+  authController.createAdmin
+);
+
+router.put(
+  '/admins/:id',
+  protect,
+  checkPermission('canManageAdmins'),
+  authController.updateAdmin
+);
+
+router.delete(
+  '/admins/:id',
+  protect,
+  checkPermission('canManageAdmins'),
+  authController.deleteAdmin
 );
 
 // ✅ USER: Reset password using admin-issued token (via link)
@@ -51,7 +81,7 @@ router.post('/change-password', protect, authController.changePassword);
 router.get(
   '/admin/reset-requests',
   protect,
-  isAdmin,
+  checkPermission('canManageAdmins'),
   authController.listAdminResetRequests
 );
 
@@ -59,7 +89,7 @@ router.get(
 router.put(
   '/admin/reset-requests/:id/approve',
   protect,
-  isAdmin,
+  checkPermission('canManageAdmins'),
   authController.approveAdminResetRequest
 );
 
@@ -67,7 +97,7 @@ router.put(
 router.put(
   '/admin/reset-requests/:id/reject',
   protect,
-  isAdmin,
+  checkPermission('canManageAdmins'),
   authController.rejectAdminResetRequest
 );
 
