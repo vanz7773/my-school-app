@@ -13,10 +13,7 @@ const getEffectivePermissions = (user) => {
     return User.emptyPermissions();
   }
 
-  const createdBy = user.audit?.createdBy;
-  const isPrimarySchoolAdmin = !createdBy;
-
-  if (isPrimarySchoolAdmin || !user.permissionsConfigured) {
+  if (user.isPrimaryAdmin || !user.permissionsConfigured) {
     return User.fullAdminPermissions();
   }
 

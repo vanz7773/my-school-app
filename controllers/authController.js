@@ -40,6 +40,37 @@ const recordAudit = async ({ req, action, resourceType, resourceId, metadata = {
   }
 };
 
+const resolvePrimaryAdminStatus = async (user) => {
+  if (!user || user.role !== "admin") return false;
+  if (user.isPrimaryAdmin === true) return true;
+
+  const schoolId = getSchoolId(user);
+  if (!schoolId) return false;
+
+  const existingPrimary = await User.findOne({
+    school: schoolId,
+    role: "admin",
+    isPrimaryAdmin: true,
+  }).select("_id").lean();
+
+  if (existingPrimary) {
+    return String(existingPrimary._id) === String(user._id);
+  }
+
+  const firstAdmin = await User.findOne({
+    school: schoolId,
+    role: "admin",
+  })
+    .sort({ createdAt: 1, _id: 1 })
+    .select("_id")
+    .lean();
+
+  if (!firstAdmin) return false;
+
+  await User.findByIdAndUpdate(firstAdmin._id, { isPrimaryAdmin: true });
+  return String(firstAdmin._id) === String(user._id);
+};
+
 const generateToken = (user) =>
   jwt.sign(
     {
@@ -92,6 +123,7 @@ exports.register = async (req, res) => {
         ? User.fullAdminPermissions()
         : User.emptyPermissions(),
       permissionsConfigured: role === "admin" || role === "superadmin",
+      isPrimaryAdmin: role === "admin",
     });
 
     // Send Welcome SMS
@@ -118,6 +150,7 @@ exports.register = async (req, res) => {
         role: user.role,
         permissions: getEffectivePermissions(user),
         permissionsConfigured: user.permissionsConfigured,
+        isPrimaryAdmin: user.isPrimaryAdmin,
         school: {
           id: school._id || school.id,
           name: school.name,
@@ -150,7 +183,7 @@ exports.login = async (req, res) => {
 
     if (!user) return sendError(res, 401, "Invalid email or password");
 
-    const isPrimaryAdmin = user.role === "admin" && !user.audit?.createdBy;
+    const isPrimaryAdmin = await resolvePrimaryAdminStatus(user);
 
     if (user.isActive === false && !isPrimaryAdmin) {
       return sendError(res, 403, "This account has been disabled. Please contact your administrator.");
@@ -189,7 +222,8 @@ exports.login = async (req, res) => {
       }
     }
 
-    const token = generateToken(user);
+    const userForToken = { ...user, isPrimaryAdmin };
+    const token = generateToken(userForToken);
 
     // Track admin dashboard visit
     if (user.role === 'admin' && user.school) {
@@ -205,7 +239,7 @@ exports.login = async (req, res) => {
       name: user.name,
       email: user.email,
       role: user.role,
-      permissions: getEffectivePermissions(user),
+      permissions: getEffectivePermissions(userForToken),
       permissionsConfigured: Boolean(user.permissionsConfigured),
       isPrimaryAdmin,
       school: user.school
@@ -278,7 +312,7 @@ exports.logout = (req, res) => {
 // ------------------------------
 // ADMIN MANAGEMENT
 // ------------------------------
-const adminSelect = "_id name email phone role school permissions permissionsConfigured isActive deletedAt audit createdAt updatedAt";
+const adminSelect = "_id name email phone role school permissions permissionsConfigured isPrimaryAdmin isActive deletedAt audit createdAt updatedAt";
 
 const formatAdmin = (admin) => ({
   id: admin._id,
@@ -290,7 +324,7 @@ const formatAdmin = (admin) => ({
   school: admin.school,
   permissions: getEffectivePermissions(admin),
   permissionsConfigured: Boolean(admin.permissionsConfigured),
-  isPrimaryAdmin: !admin.audit?.createdBy,
+  isPrimaryAdmin: Boolean(admin.isPrimaryAdmin),
   isActive: admin.isActive !== false,
   audit: admin.audit || {},
   createdAt: admin.createdAt,
@@ -360,6 +394,7 @@ exports.createAdmin = async (req, res) => {
       school: schoolId,
       permissions: User.normalizePermissions(permissions),
       permissionsConfigured: true,
+      isPrimaryAdmin: false,
       audit: {
         createdBy: req.user._id,
         lastActionBy: req.user._id,
@@ -405,7 +440,7 @@ exports.updateAdmin = async (req, res) => {
     const admin = await User.findOne(filter).select("+password");
     if (!admin) return sendError(res, 404, "Admin not found");
 
-    if (!admin.audit?.createdBy && String(admin._id) !== String(req.user._id)) {
+    if (admin.isPrimaryAdmin && String(admin._id) !== String(req.user._id)) {
       return sendError(res, 403, "The primary admin account cannot be modified by another admin");
     }
 
@@ -488,7 +523,7 @@ exports.deleteAdmin = async (req, res) => {
     const admin = await User.findOne(filter);
     if (!admin) return sendError(res, 404, "Admin not found");
 
-    if (!admin.audit?.createdBy) {
+    if (admin.isPrimaryAdmin) {
       return sendError(res, 403, "The primary admin account cannot be deleted");
     }
 

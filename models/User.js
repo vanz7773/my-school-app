@@ -103,6 +103,12 @@ const userSchema = new mongoose.Schema(
       index: true,
     },
 
+    isPrimaryAdmin: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
     school: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "School",
