@@ -32,9 +32,22 @@ exports.getAllSchools = async (req, res) => {
         // Parallelizing the count queries would be better.
         const enrichedSchools = await Promise.all(
             schools.map(async (school) => {
-                const studentCount = await Student.countDocuments({ school: school._id });
-                const teacherCount = await User.countDocuments({ school: school._id, role: "teacher" });
-                const adminCount = await User.countDocuments({ school: school._id, role: "admin" });
+                const [
+                    studentCount,
+                    teacherCount,
+                    adminCount,
+                    schoolInfo,
+                    primaryAdmin
+                ] = await Promise.all([
+                    Student.countDocuments({ school: school._id }),
+                    User.countDocuments({ school: school._id, role: "teacher" }),
+                    User.countDocuments({ school: school._id, role: "admin" }),
+                    SchoolInfo.findOne({ school: school._id }).select("email phone address motto").lean(),
+                    User.findOne({ school: school._id, role: "admin" })
+                        .sort({ isPrimaryAdmin: -1, createdAt: 1 })
+                        .select("email phone name")
+                        .lean()
+                ]);
 
                 // Calculate owing subscription status
                 const pendingInvoices = await SchoolTransaction.find({
@@ -57,6 +70,10 @@ exports.getAllSchools = async (req, res) => {
 
                 return {
                     ...school,
+                    email: schoolInfo?.email || primaryAdmin?.email || school.email || "",
+                    schoolEmail: schoolInfo?.email || "",
+                    schoolInfo: schoolInfo || null,
+                    primaryAdmin: primaryAdmin || null,
                     stats: {
                         students: studentCount,
                         teachers: teacherCount,
@@ -563,4 +580,3 @@ exports.getSchoolSmsLogs = async (req, res) => {
         return sendError(res, 500, "Server error fetching school SMS logs");
     }
 };
-
