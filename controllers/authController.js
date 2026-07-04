@@ -628,7 +628,7 @@ exports.resetPassword = async (req, res) => {
     if (!uid || !token || !newPassword)
       return sendError(res, 400, "Missing fields");
 
-    const user = await User.findById(uid).select("+password");
+    const user = await User.findById(uid).select("+password +passwordResetTokenHash passwordResetExpiresAt");
     if (!user) return sendError(res, 404, "User not found");
 
     if (!user.passwordResetTokenHash || !user.passwordResetExpiresAt || user.passwordResetExpiresAt < Date.now()) {
@@ -659,7 +659,7 @@ exports.requestResetForAdmin = async (req, res) => {
     if (!email) return sendError(res, 400, "Email is required");
 
     const normalizedEmail = String(email).toLowerCase().trim();
-    const user = await User.findOne({ email: normalizedEmail, role: 'admin' }).select("_id name").lean();
+    const user = await User.findOne({ email: normalizedEmail, role: 'admin' }).select("_id name email").lean();
 
     if (!user) {
       // Return 404 so frontend knows to show "contact super admin" message
@@ -744,14 +744,15 @@ exports.resetPasswordWithCode = async (req, res) => {
       return sendError(res, 400, "Missing fields");
 
     const normalizedEmail = String(email).toLowerCase().trim();
-    const user = await User.findOne({ email: normalizedEmail }).select("+password");
+    const normalizedCode = String(code).trim();
+    const user = await User.findOne({ email: normalizedEmail }).select("+password +passwordResetTokenHash passwordResetExpiresAt");
     if (!user) return sendError(res, 404, "User not found");
 
     if (!user.passwordResetTokenHash || !user.passwordResetExpiresAt || user.passwordResetExpiresAt < Date.now()) {
       return sendError(res, 400, "Invalid or expired code");
     }
 
-    if (hashToken(code) !== user.passwordResetTokenHash)
+    if (hashToken(normalizedCode) !== user.passwordResetTokenHash)
       return sendError(res, 400, "Incorrect verification code");
 
     user.password = newPassword;
