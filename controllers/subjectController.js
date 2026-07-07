@@ -21,6 +21,8 @@ const defaultSubjects = [
   { name: "Social Skills", shortName: "SOC SKILLS", aliases: ["SOCIAL SKILLS"] },
   { name: "Writing", shortName: "WRITING", aliases: [] },
   { name: "OWOP", shortName: "OWOP", aliases: ["OUR WORLD OUR PEOPLE", "OUR WORLD AND OUR PEOPLE"] },
+  { name: "Creativity", shortName: "CREATIVITY", aliases: ["CREATIVE THINKING"] },
+  { name: "Phonics", shortName: "PHONICS", aliases: [] },
 ];
 
 // helper to escape regex special chars
