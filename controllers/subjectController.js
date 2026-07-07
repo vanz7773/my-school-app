@@ -23,6 +23,7 @@ const defaultSubjects = [
   { name: "OWOP", shortName: "OWOP", aliases: ["OUR WORLD OUR PEOPLE", "OUR WORLD AND OUR PEOPLE"] },
   { name: "Creativity", shortName: "CREATIVITY", aliases: ["CREATIVE THINKING"] },
   { name: "Phonics", shortName: "PHONICS", aliases: [] },
+  { name: "Health and Sanitation", shortName: "HEALTH SAN", aliases: ["HEALTH", "SANITATION"] },
 ];
 
 // helper to escape regex special chars
