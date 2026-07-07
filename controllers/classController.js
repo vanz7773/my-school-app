@@ -1,7 +1,9 @@
+const mongoose = require('mongoose');
 const Class = require('../models/Class');
 const User = require('../models/User');
 const School = require('../models/School');
 const Teacher = require('../models/Teacher');
+const Subject = require('../models/Subject');
 // ✅ Create class (admin only)
 exports.createClass = async (req, res) => {
   try {
@@ -271,6 +273,89 @@ exports.updateClass = async (req, res) => {
     res.status(500).json({
       message: 'Error updating class',
       error: err.message
+    });
+  }
+};
+
+// ✅ Bulk add subjects to multiple classes (admin only)
+exports.bulkAddSubjectsToClasses = async (req, res) => {
+  try {
+    const schoolId = req.user.school;
+    const { classIds, subjects, subjectIds } = req.body;
+
+    if (!schoolId) {
+      return res.status(400).json({ message: 'School context missing from token' });
+    }
+
+    const nextClassIds = Array.from(
+      new Set((Array.isArray(classIds) ? classIds : []).map((id) => String(id).trim()).filter(Boolean))
+    );
+    const nextSubjectIds = Array.from(
+      new Set((Array.isArray(subjects || subjectIds) ? (subjects || subjectIds) : []).map((id) => String(id).trim()).filter(Boolean))
+    );
+
+    if (nextClassIds.length === 0) {
+      return res.status(400).json({ message: 'Select at least one class.' });
+    }
+
+    if (nextSubjectIds.length === 0) {
+      return res.status(400).json({ message: 'Select at least one subject.' });
+    }
+
+    const invalidClassId = nextClassIds.find((id) => !mongoose.Types.ObjectId.isValid(id));
+    if (invalidClassId) {
+      return res.status(400).json({ message: 'One or more selected classes are invalid.' });
+    }
+
+    const invalidSubjectId = nextSubjectIds.find((id) => !mongoose.Types.ObjectId.isValid(id));
+    if (invalidSubjectId) {
+      return res.status(400).json({ message: 'One or more selected subjects are invalid.' });
+    }
+
+    const classCount = await Class.countDocuments({
+      _id: { $in: nextClassIds },
+      school: schoolId,
+    });
+
+    if (classCount !== nextClassIds.length) {
+      return res.status(400).json({
+        message: 'One or more selected classes are invalid or not in your school.',
+      });
+    }
+
+    const subjectCount = await Subject.countDocuments({
+      _id: { $in: nextSubjectIds },
+    });
+
+    if (subjectCount !== nextSubjectIds.length) {
+      return res.status(400).json({ message: 'One or more selected subjects are invalid.' });
+    }
+
+    const result = await Class.updateMany(
+      { _id: { $in: nextClassIds }, school: schoolId },
+      { $addToSet: { subjects: { $each: nextSubjectIds } } }
+    );
+
+    const updatedClasses = await Class.find({ _id: { $in: nextClassIds }, school: schoolId })
+      .populate('teachers', 'name email')
+      .populate('classTeacher', 'name email')
+      .populate('coClassTeacher', 'name email')
+      .populate('students', 'name email')
+      .populate('subjects', 'name code shortName')
+      .sort({ name: 1, stream: 1 });
+
+    return res.status(200).json({
+      success: true,
+      message: `Subjects added to ${nextClassIds.length} class${nextClassIds.length === 1 ? '' : 'es'}.`,
+      matchedCount: result.matchedCount,
+      modifiedCount: result.modifiedCount,
+      classes: updatedClasses,
+    });
+  } catch (err) {
+    console.error('Error bulk adding subjects to classes:', err);
+    return res.status(500).json({
+      message: 'Error adding subjects to classes',
+      error: err.message,
     });
   }
 };

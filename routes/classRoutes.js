@@ -6,6 +6,7 @@ const {
   getAllClasses,
   deleteClass,
   updateClass,
+  bulkAddSubjectsToClasses,
   assignClassTeacher,
   getTeacherClassesWithStudents,
   getTeacherClasses // new endpoint
@@ -14,6 +15,7 @@ const {
 // ---------------- Admin Routes ----------------
 router.post('/', protect, restrictTo('admin'), createClass);
 router.get('/', protect, restrictTo('admin'), getAllClasses);
+router.patch('/bulk-subjects', protect, restrictTo('admin'), bulkAddSubjectsToClasses);
 router.put('/:id', protect, restrictTo('admin'), updateClass);
 router.delete('/:id', protect, restrictTo('admin'), deleteClass);
 
