@@ -97,7 +97,7 @@ class SmsService {
     }
   }
 
-  async sendSms({ schoolId, recipients, message, messageType }) {
+  async sendSms({ schoolId, recipients, message, messageType, bypassDuplicateCheck = false }) {
     try {
       const apiKey = process.env.ARKESEL_API_KEY;
       if (!apiKey) throw new Error('ARKESEL_API_KEY is not configured');
@@ -127,8 +127,8 @@ class SmsService {
         });
       }
 
-      // Report cards may be resent after corrections, so do not suppress repeat report SMS.
-      if (messageType !== 'reports') {
+      // Report cards and manual dashboard sends may be resent after corrections/confirmation.
+      if (!bypassDuplicateCheck && messageType !== 'reports') {
         const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
         const recentLogs = await SmsLog.find({
           school: schoolId,
@@ -219,7 +219,8 @@ class SmsService {
         data: response.data,
         recipientsCount: newRecipients.length,
         skippedCount: formattedRecipients.length - newRecipients.length,
-        invalidPhoneCount
+        invalidPhoneCount,
+        duplicateCheckBypassed: bypassDuplicateCheck
       };
 
     } catch (error) {

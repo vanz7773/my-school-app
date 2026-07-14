@@ -187,7 +187,8 @@ exports.sendBulkSms = async (req, res) => {
       schoolId: req.user.school,
       recipients: phones,
       message,
-      messageType
+      messageType,
+      bypassDuplicateCheck: true
     });
 
     res.json({
@@ -214,7 +215,8 @@ exports.sendSingleSms = async (req, res) => {
       schoolId: req.user.school,
       recipients: [phone],
       message,
-      messageType: messageType || 'custom'
+      messageType: messageType || 'custom',
+      bypassDuplicateCheck: true
     });
 
     res.json({ success: true, result, message: 'SMS processed' });
