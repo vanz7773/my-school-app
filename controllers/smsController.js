@@ -2,6 +2,38 @@ const smsService = require('../services/smsService');
 const SmsLog = require('../models/SmsLog');
 const SchoolSmsSettings = require('../models/SchoolSmsSettings');
 const Student = require('../models/Student');
+const User = require('../models/User');
+
+const collectParentPhonesFromStudents = async (students, schoolId) => {
+  const phones = [];
+  const parentUserIds = new Set();
+
+  students.forEach(student => {
+    if (student.guardianPhone) phones.push(student.guardianPhone);
+    if (student.guardianPhone2) phones.push(student.guardianPhone2);
+
+    if (student.parent) parentUserIds.add(String(student.parent._id || student.parent));
+    if (Array.isArray(student.parentIds)) {
+      student.parentIds.forEach(parentId => {
+        if (parentId) parentUserIds.add(String(parentId._id || parentId));
+      });
+    }
+  });
+
+  if (parentUserIds.size > 0) {
+    const parentUsers = await User.find({
+      _id: { $in: Array.from(parentUserIds) },
+      role: 'parent',
+      school: schoolId
+    }).select('phone');
+
+    parentUsers.forEach(parent => {
+      if (parent.phone) phones.push(parent.phone);
+    });
+  }
+
+  return phones;
+};
 
 exports.getSettings = async (req, res) => {
   try {
@@ -82,43 +114,48 @@ exports.getLogs = async (req, res) => {
 
 exports.sendBulkSms = async (req, res) => {
   try {
-    const { message, messageType, recipientIds, recipientType } = req.body;
+    const { message, messageType, recipientType } = req.body;
+    const recipientIds = Array.isArray(req.body.recipientIds) ? req.body.recipientIds : [];
 
-    if (!message || !messageType || !recipientIds || !Array.isArray(recipientIds)) {
-      return res.status(400).json({ message: 'Missing required fields or invalid format' });
+    if (!message || !messageType || !recipientType) {
+      return res.status(400).json({ message: 'Missing required fields' });
+    }
+
+    if (
+      ['student_parents', 'individual_teacher', 'direct_phones'].includes(recipientType) &&
+      recipientIds.length === 0
+    ) {
+      return res.status(400).json({ message: 'Please select at least one recipient' });
     }
 
     // Determine phone numbers
     let phones = [];
     if (recipientType === 'student_parents') {
-      const students = await Student.find({ _id: { $in: recipientIds }, school: req.user.school });
-      
-      const parentUserIds = new Set();
+      const students = await Student.find({
+        _id: { $in: recipientIds },
+        school: req.user.school
+      }).select('guardianPhone guardianPhone2 parent parentIds');
 
-      students.forEach(student => {
-        // 1. Primary: Guardian Phones stored directly on Student
-        if (student.guardianPhone) {
-          phones.push(student.guardianPhone);
-        }
-        if (student.guardianPhone2) {
-          phones.push(student.guardianPhone2);
-        }
-        
-        // 2. Fallback: Collect all Parent/Guardian User IDs
-        if (student.parent) parentUserIds.add(String(student.parent._id || student.parent));
-        if (Array.isArray(student.parentIds)) {
-          student.parentIds.forEach(pId => parentUserIds.add(String(pId._id || pId)));
-        }
+      phones = await collectParentPhonesFromStudents(students, req.user.school);
+    } else if (recipientType === 'all_parents') {
+      const [parents, students] = await Promise.all([
+        User.find({
+          role: 'parent',
+          school: req.user.school,
+          isActive: { $ne: false }
+        }).select('phone'),
+        Student.find({
+          school: req.user.school,
+          status: { $ne: 'withdrawn' }
+        }).select('_id guardianPhone guardianPhone2 parent parentIds')
+      ]);
+
+      parents.forEach(parent => {
+        if (parent.phone) phones.push(parent.phone);
       });
 
-      // Fetch all unique parent Users to get their phone numbers
-      if (parentUserIds.size > 0) {
-        const User = require('../models/User');
-        const parentUsers = await User.find({ _id: { $in: Array.from(parentUserIds) } }).select('phone');
-        parentUsers.forEach(pu => {
-          if (pu.phone) phones.push(pu.phone);
-        });
-      }
+      const studentParentPhones = await collectParentPhonesFromStudents(students, req.user.school);
+      phones.push(...studentParentPhones);
     } else if (recipientType === 'teachers') {
       const Teacher = require('../models/Teacher');
       const teachers = await Teacher.find({ school: req.user.school }).select('phone telNo user').populate('user', 'phone');
@@ -153,7 +190,14 @@ exports.sendBulkSms = async (req, res) => {
       messageType
     });
 
-    res.json({ success: true, result, message: 'Bulk SMS processed' });
+    res.json({
+      success: true,
+      result: {
+        ...result,
+        resolvedRecipientsCount: phones.length
+      },
+      message: 'Bulk SMS processed'
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
