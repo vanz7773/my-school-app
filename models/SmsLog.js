@@ -16,7 +16,7 @@ const smsLogSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['sent', 'failed', 'pending'],
+    enum: ['sent', 'failed', 'pending', 'skipped'],
     default: 'pending'
   },
   messageType: {

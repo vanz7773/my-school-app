@@ -133,15 +133,36 @@ class SmsService {
         const recentLogs = await SmsLog.find({
           school: schoolId,
           message,
+          status: 'sent',
           sentAt: { $gte: twentyFourHoursAgo },
           recipientPhone: { $in: formattedRecipients }
         });
 
         const recentPhones = new Set(recentLogs.map(log => log.recipientPhone));
+        const duplicateRecipients = formattedRecipients.filter(phone => recentPhones.has(phone));
         newRecipients = formattedRecipients.filter(phone => !recentPhones.has(phone));
 
         if (newRecipients.length === 0) {
-          return { success: true, message: 'All recipients already received this exact message recently. Skipping.' };
+          const skippedLogs = duplicateRecipients.map(phone => ({
+            school: schoolId,
+            recipientPhone: phone,
+            message,
+            messageType,
+            status: 'skipped',
+            apiResponse: 'Duplicate SMS skipped. Recipient already received this exact message recently.'
+          }));
+
+          if (skippedLogs.length > 0) {
+            await SmsLog.insertMany(skippedLogs).catch(console.error);
+          }
+
+          return {
+            success: true,
+            message: 'All recipients already received this exact message recently. Skipping.',
+            recipientsCount: 0,
+            skippedCount: duplicateRecipients.length,
+            invalidPhoneCount
+          };
         }
       }
 
