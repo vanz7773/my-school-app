@@ -3,6 +3,23 @@ const SmsLog = require('../models/SmsLog');
 const SchoolSmsSettings = require('../models/SchoolSmsSettings');
 
 const ARKESEL_API_URL = 'https://sms.arkesel.com/sms/api';
+const GHANA_MOBILE_PREFIXES = new Set([
+  '20',
+  '23',
+  '24',
+  '25',
+  '26',
+  '27',
+  '28',
+  '29',
+  '50',
+  '53',
+  '54',
+  '55',
+  '56',
+  '57',
+  '59'
+]);
 
 // Format Ghana phone number to international format without + sign for Arkesel.
 // Examples: 054xxxxxxx -> 23354xxxxxxx, +23354xxxxxxx -> 23354xxxxxxx
@@ -19,14 +36,34 @@ const formatPhoneNumber = (phone) => {
     formatted = `233${formatted}`;
   }
 
-  return /^233\d{9}$/.test(formatted) ? formatted : null;
+  if (!/^233\d{9}$/.test(formatted)) return null;
+
+  const mobilePrefix = formatted.slice(3, 5);
+  return GHANA_MOBILE_PREFIXES.has(mobilePrefix) ? formatted : null;
 };
 
-const normalizeRecipients = (recipients) => {
+const normalizeRecipientsWithStats = (recipients) => {
   const rawRecipients = Array.isArray(recipients) ? recipients : [recipients];
-  const formattedRecipients = rawRecipients.map(formatPhoneNumber).filter(Boolean);
-  return [...new Set(formattedRecipients)];
+  const formattedRecipients = [];
+  const invalidRecipients = [];
+
+  rawRecipients.forEach((recipient) => {
+    const formatted = formatPhoneNumber(recipient);
+    if (formatted) {
+      formattedRecipients.push(formatted);
+    } else if (recipient) {
+      invalidRecipients.push(String(recipient).trim());
+    }
+  });
+
+  return {
+    formattedRecipients: [...new Set(formattedRecipients)],
+    invalidRecipients: [...new Set(invalidRecipients)]
+  };
 };
+
+const normalizeRecipients = (recipients) =>
+  normalizeRecipientsWithStats(recipients).formattedRecipients;
 
 const isSuccessfulProviderResponse = (data) => {
   const code = String(data?.code || data?.status || '').toLowerCase();
@@ -74,13 +111,21 @@ class SmsService {
         throw new Error('No valid recipients provided');
       }
 
-      const formattedRecipients = normalizeRecipients(recipients);
+      const { formattedRecipients, invalidRecipients } = normalizeRecipientsWithStats(recipients);
 
       if (formattedRecipients.length === 0) {
         throw new Error('No valid phone numbers after formatting');
       }
 
       let newRecipients = formattedRecipients;
+      const invalidPhoneCount = invalidRecipients.length;
+
+      if (invalidPhoneCount > 0) {
+        console.warn('Skipping invalid SMS phone numbers:', {
+          schoolId,
+          invalidPhoneCount
+        });
+      }
 
       // Report cards may be resent after corrections, so do not suppress repeat report SMS.
       if (messageType !== 'reports') {
@@ -152,7 +197,8 @@ class SmsService {
         success: true,
         data: response.data,
         recipientsCount: newRecipients.length,
-        skippedCount: formattedRecipients.length - newRecipients.length
+        skippedCount: formattedRecipients.length - newRecipients.length,
+        invalidPhoneCount
       };
 
     } catch (error) {
@@ -185,10 +231,17 @@ class SmsService {
         throw new Error('No valid recipients provided');
       }
 
-      const formattedRecipients = normalizeRecipients(recipients);
+      const { formattedRecipients, invalidRecipients } = normalizeRecipientsWithStats(recipients);
 
       if (formattedRecipients.length === 0) {
         throw new Error('No valid phone numbers after formatting');
+      }
+
+      if (invalidRecipients.length > 0) {
+        console.warn('Skipping invalid system SMS phone numbers:', {
+          schoolId,
+          invalidPhoneCount: invalidRecipients.length
+        });
       }
 
       const recipientsString = formattedRecipients.join(',');
@@ -232,7 +285,8 @@ class SmsService {
       return {
         success: true,
         data: response.data,
-        recipientsCount: formattedRecipients.length
+        recipientsCount: formattedRecipients.length,
+        invalidPhoneCount: invalidRecipients.length
       };
     } catch (error) {
       console.error('System SMS Send Error:', error.response?.data || error.message);
