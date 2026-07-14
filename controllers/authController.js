@@ -91,6 +91,10 @@ const resolvePrimaryAdminStatus = async (user) => {
   return String(firstAdmin._id) === String(user._id);
 };
 
+const getLoginTokenExpiry = (user) => (user?.role === "parent" ? "365d" : "7d");
+const getLoginCookieMaxAge = (user) =>
+  (user?.role === "parent" ? 365 : 7) * 24 * 60 * 60 * 1000;
+
 const generateToken = (user) =>
   jwt.sign(
     {
@@ -101,7 +105,7 @@ const generateToken = (user) =>
       permissionsConfigured: Boolean(user.permissionsConfigured),
     },
     JWT_SECRET,
-    { expiresIn: "7d" }
+    { expiresIn: getLoginTokenExpiry(user) }
   );
 
 const generateResetToken = () => crypto.randomBytes(24).toString("hex");
@@ -301,7 +305,7 @@ exports.login = async (req, res) => {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      maxAge: getLoginCookieMaxAge(userForToken)
     });
 
     return res.json({
