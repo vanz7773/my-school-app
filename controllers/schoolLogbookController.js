@@ -3,38 +3,14 @@ const AuditLog = require('../models/AuditLog');
 
 const getSchoolId = (req) => req.user?.school;
 
-const cleanTextArray = (value) => {
-  if (Array.isArray(value)) {
-    return value.map((item) => String(item || '').trim()).filter(Boolean);
-  }
-
-  if (typeof value === 'string') {
-    return value
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-
-  return [];
-};
-
 const normalizePayload = (body) => {
-  const followUpRequired = Boolean(body.followUpRequired);
-
   return {
-    title: String(body.title || '').trim(),
     description: String(body.description || '').trim(),
     activityDate: body.activityDate ? new Date(body.activityDate) : new Date(),
-    category: body.category || 'General',
-    priority: body.priority || 'Normal',
-    location: String(body.location || '').trim(),
-    peopleInvolved: cleanTextArray(body.peopleInvolved),
-    actionTaken: String(body.actionTaken || '').trim(),
-    followUpRequired,
-    followUpDate: followUpRequired && body.followUpDate ? new Date(body.followUpDate) : null,
-    status: body.status || 'Open',
   };
 };
+
+const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const writeAuditLog = async ({ req, action, resourceId, metadata = {} }) => {
   try {
@@ -56,10 +32,6 @@ exports.getLogbookEntries = async (req, res) => {
     const schoolId = getSchoolId(req);
     const {
       search = '',
-      category = '',
-      priority = '',
-      status = '',
-      followUpRequired = '',
       dateFrom = '',
       dateTo = '',
       page = 1,
@@ -67,11 +39,6 @@ exports.getLogbookEntries = async (req, res) => {
     } = req.query;
 
     const filter = { school: schoolId };
-
-    if (category) filter.category = category;
-    if (priority) filter.priority = priority;
-    if (status) filter.status = status;
-    if (followUpRequired !== '') filter.followUpRequired = followUpRequired === 'true';
 
     if (dateFrom || dateTo) {
       filter.activityDate = {};
@@ -84,7 +51,7 @@ exports.getLogbookEntries = async (req, res) => {
     }
 
     if (search.trim()) {
-      filter.$text = { $search: search.trim() };
+      filter.description = { $regex: escapeRegex(search.trim()), $options: 'i' };
     }
 
     const pageNumber = Math.max(1, Number(page) || 1);
@@ -106,10 +73,6 @@ exports.getLogbookEntries = async (req, res) => {
           $group: {
             _id: null,
             total: { $sum: 1 },
-            open: { $sum: { $cond: [{ $eq: ['$status', 'Open'] }, 1, 0] } },
-            inProgress: { $sum: { $cond: [{ $eq: ['$status', 'In Progress'] }, 1, 0] } },
-            followUps: { $sum: { $cond: ['$followUpRequired', 1, 0] } },
-            critical: { $sum: { $cond: [{ $eq: ['$priority', 'Critical'] }, 1, 0] } },
           },
         },
       ]),
@@ -127,10 +90,6 @@ exports.getLogbookEntries = async (req, res) => {
       summary:
         summaryAgg[0] || {
           total: 0,
-          open: 0,
-          inProgress: 0,
-          followUps: 0,
-          critical: 0,
         },
     });
   } catch (error) {
@@ -144,8 +103,8 @@ exports.createLogbookEntry = async (req, res) => {
     const schoolId = getSchoolId(req);
     const payload = normalizePayload(req.body);
 
-    if (!payload.title || !payload.description) {
-      return res.status(400).json({ message: 'Title and description are required' });
+    if (!payload.description) {
+      return res.status(400).json({ message: 'Log details are required' });
     }
 
     const entry = await SchoolLogbookEntry.create({
@@ -159,7 +118,7 @@ exports.createLogbookEntry = async (req, res) => {
       req,
       action: 'school_logbook.create',
       resourceId: entry._id,
-      metadata: { title: entry.title, category: entry.category, priority: entry.priority },
+      metadata: { activityDate: entry.activityDate },
     });
 
     const populated = await SchoolLogbookEntry.findById(entry._id)
@@ -179,8 +138,8 @@ exports.updateLogbookEntry = async (req, res) => {
     const schoolId = getSchoolId(req);
     const payload = normalizePayload(req.body);
 
-    if (!payload.title || !payload.description) {
-      return res.status(400).json({ message: 'Title and description are required' });
+    if (!payload.description) {
+      return res.status(400).json({ message: 'Log details are required' });
     }
 
     const entry = await SchoolLogbookEntry.findOneAndUpdate(
@@ -202,7 +161,7 @@ exports.updateLogbookEntry = async (req, res) => {
       req,
       action: 'school_logbook.update',
       resourceId: entry._id,
-      metadata: { title: entry.title, category: entry.category, priority: entry.priority, status: entry.status },
+      metadata: { activityDate: entry.activityDate },
     });
 
     return res.json({ success: true, message: 'Logbook entry updated successfully', entry });
@@ -225,7 +184,7 @@ exports.deleteLogbookEntry = async (req, res) => {
       req,
       action: 'school_logbook.delete',
       resourceId: entry._id,
-      metadata: { title: entry.title, category: entry.category, priority: entry.priority },
+      metadata: { activityDate: entry.activityDate },
     });
 
     return res.json({ success: true, message: 'Logbook entry deleted successfully' });
