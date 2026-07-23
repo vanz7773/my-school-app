@@ -2064,6 +2064,22 @@ module.exports = {
         });
       }
 
+      const previousArrearsMapsByPeriod = new Map();
+      for (const bill of bills) {
+        const periodKey = `${bill.term || ''}__${bill.academicYear || ''}`;
+        if (!previousArrearsMapsByPeriod.has(periodKey)) {
+          previousArrearsMapsByPeriod.set(
+            periodKey,
+            await buildPreviousArrearsMap({
+              schoolId: user.school,
+              studentIds,
+              currentTerm: bill.term,
+              currentAcademicYear: bill.academicYear
+            })
+          );
+        }
+      }
+
       // 💰 Transform and calculate totals
       const transformedBills = bills.map((bill) => {
         const transformed = transformBill(bill);
@@ -2089,7 +2105,7 @@ module.exports = {
           transformed.student?.class || transformed.class
         );
 
-        return {
+        const responseBill = {
           ...transformed,
           studentName:
             transformed.student?.user?.name ||
@@ -2115,6 +2131,13 @@ module.exports = {
               ? payments[payments.length - 1].paymentDate
               : null,
         };
+
+        const periodKey = `${bill.term || ''}__${bill.academicYear || ''}`;
+        return attachPreviousArrears(
+          responseBill,
+          previousArrearsMapsByPeriod.get(periodKey),
+          transformed.student?._id
+        );
       });
 
       // ✅ If parent requested a specific child, filter strictly
