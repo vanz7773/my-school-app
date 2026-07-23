@@ -22,6 +22,156 @@ const buildDailyVariableItems = (label = DEFAULT_DAILY_FEE_LABEL, amount = 0) =>
   isVariable: true,
 }]);
 
+const toIdString = (value) => {
+  if (!value) return '';
+  if (typeof value === 'object') {
+    return String(value._id || value.id || value);
+  }
+  return String(value);
+};
+
+const getAcademicYearStart = (academicYear) => {
+  const match = String(academicYear || '').match(/\d{4}/);
+  return match ? Number(match[0]) : null;
+};
+
+const getTermNumber = (term) => {
+  const match = String(term || '').match(/\d+/);
+  return match ? Number(match[0]) : null;
+};
+
+const getFeePeriodOrder = (term, academicYear) => {
+  const yearStart = getAcademicYearStart(academicYear);
+  const termNumber = getTermNumber(term);
+  if (!yearStart || !termNumber) return null;
+  return (yearStart * 10) + termNumber;
+};
+
+const getPreviousFeePeriod = (term, academicYear) => {
+  const yearStart = getAcademicYearStart(academicYear);
+  const termNumber = getTermNumber(term);
+  if (!yearStart || !termNumber) return null;
+
+  if (termNumber === 1) {
+    return {
+      term: 'Term 3',
+      academicYear: `${yearStart - 1}-${yearStart}`
+    };
+  }
+
+  return {
+    term: `Term ${termNumber - 1}`,
+    academicYear: `${yearStart}-${yearStart + 1}`
+  };
+};
+
+const getBillOutstandingBalance = (bill) => {
+  if (isDailyVariableMode(bill?.billingMode || bill?.termFeeBillingMode)) {
+    return 0;
+  }
+
+  const totalAmount = Number(bill?.totalAmount) || 0;
+  const hasPaymentRows = Array.isArray(bill?.payments) && bill.payments.length > 0;
+  const totalPaid = hasPaymentRows
+    ? bill.payments.reduce((sum, payment) => sum + (Number(payment?.amount) || 0), 0)
+    : Number(bill?.totalPaid) || 0;
+  const calculatedBalance = Math.max(0, totalAmount - totalPaid);
+  const storedBalance = Number(bill?.balance);
+
+  if (hasPaymentRows) {
+    return calculatedBalance;
+  }
+
+  if (Number.isFinite(storedBalance) && storedBalance > 0) {
+    return Math.max(0, storedBalance);
+  }
+
+  return calculatedBalance;
+};
+
+const buildPreviousArrearsMap = async ({
+  schoolId,
+  studentIds,
+  currentTerm,
+  currentAcademicYear
+}) => {
+  const previousPeriod = getPreviousFeePeriod(currentTerm, currentAcademicYear);
+  const normalizedStudentIds = [...new Set((studentIds || []).map(toIdString).filter(Boolean))];
+  const arrearsMap = new Map();
+
+  if (!schoolId || !previousPeriod || normalizedStudentIds.length === 0) {
+    return arrearsMap;
+  }
+
+  const previousBills = await TermBill.find({
+    school: schoolId,
+    student: { $in: normalizedStudentIds },
+    term: previousPeriod.term,
+    academicYear: previousPeriod.academicYear
+  })
+    .select('student term academicYear totalAmount totalPaid balance billingMode payments status')
+    .lean();
+
+  previousBills.forEach((bill) => {
+    const amount = getBillOutstandingBalance(bill);
+    if (amount <= 0) return;
+
+    const studentId = toIdString(bill.student);
+    const existing = arrearsMap.get(studentId) || [];
+    existing.push({
+      _id: toIdString(bill._id),
+      term: bill.term,
+      academicYear: bill.academicYear,
+      name: `PREVIOUS ARREARS [${bill.term || 'Term'} | ${bill.academicYear || 'Year'}]`,
+      amount,
+      balance: amount,
+      totalAmount: Number(bill.totalAmount) || 0,
+      totalPaid: Number(bill.totalPaid) || 0,
+      status: bill.status || 'Unpaid'
+    });
+    arrearsMap.set(studentId, existing);
+  });
+
+  const normalizedMap = new Map();
+  arrearsMap.forEach((items, studentId) => {
+    const sortedItems = items.sort((a, b) => toIdString(a._id).localeCompare(toIdString(b._id)));
+    const previousArrearsAmount = sortedItems.reduce(
+      (sum, item) => sum + (Number(item.amount) || 0),
+      0
+    );
+    const latestArrears = sortedItems[sortedItems.length - 1] || null;
+
+    normalizedMap.set(studentId, {
+      previousArrears: sortedItems,
+      previousArrearsAmount,
+      previousArrearsSubtotal: previousArrearsAmount,
+      previousArrearsTerm: latestArrears?.term || '',
+      previousArrearsAcademicYear: latestArrears?.academicYear || ''
+    });
+  });
+
+  return normalizedMap;
+};
+
+const attachPreviousArrears = (bill, arrearsMap, studentIdOverride) => {
+  const studentId = toIdString(
+    studentIdOverride ||
+    bill?.studentId ||
+    bill?.student?._id ||
+    bill?.student
+  );
+  const arrears = arrearsMap?.get(studentId);
+
+  return {
+    ...bill,
+    previousArrears: arrears?.previousArrears || [],
+    previousArrearsAmount: arrears?.previousArrearsAmount || 0,
+    previousArrearsSubtotal: arrears?.previousArrearsSubtotal || 0,
+    previousArrearsTerm: arrears?.previousArrearsTerm || '',
+    previousArrearsAcademicYear: arrears?.previousArrearsAcademicYear || ''
+  };
+};
+
 // 🟦 STEP 1 — ADD HELPER FUNCTION
 const resolveClassNames = (classDoc) => {
   if (!classDoc) {
@@ -578,6 +728,14 @@ module.exports = {
         }
       }
 
+      const previousArrearsMap = await buildPreviousArrearsMap({
+        schoolId: req.user.school,
+        studentIds: bills.map(bill => bill.studentId || bill.student?._id || bill.student),
+        currentTerm: term,
+        currentAcademicYear: academicYear
+      });
+      const billsWithArrears = bills.map(bill => attachPreviousArrears(bill, previousArrearsMap));
+
       if (errors.length === 0) {
         await session.commitTransaction();
       } else {
@@ -587,7 +745,7 @@ module.exports = {
           count: bills.length,
           errorCount: errors.length,
           message: `Processed ${bills.length} bills with ${errors.length} errors`,
-          bills: bills.map(bill => ({
+          bills: billsWithArrears.map(bill => ({
             ...bill,
             formattedTotal: formatCurrency(bill.totalAmount)
           })),
@@ -606,7 +764,7 @@ module.exports = {
         success: true,
         count: bills.length,
         template: template.name,
-        bills: bills.map(bill => ({
+        bills: billsWithArrears.map(bill => ({
           ...bill,
           formattedTotal: formatCurrency(bill.totalAmount)
         }))
@@ -957,6 +1115,13 @@ module.exports = {
         billsMap.set(bill.student._id.toString(), bill);
       });
 
+      const previousArrearsMap = await buildPreviousArrearsMap({
+        schoolId: req.user.school,
+        studentIds: students.map(student => student._id),
+        currentTerm: cleanTerm,
+        currentAcademicYear: cleanAcademicYear
+      });
+
       // 3. Merge Students with Bills
       const processedBills = students.map(student => {
         const existingBill = billsMap.get(student._id.toString());
@@ -979,7 +1144,7 @@ module.exports = {
 
           const { className, classDisplayName } = resolveClassNames(student.class);
 
-          return {
+          return attachPreviousArrears({
             ...transformedBill,
             studentName: student.user?.name || student.admissionNumber || 'Unknown',
             className,
@@ -1000,13 +1165,13 @@ module.exports = {
             billingMode,
             dailyFeeLabel: transformedBill.dailyFeeLabel || DEFAULT_DAILY_FEE_LABEL,
             isDailyVariable
-          };
+          }, previousArrearsMap, student._id);
         } else {
           // No bill exists for this student yet
           const { className, classDisplayName } = resolveClassNames(student.class);
           const studentName = student.user?.name || student.admissionNumber || 'Unknown';
 
-          return {
+          return attachPreviousArrears({
             _id: `temp-${student._id}`,
             student: {
               ...student,
@@ -1036,7 +1201,7 @@ module.exports = {
             billingMode: normalizeBillingMode(student.termFeeBillingMode),
             dailyFeeLabel: DEFAULT_DAILY_FEE_LABEL,
             isDailyVariable: isDailyVariableMode(student.termFeeBillingMode)
-          };
+          }, previousArrearsMap, student._id);
         }
       });
 
@@ -1299,7 +1464,14 @@ module.exports = {
         updatedBill.class || updatedBill.student?.class
       );
 
-      const responseData = {
+      const previousArrearsMap = await buildPreviousArrearsMap({
+        schoolId: req.user.school,
+        studentIds: [updatedBill.student?._id || studentId],
+        currentTerm: term,
+        currentAcademicYear: academicYear
+      });
+
+      const responseData = attachPreviousArrears({
         ...transformBill(updatedBill),
         student: {
           _id: updatedBill.student?._id,
@@ -1326,7 +1498,7 @@ module.exports = {
           note: p.note || '',
           date: p.date
         }))
-      };
+      }, previousArrearsMap, updatedBill.student?._id || studentId);
 
       const notificationController = require('../controllers/notificationController');
 
@@ -1534,7 +1706,14 @@ module.exports = {
         updatedBill.class || updatedBill.student?.class
       );
 
-      const responseData = {
+      const previousArrearsMap = await buildPreviousArrearsMap({
+        schoolId: req.user.school,
+        studentIds: [updatedBill.student?._id || bill.student],
+        currentTerm: updatedBill.term || bill.term,
+        currentAcademicYear: updatedBill.academicYear || bill.academicYear
+      });
+
+      const responseData = attachPreviousArrears({
         ...transformBill(updatedBill),
         student: {
           _id: updatedBill.student?._id,
@@ -1561,7 +1740,7 @@ module.exports = {
           note: p.note || '',
           date: p.date
         }))
-      };
+      }, previousArrearsMap, updatedBill.student?._id || bill.student);
 
       res.status(200).json({
         success: true,
@@ -1738,9 +1917,21 @@ module.exports = {
         console.error('Push notification error in updateOrCreateBill:', pushErr);
       }
 
+      const previousArrearsMap = await buildPreviousArrearsMap({
+        schoolId: req.user.school,
+        studentIds: [student._id],
+        currentTerm: term,
+        currentAcademicYear: academicYear
+      });
+      const responseBillWithArrears = attachPreviousArrears(
+        responseBill,
+        previousArrearsMap,
+        student._id
+      );
+
       res.status(billId ? 200 : 201).json({
         success: true,
-        bill: responseBill
+        bill: responseBillWithArrears
       });
 
     } catch (error) {
