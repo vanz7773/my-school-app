@@ -27,6 +27,48 @@ const ensureDays = (days = {}) => (
   }, {})
 );
 
+const getDateDayKey = (value) => {
+  if (!value) return null;
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+
+  const dayIndex = date.getDay();
+  if (dayIndex === 1) return 'M';
+  if (dayIndex === 2) return 'T';
+  if (dayIndex === 3) return 'W';
+  if (dayIndex === 4) return 'TH';
+  if (dayIndex === 5) return 'F';
+  return null;
+};
+
+const buildCollectionDailyTotals = (record, amountPerDay) => {
+  const totalsByDay = DAY_KEYS.reduce((acc, day) => {
+    acc[day] = {
+      day,
+      key: day,
+      count: 0,
+      amount: 0,
+    };
+    return acc;
+  }, {});
+
+  (record.breakdown || []).forEach((entry) => {
+    DAY_KEYS.forEach((coveredDay) => {
+      if (normalizeStatus(entry.days?.[coveredDay]) !== 'paid') return;
+
+      const collectionDay = getDateDayKey(entry.paidAt?.[coveredDay]) || coveredDay;
+      if (!totalsByDay[collectionDay]) return;
+
+      const dayAmount = Number(entry.classFeeAmount ?? amountPerDay) || 0;
+      totalsByDay[collectionDay].count += 1;
+      totalsByDay[collectionDay].amount += dayAmount;
+    });
+  });
+
+  return DAY_KEYS.map((day) => totalsByDay[day]);
+};
+
 const getSchoolId = (req) => req.user?.school;
 
 const getClassDisplayName = (classDoc = {}) => (
@@ -109,18 +151,7 @@ const serializeConfigBands = (config) => {
 };
 
 const serializeRecord = (record, classDoc, amountPerDay) => {
-  const dailyTotals = DAY_KEYS.map((day) => {
-    const count = (record.breakdown || []).filter((entry) => (
-      normalizeStatus(entry.days?.[day]) === 'paid'
-    )).length;
-
-    return {
-      day,
-      key: day,
-      count,
-      amount: count * (Number(amountPerDay) || 0),
-    };
-  });
+  const dailyTotals = buildCollectionDailyTotals(record, amountPerDay);
 
   return {
     success: true,
