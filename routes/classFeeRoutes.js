@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const {
   calculateClassFeeCollection,
+  getClassFeeAuditReport,
   getClassFeeConfig,
   getClassFeeSummary,
   markClassFeeBulk,
@@ -32,6 +33,14 @@ router.post(
   checkPermissionForAdmin('canViewFees'),
   requirePrivateSchool,
   calculateClassFeeCollection
+);
+
+router.get(
+  '/audit-report',
+  protect,
+  checkPermissionForAdmin('canViewFees'),
+  requirePrivateSchool,
+  getClassFeeAuditReport
 );
 
 router.get(

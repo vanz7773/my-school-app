@@ -84,6 +84,20 @@ const getStudentName = (student = {}) => (
   'Student'
 );
 
+const getGuardianName = (student = {}) => (
+  student.guardianName ||
+  student.parentName ||
+  student.parent?.name ||
+  ''
+);
+
+const getGuardianPhone = (student = {}) => (
+  student.guardianPhone ||
+  student.parentPhone ||
+  student.parent?.phone ||
+  ''
+);
+
 const getConfigForSchool = async (schoolId) => ClassFeeConfig.findOneAndUpdate(
   { school: schoolId },
   { $setOnInsert: { school: schoolId } },
@@ -361,6 +375,177 @@ exports.getClassFeeSummary = async (req, res) => {
     res.status(error.statusCode || 500).json({
       success: false,
       message: error.message || 'Failed to load class fee summary',
+    });
+  }
+};
+
+exports.getClassFeeAuditReport = async (req, res) => {
+  try {
+    const { termId, week, day } = req.query;
+    const schoolId = getSchoolId(req);
+
+    if (!termId || !week || !day) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing termId, week, or day',
+      });
+    }
+
+    const weekNumber = normalizeWeek(week);
+    const records = await ClassFeeRecord.find({
+      school: schoolId,
+      termId,
+      week: weekNumber,
+    })
+      .populate('classId', 'name stream displayName level')
+      .populate({
+        path: 'breakdown.student',
+        select: 'guardianName guardianPhone parentName parentPhone name surname otherNames user class',
+        populate: { path: 'user', select: 'name firstName lastName' },
+      })
+      .lean();
+
+    const generateReportForDay = (targetDay) => {
+      const classReportMap = new Map();
+      let dayGrandTotal = 0;
+      let dayTotalPaid = 0;
+      let dayTotalUnpaid = 0;
+
+      records.forEach((record) => {
+        const classId = String(record.classId?._id || record.classId || '');
+        if (!classId) return;
+
+        const className = getClassDisplayName(record.classId);
+        let classEntry = classReportMap.get(classId);
+
+        if (!classEntry) {
+          classEntry = {
+            classId,
+            className,
+            totalAmount: 0,
+            paidCount: 0,
+            unpaidCount: 0,
+            students: [],
+          };
+          classReportMap.set(classId, classEntry);
+        }
+
+        (record.breakdown || []).forEach((entry) => {
+          const normalizedDays = ensureDays(entry.days);
+          const studentDoc = entry.student && typeof entry.student === 'object' ? entry.student : {};
+          const studentId = String(studentDoc._id || entry.student || '');
+          const amountPerDay = Number(entry.classFeeAmount ?? record.classFeeAmount) || 0;
+          let amountPaidToday = 0;
+
+          DAY_KEYS.forEach((coveredDay) => {
+            if (normalizeStatus(normalizedDays[coveredDay]) !== 'paid') return;
+
+            const collectionDay = getDateDayKey(entry.paidAt?.[coveredDay]) || coveredDay;
+            if (collectionDay === targetDay) {
+              amountPaidToday += amountPerDay;
+            }
+          });
+
+          let status = normalizeStatus(normalizedDays[targetDay]);
+          if (amountPaidToday > 0) {
+            status = 'paid';
+          }
+
+          if (status === 'absent' && amountPaidToday <= 0) return;
+
+          classEntry.totalAmount += amountPaidToday;
+          dayGrandTotal += amountPaidToday;
+
+          if (amountPaidToday > 0) {
+            classEntry.paidCount += 1;
+            dayTotalPaid += 1;
+          } else if (status === 'unpaid') {
+            classEntry.unpaidCount += 1;
+            dayTotalUnpaid += 1;
+          }
+
+          classEntry.students.push({
+            studentId,
+            studentName: entry.studentName || getStudentName(studentDoc),
+            status,
+            amount: amountPaidToday,
+            guardianName: getGuardianName(studentDoc),
+            guardianPhone: getGuardianPhone(studentDoc),
+          });
+        });
+      });
+
+      const report = Array.from(classReportMap.values())
+        .map((classEntry) => ({
+          ...classEntry,
+          students: classEntry.students.sort((a, b) => (
+            (a.studentName || '').localeCompare(b.studentName || '')
+          )),
+        }))
+        .sort((a, b) => (a.className || '').localeCompare(b.className || ''));
+
+      return {
+        day: targetDay,
+        grandTotal: dayGrandTotal,
+        totalPaid: dayTotalPaid,
+        totalUnpaid: dayTotalUnpaid,
+        report,
+      };
+    };
+
+    const dayNames = { M: 'Monday', T: 'Tuesday', W: 'Wednesday', TH: 'Thursday', F: 'Friday' };
+    const weeklyReports = DAY_KEYS.map(generateReportForDay);
+    const weeklySummary = weeklyReports.reduce((summary, dayReport) => {
+      summary.grandTotal += dayReport.grandTotal;
+      summary.totalPaid += dayReport.totalPaid;
+      summary.totalUnpaid += dayReport.totalUnpaid;
+      summary.dailyTotals.push({
+        day: dayReport.day,
+        dayName: dayNames[dayReport.day] || dayReport.day,
+        grandTotal: dayReport.grandTotal,
+        totalPaid: dayReport.totalPaid,
+        totalUnpaid: dayReport.totalUnpaid,
+      });
+      return summary;
+    }, {
+      grandTotal: 0,
+      totalPaid: 0,
+      totalUnpaid: 0,
+      dailyTotals: [],
+    });
+
+    if (day === 'All') {
+      return res.json({
+        success: true,
+        day,
+        week: weekNumber,
+        grandTotal: weeklySummary.grandTotal,
+        totalPaid: weeklySummary.totalPaid,
+        totalUnpaid: weeklySummary.totalUnpaid,
+        weeklySummary,
+        dailyReports: weeklyReports,
+      });
+    }
+
+    const singleReport = weeklyReports.find((dayReport) => dayReport.day === day)
+      || generateReportForDay(day);
+
+    return res.json({
+      success: true,
+      day,
+      week: weekNumber,
+      grandTotal: singleReport.grandTotal,
+      totalPaid: singleReport.totalPaid,
+      totalUnpaid: singleReport.totalUnpaid,
+      weeklySummary,
+      report: singleReport.report,
+    });
+  } catch (error) {
+    console.error('getClassFeeAuditReport error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch class fee audit report',
+      error: error.message,
     });
   }
 };
