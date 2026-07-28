@@ -11,20 +11,33 @@ const { sendPushNotifications } = require('../controllers/notificationController
  * @param {string} reminderType - 'CLOCK_IN' | 'CLOCK_OUT' | 'GENERAL'
  */
 async function getEligibleTeacherUserIds(reminderType = 'GENERAL') {
-  const todayStart = new Date();
+  const now = new Date();
+  const todayStart = new Date(now);
   todayStart.setHours(0, 0, 0, 0);
   const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
 
   try {
-    // 1. Find schools in an active term
+    // 1. Find schools in an active term. Use the exact current time so a term
+    // that ended earlier today cannot keep reminders alive for the whole day.
     const activeTerms = await Term.find({
-      startDate: { $lte: todayEnd },
-      endDate: { $gte: todayStart }
-    }).select('school').lean();
+      startDate: { $lte: now },
+      endDate: { $gte: now }
+    }).select('school term academicYear startDate endDate').lean();
     
     const activeSchoolIds = [...new Set(activeTerms.map(t => String(t.school)))];
 
-    if (activeSchoolIds.length === 0) return [];
+    if (activeSchoolIds.length === 0) {
+      console.log(`[CRON ${reminderType}] No active terms found for ${now.toISOString()}.`);
+      return [];
+    }
+
+    console.log(`[CRON ${reminderType}] Active terms found:`, activeTerms.map(term => ({
+      school: String(term.school),
+      term: term.term,
+      academicYear: term.academicYear,
+      startDate: term.startDate,
+      endDate: term.endDate
+    })));
 
     // 2. Get all teachers in active schools
     const teachers = await Teacher.find({

@@ -678,20 +678,13 @@ exports.getCurrentWeek = async (req, res) => {
 
     const today = new Date();
 
-    // Find current term by date bounds
-    let currentTerm = await Term.findOne({
+    // Find current term by date bounds only. Do not fall back to stale
+    // `isCurrent` flags, because ended terms must not remain active.
+    const currentTerm = await Term.findOne({
       school: new mongoose.Types.ObjectId(schoolId),
       startDate: { $lte: today },
       endDate: { $gte: today }
     }).lean();
-
-    // If no term specifically encompasses today, fall back to the currently active term
-    if (!currentTerm) {
-      currentTerm = await Term.findOne({
-        school: new mongoose.Types.ObjectId(schoolId),
-        isCurrent: true
-      }).lean();
-    }
 
     // Still no active term configured at all
     if (!currentTerm) {
