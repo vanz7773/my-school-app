@@ -4,6 +4,43 @@ const Term = require('../models/term');
 const Attendance = require('../models/TeacherAttendance');
 const { sendPushNotifications } = require('../controllers/notificationController');
 
+async function getActiveTermsAt(now = new Date()) {
+  return Term.find({
+    startDate: { $lte: now },
+    endDate: { $gte: now }
+  }).select('school term academicYear startDate endDate').lean();
+}
+
+async function filterUserIdsByActiveTeacherSchool(userIds = [], reminderType = 'GENERAL') {
+  if (!userIds.length) return [];
+
+  const now = new Date();
+  const activeTerms = await getActiveTermsAt(now);
+  const activeSchoolIds = [...new Set(activeTerms.map(term => String(term.school)))];
+
+  if (!activeSchoolIds.length) {
+    console.log(`[CRON ${reminderType}] Final guard blocked all recipients: no active terms at ${now.toISOString()}.`);
+    return [];
+  }
+
+  const activeTeachers = await Teacher.find({
+    user: { $in: userIds },
+    school: { $in: activeSchoolIds },
+  }).select('user school').lean();
+
+  const verifiedUserIds = [...new Set(activeTeachers.map(teacher => String(teacher.user)))];
+  const removedUserIds = userIds.filter(userId => !verifiedUserIds.includes(String(userId)));
+
+  if (removedUserIds.length > 0) {
+    console.warn(`[CRON ${reminderType}] Final active-term guard removed ${removedUserIds.length} recipients from inactive schools.`, {
+      removedUserIds,
+      activeSchoolIds,
+    });
+  }
+
+  return verifiedUserIds;
+}
+
 /**
  * Helper to fetch teacher user IDs who should receive notifications today.
  * Excludes teachers if their school is not in an active term, if they are marked 
@@ -19,10 +56,7 @@ async function getEligibleTeacherUserIds(reminderType = 'GENERAL') {
   try {
     // 1. Find schools in an active term. Use the exact current time so a term
     // that ended earlier today cannot keep reminders alive for the whole day.
-    const activeTerms = await Term.find({
-      startDate: { $lte: now },
-      endDate: { $gte: now }
-    }).select('school term academicYear startDate endDate').lean();
+    const activeTerms = await getActiveTermsAt(now);
     
     const activeSchoolIds = [...new Set(activeTerms.map(t => String(t.school)))];
 
@@ -97,7 +131,8 @@ function initCronJobs() {
   // ⏰ Morning Clock-In Reminder (Mon-Fri at 6:30 AM)
   cron.schedule('30 6 * * 1-5', async () => {
     console.log('CRON [6:30 AM]: Running Morning Clock-In Reminder...');
-    const userIds = await getEligibleTeacherUserIds('CLOCK_IN');
+    const eligibleUserIds = await getEligibleTeacherUserIds('CLOCK_IN');
+    const userIds = await filterUserIdsByActiveTeacherSchool(eligibleUserIds, 'CLOCK_IN');
 
     if (userIds.length > 0) {
       await sendPushNotifications(
@@ -114,7 +149,8 @@ function initCronJobs() {
   // ⏰ Afternoon Clock-Out Reminder (Mon-Fri at 3:30 PM)
   cron.schedule('30 15 * * 1-5', async () => {
     console.log('CRON [3:30 PM]: Running Afternoon Clock-Out Reminder...');
-    const userIds = await getEligibleTeacherUserIds('CLOCK_OUT');
+    const eligibleUserIds = await getEligibleTeacherUserIds('CLOCK_OUT');
+    const userIds = await filterUserIdsByActiveTeacherSchool(eligibleUserIds, 'CLOCK_OUT');
 
     if (userIds.length > 0) {
       await sendPushNotifications(
@@ -131,7 +167,8 @@ function initCronJobs() {
   // 📚 Friday Weekly Exercise Reminder (Friday at 2:00 PM)
   cron.schedule('0 14 * * 5', async () => {
     console.log('CRON [2:00 PM Fri]: Running Weekly Exercise Reminder...');
-    const userIds = await getEligibleTeacherUserIds('GENERAL');
+    const eligibleUserIds = await getEligibleTeacherUserIds('GENERAL');
+    const userIds = await filterUserIdsByActiveTeacherSchool(eligibleUserIds, 'GENERAL');
 
     if (userIds.length > 0) {
       await sendPushNotifications(
