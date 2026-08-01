@@ -3,6 +3,7 @@ const SmsLog = require('../models/SmsLog');
 const SchoolSmsSettings = require('../models/SchoolSmsSettings');
 const Student = require('../models/Student');
 const User = require('../models/User');
+const NonTeachingStaff = require('../models/NonTeachingStaff');
 
 const collectParentPhonesFromStudents = async (students, schoolId) => {
   const phones = [];
@@ -112,6 +113,85 @@ exports.getLogs = async (req, res) => {
   }
 };
 
+exports.getNonTeachingStaff = async (req, res) => {
+  try {
+    const staff = await NonTeachingStaff.find({ school: req.user.school })
+      .sort({ name: 1 })
+      .lean();
+
+    res.json({ success: true, staff });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.createNonTeachingStaff = async (req, res) => {
+  try {
+    const name = String(req.body.name || '').trim();
+    const phone = String(req.body.phone || '').trim();
+    const position = String(req.body.position || '').trim();
+
+    if (!name || !phone) {
+      return res.status(400).json({ message: 'Name and phone number are required' });
+    }
+
+    const staff = await NonTeachingStaff.create({
+      school: req.user.school,
+      name,
+      phone,
+      position,
+    });
+
+    res.status(201).json({ success: true, staff, message: 'Non-teaching staff added' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.updateNonTeachingStaff = async (req, res) => {
+  try {
+    const updates = {};
+    if (req.body.name !== undefined) updates.name = String(req.body.name || '').trim();
+    if (req.body.phone !== undefined) updates.phone = String(req.body.phone || '').trim();
+    if (req.body.position !== undefined) updates.position = String(req.body.position || '').trim();
+
+    if (!updates.name || !updates.phone) {
+      return res.status(400).json({ message: 'Name and phone number are required' });
+    }
+
+    const staff = await NonTeachingStaff.findOneAndUpdate(
+      { _id: req.params.id, school: req.user.school },
+      updates,
+      { new: true, runValidators: true }
+    );
+
+    if (!staff) {
+      return res.status(404).json({ message: 'Non-teaching staff not found' });
+    }
+
+    res.json({ success: true, staff, message: 'Non-teaching staff updated' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.deleteNonTeachingStaff = async (req, res) => {
+  try {
+    const staff = await NonTeachingStaff.findOneAndDelete({
+      _id: req.params.id,
+      school: req.user.school,
+    });
+
+    if (!staff) {
+      return res.status(404).json({ message: 'Non-teaching staff not found' });
+    }
+
+    res.json({ success: true, message: 'Non-teaching staff deleted' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 exports.sendBulkSms = async (req, res) => {
   try {
     const { message, messageType, recipientType } = req.body;
@@ -122,7 +202,7 @@ exports.sendBulkSms = async (req, res) => {
     }
 
     if (
-      ['student_parents', 'individual_teacher', 'direct_phones'].includes(recipientType) &&
+      ['student_parents', 'individual_teacher', 'individual_non_teaching_staff', 'direct_phones'].includes(recipientType) &&
       recipientIds.length === 0
     ) {
       return res.status(400).json({ message: 'Please select at least one recipient' });
@@ -171,6 +251,19 @@ exports.sendBulkSms = async (req, res) => {
         if (t.phone) phones.push(t.phone);
         if (t.telNo) phones.push(t.telNo);
         if (t.user && t.user.phone) phones.push(t.user.phone);
+      });
+    } else if (recipientType === 'non_teaching_staff') {
+      const staff = await NonTeachingStaff.find({ school: req.user.school }).select('phone');
+      staff.forEach(s => {
+        if (s.phone) phones.push(s.phone);
+      });
+    } else if (recipientType === 'individual_non_teaching_staff') {
+      const staff = await NonTeachingStaff.find({
+        _id: { $in: recipientIds },
+        school: req.user.school
+      }).select('phone');
+      staff.forEach(s => {
+        if (s.phone) phones.push(s.phone);
       });
     } else if (recipientType === 'direct_phones') {
       phones = recipientIds; // Assuming recipientIds is actually an array of phone numbers
