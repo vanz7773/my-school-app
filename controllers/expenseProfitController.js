@@ -39,6 +39,19 @@ const getSchoolId = (req) => req.user?.school;
 
 const isObjectId = (value) => mongoose.Types.ObjectId.isValid(String(value || ''));
 
+const serializeUser = (user) => {
+  if (!user) return null;
+  if (typeof user !== 'object' || user instanceof mongoose.Types.ObjectId) return user;
+
+  const name = user.name || [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
+  return {
+    _id: user._id,
+    name: name || '',
+    email: user.email || '',
+    role: user.role || '',
+  };
+};
+
 const serializeExpense = (expense) => ({
   _id: expense._id,
   title: expense.title,
@@ -51,8 +64,8 @@ const serializeExpense = (expense) => ({
   notes: expense.notes || '',
   termId: expense.termId || null,
   week: expense.week || null,
-  recordedBy: expense.recordedBy,
-  updatedBy: expense.updatedBy,
+  recordedBy: serializeUser(expense.recordedBy),
+  updatedBy: serializeUser(expense.updatedBy),
   createdAt: expense.createdAt,
   updatedAt: expense.updatedAt,
 });
@@ -237,6 +250,7 @@ const getExpenseSummary = async ({ schoolId, startDate, endDate }) => {
     school: schoolId,
     expenseDate: { $gte: startDate, $lte: endDate },
   })
+    .populate('recordedBy updatedBy', 'name firstName lastName email role')
     .sort({ expenseDate: -1, createdAt: -1 })
     .lean();
 
