@@ -383,11 +383,40 @@ exports.getWeeklyAttendance = async (req, res) => {
       },
       {
         $addFields: {
+          rawWeekValue: {
+            $toString: {
+              $ifNull: ['$week', '$weekNumber']
+            }
+          }
+        }
+      },
+      {
+        $addFields: {
+          normalizedWeekMatch: {
+            $regexFind: {
+              input: '$rawWeekValue',
+              regex: /\d+/
+            }
+          }
+        }
+      },
+      {
+        $addFields: {
+          normalizedWeekNumber: {
+            $toInt: {
+              $ifNull: ['$normalizedWeekMatch.match', '0']
+            }
+          },
           normalizedWeek: {
-            $cond: [
-              { $and: [{ $ne: ['$week', ''] }, { $ne: [{ $type: '$week' }, 'missing'] }, { $ne: ['$week', null] }] },
-              '$week',
-              { $concat: ['Week ', { $toString: '$weekNumber' }] }
+            $concat: [
+              'Week ',
+              {
+                $toString: {
+                  $toInt: {
+                    $ifNull: ['$normalizedWeekMatch.match', '0']
+                  }
+                }
+              }
             ]
           }
         }
@@ -395,6 +424,7 @@ exports.getWeeklyAttendance = async (req, res) => {
       {
         $group: {
           _id: { week: '$normalizedWeek', class: '$class' },
+          weekNumber: { $first: '$normalizedWeekNumber' },
           totalRecords: { $sum: 1 },
           presentDays: {
             $push: {
@@ -419,6 +449,7 @@ exports.getWeeklyAttendance = async (req, res) => {
       {
         $project: {
           week: '$_id.week',
+          weekNumber: 1,
           classId: '$_id.class',
           dailyPercentages: {
             M: { $multiply: [{ $divide: [{ $sum: '$presentDays.M' }, '$totalRecords'] }, 100] },
@@ -448,6 +479,7 @@ exports.getWeeklyAttendance = async (req, res) => {
       {
         $group: {
           _id: '$week',
+          weekNumber: { $first: '$weekNumber' },
           classes: {
             $push: {
               className: {
@@ -474,10 +506,11 @@ exports.getWeeklyAttendance = async (req, res) => {
           }
         }
       },
-      { $sort: { _id: 1 } },
+      { $sort: { weekNumber: 1 } },
       {
         $project: {
           week: '$_id',
+          weekNumber: 1,
           classes: 1,
           _id: 0
         }
