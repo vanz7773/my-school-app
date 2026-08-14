@@ -4,11 +4,50 @@ const Term = require('../models/term');
 const Attendance = require('../models/TeacherAttendance');
 const { sendPushNotifications } = require('../controllers/notificationController');
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_ACTIVE_TERM_DAYS = Number(process.env.MAX_ACTIVE_TERM_DAYS || 140);
+
+function getTermDurationDays(term) {
+  const start = new Date(term.startDate).getTime();
+  const end = new Date(term.endDate).getTime();
+
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return Math.floor((end - start) / DAY_MS) + 1;
+}
+
+function isCronEligibleTerm(term) {
+  const durationDays = getTermDurationDays(term);
+  return durationDays > 0 && durationDays <= MAX_ACTIVE_TERM_DAYS;
+}
+
 async function getActiveTermsAt(now = new Date()) {
-  return Term.find({
+  const candidateTerms = await Term.find({
     startDate: { $lte: now },
     endDate: { $gte: now }
   }).select('school term academicYear startDate endDate').lean();
+
+  const activeTerms = candidateTerms.filter(isCronEligibleTerm);
+  const ignoredTerms = candidateTerms.filter(term => !isCronEligibleTerm(term));
+
+  if (ignoredTerms.length > 0) {
+    console.warn('[CRON] Ignored suspicious active term records for reminders.', {
+      maxActiveTermDays: MAX_ACTIVE_TERM_DAYS,
+      ignoredTerms: ignoredTerms.map(term => ({
+        id: String(term._id),
+        school: String(term.school),
+        term: term.term,
+        academicYear: term.academicYear,
+        startDate: term.startDate,
+        endDate: term.endDate,
+        durationDays: getTermDurationDays(term),
+      })),
+    });
+  }
+
+  return activeTerms;
 }
 
 async function filterUserIdsByActiveTeacherSchool(userIds = [], reminderType = 'GENERAL') {

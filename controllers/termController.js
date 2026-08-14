@@ -2,6 +2,34 @@ const mongoose = require('mongoose');
 const Term = require("../models/term");
 const { isWeekend } = require('../utils/dateHelpers');
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_TERM_DAYS = Number(process.env.MAX_TERM_DAYS || 140);
+
+const getTermDurationDays = (startDate, endDate) => {
+  const start = new Date(startDate).getTime();
+  const end = new Date(endDate).getTime();
+
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+    return 0;
+  }
+
+  return Math.floor((end - start) / DAY_MS) + 1;
+};
+
+const validateTermDateRange = (startDate, endDate) => {
+  const durationDays = getTermDurationDays(startDate, endDate);
+
+  if (!durationDays) {
+    return 'End date must be after start date';
+  }
+
+  if (durationDays > MAX_TERM_DAYS) {
+    return `Term date range is too long. Please keep a term within ${MAX_TERM_DAYS} days.`;
+  }
+
+  return null;
+};
+
 // 🟢 Create a new term
 exports.createTerm = async (req, res) => {
   try {
@@ -28,6 +56,14 @@ exports.createTerm = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: 'Term dates must fall within the academic year'
+      });
+    }
+
+    const dateRangeError = validateTermDateRange(startDate, endDate);
+    if (dateRangeError) {
+      return res.status(400).json({
+        success: false,
+        message: dateRangeError
       });
     }
 
@@ -458,6 +494,14 @@ exports.updateTerm = async (req, res) => {
     const { academicYear, term: newTermName, startDate, endDate } = req.body;
     const updatedStartDate = startDate || term.startDate;
     const updatedEndDate = endDate || term.endDate;
+
+    const dateRangeError = validateTermDateRange(updatedStartDate, updatedEndDate);
+    if (dateRangeError) {
+      return res.status(400).json({
+        success: false,
+        message: dateRangeError
+      });
+    }
 
     // Recalculate weeks when dates change
     if (startDate || endDate) {
