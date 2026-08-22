@@ -11,6 +11,11 @@ const getUserSchoolId = (req) => req.user?.school || req.school || null;
 
 const isSuperAdmin = (req) => req.user?.role === 'superadmin';
 
+const normalizeAudienceRole = (role = '') => {
+  if (['school-admin', 'school_admin', 'schoolAdmin'].includes(role)) return 'admin';
+  return role || 'all';
+};
+
 const normalizeArray = (value, allowedValues, fallback = 'all') => {
   const raw = Array.isArray(value)
     ? value
@@ -69,7 +74,7 @@ const buildSchoolScope = (req, includeGlobal = true) => {
 
 const buildVisibleFilter = (req, platform = 'mobile') => {
   const now = new Date();
-  const role = req.user?.role || 'all';
+  const role = normalizeAudienceRole(req.user?.role);
   const schoolId = getUserSchoolId(req);
   const schoolScope = schoolId ? [{ school: schoolId }, { school: null }] : [{ school: null }];
 
