@@ -87,7 +87,8 @@ const releaseNoteSchema = new mongoose.Schema(
 );
 
 releaseNoteSchema.index({ school: 1, isActive: 1, startsAt: -1 });
-releaseNoteSchema.index({ audiences: 1, platforms: 1 });
+releaseNoteSchema.index({ audiences: 1 });
+releaseNoteSchema.index({ platforms: 1 });
 releaseNoteSchema.index({ 'seenBy.user': 1 });
 
 releaseNoteSchema.statics.audiences = AUDIENCES;

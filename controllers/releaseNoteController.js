@@ -101,6 +101,31 @@ const writeAuditLog = async ({ req, action, resourceId, metadata = {} }) => {
   }
 };
 
+let releaseNoteIndexCleanupPromise = null;
+
+const cleanupParallelArrayIndex = async () => {
+  if (!releaseNoteIndexCleanupPromise) {
+    releaseNoteIndexCleanupPromise = (async () => {
+      try {
+        const indexes = await ReleaseNote.collection.indexes();
+        const badIndexes = indexes.filter((index) => {
+          const keys = Object.keys(index.key || {});
+          return keys.includes('audiences') && keys.includes('platforms');
+        });
+
+        for (const index of badIndexes) {
+          await ReleaseNote.collection.dropIndex(index.name);
+          console.warn(`[ReleaseNote] Dropped invalid parallel-array index: ${index.name}`);
+        }
+      } catch (error) {
+        console.warn('[ReleaseNote] Failed to cleanup parallel-array index:', error.message);
+      }
+    })();
+  }
+
+  return releaseNoteIndexCleanupPromise;
+};
+
 const isManagedByUser = (req, note) => {
   if (isSuperAdmin(req)) return true;
   const schoolId = getUserSchoolId(req);
@@ -109,6 +134,8 @@ const isManagedByUser = (req, note) => {
 
 exports.getReleaseNotes = async (req, res) => {
   try {
+    await cleanupParallelArrayIndex();
+
     const {
       search = '',
       audience = '',
@@ -179,6 +206,8 @@ exports.getReleaseNotes = async (req, res) => {
 
 exports.createReleaseNote = async (req, res) => {
   try {
+    await cleanupParallelArrayIndex();
+
     const payload = normalizePayload(req.body, req);
 
     if (!payload.title) {
@@ -217,6 +246,8 @@ exports.createReleaseNote = async (req, res) => {
 
 exports.updateReleaseNote = async (req, res) => {
   try {
+    await cleanupParallelArrayIndex();
+
     const note = await ReleaseNote.findOne({ _id: req.params.id, ...buildSchoolScope(req) });
 
     if (!note || !isManagedByUser(req, note)) {
