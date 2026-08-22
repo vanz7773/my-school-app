@@ -24,13 +24,10 @@ const normalizeTermLabel = (value) => {
 const toTermAcademicYear = (value) =>
   String(value || '').trim().replace(/\s+to\s+/i, '-');
 
-const toStudentAcademicYear = (value) =>
-  String(value || '').trim().replace(/\s*-\s*/g, ' to ');
-
 const getAcademicYearVariants = (value) => {
   const raw = String(value || '').trim();
   const termFormat = toTermAcademicYear(raw);
-  const studentFormat = toStudentAcademicYear(raw);
+  const studentFormat = raw.replace(/\s*-\s*/g, ' to ');
   return [...new Set([raw, termFormat, studentFormat].filter(Boolean))];
 };
 
@@ -135,8 +132,8 @@ exports.migrateStudents = async (req, res) => {
     return res.status(400).json({ message: 'Missing academic year.' });
   }
 
-  const fromYearForStudents = toStudentAcademicYear(fromYear);
-  const toYearForStudents = toStudentAcademicYear(toYear);
+  const fromYearForStudents = toTermAcademicYear(fromYear);
+  const toYearForStudents = toTermAcademicYear(toYear);
 
   if (fromYearForStudents === toYearForStudents) {
     return res.status(400).json({ message: 'Cannot migrate to the same academic year.' });

@@ -439,11 +439,16 @@ exports.assignStudentToClass = async (req, res) => {
 exports.getStudentsByClassId = async (req, res) => {
   try {
     const { classId } = req.params;
-
-    const students = await Student.find({
+    const filter = {
       class: classId,
       school: req.user.school
-    })
+    };
+
+    if (req.query.academicYear) {
+      filter.academicYear = String(req.query.academicYear).trim();
+    }
+
+    const students = await Student.find(filter)
       .populate('user', 'name email')
       .populate('class', 'name')
       .sort({ 'user.name': 1 }); // Sort by user.name in ascending order
