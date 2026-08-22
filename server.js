@@ -137,6 +137,7 @@ const searchRoutes = require('./routes/searchRoutes');
 const schoolRecordsRoutes = require('./routes/schoolRecordsRoutes');
 const schoolLogbookRoutes = require('./routes/schoolLogbookRoutes');
 const transportRoutes = require('./routes/transportRoutes');
+const releaseNoteRoutes = require('./routes/releaseNoteRoutes');
 
 // Define API routes
 app.use('/api/auth', authRoutes);
@@ -189,6 +190,7 @@ app.use('/api/web-push', webPushRoutes);
 app.use('/api/school-records', schoolRecordsRoutes);
 app.use('/api/school-logbook', schoolLogbookRoutes);
 app.use('/api/transport', transportRoutes);
+app.use('/api/release-notes', releaseNoteRoutes);
 app.use('/api/sms', require('./routes/smsRoutes'));
 app.use('/api/payroll', require('./routes/payrollRoutes'));
 
