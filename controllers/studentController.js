@@ -15,6 +15,15 @@ const formatPhoneNumber = (phone) => {
   }
   return trimmed;
 };
+
+const getAcademicYearVariants = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return [];
+
+  const hyphenFormat = raw.replace(/\s+to\s+/i, '-');
+  const textFormat = raw.replace(/\s*-\s*/g, ' to ');
+  return [...new Set([raw, hyphenFormat, textFormat].filter(Boolean))];
+};
 // ✅ Admin-only: Admit/enroll student (multi-school aware)
 exports.createStudent = async (req, res) => {
   let createdUserId = null;
@@ -445,7 +454,7 @@ exports.getStudentsByClassId = async (req, res) => {
     };
 
     if (req.query.academicYear) {
-      filter.academicYear = String(req.query.academicYear).trim();
+      filter.academicYear = { $in: getAcademicYearVariants(req.query.academicYear) };
     }
 
     const students = await Student.find(filter)
