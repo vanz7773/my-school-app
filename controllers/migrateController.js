@@ -217,6 +217,7 @@ exports.migrateStudents = async (req, res) => {
     // 3. PREPARE BULK UPDATE OPERATIONS
     // ------------------------------------------------------------
     const bulkOps = [];
+    const classBulkOps = [];
     let migratedCount = 0;
     let graduatedCount = 0;
     let reportCardPromotionCount = 0;
@@ -299,6 +300,14 @@ exports.migrateStudents = async (req, res) => {
             }
           }
         });
+        if (student.user && currentClassId) {
+          classBulkOps.push({
+            updateOne: {
+              filter: { _id: currentClassId, school: schoolId },
+              update: { $pull: { students: student.user } },
+            },
+          });
+        }
         graduatedCount++;
         continue;
       }
@@ -316,6 +325,25 @@ exports.migrateStudents = async (req, res) => {
           }
         }
       });
+      if (student.user) {
+        if (currentClassId && String(newClassId) !== currentClassId) {
+          classBulkOps.push({
+            updateOne: {
+              filter: { _id: currentClassId, school: schoolId },
+              update: { $pull: { students: student.user } },
+            },
+          });
+        }
+
+        if (newClassId) {
+          classBulkOps.push({
+            updateOne: {
+              filter: { _id: newClassId, school: schoolId },
+              update: { $addToSet: { students: student.user } },
+            },
+          });
+        }
+      }
 
       migratedCount++;
     }
@@ -325,6 +353,9 @@ exports.migrateStudents = async (req, res) => {
     // ------------------------------------------------------------
     if (bulkOps.length > 0) {
       await Student.bulkWrite(bulkOps);
+      if (classBulkOps.length > 0) {
+        await Class.bulkWrite(classBulkOps);
+      }
     }
 
     // ------------------------------------------------------------

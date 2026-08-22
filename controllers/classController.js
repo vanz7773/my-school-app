@@ -4,6 +4,7 @@ const User = require('../models/User');
 const School = require('../models/School');
 const Teacher = require('../models/Teacher');
 const Subject = require('../models/Subject');
+const Student = require('../models/Student');
 // ✅ Create class (admin only)
 exports.createClass = async (req, res) => {
   try {
@@ -96,11 +97,34 @@ exports.getAllClasses = async (req, res) => {
       .populate('teachers', 'name email')
       .populate('classTeacher', 'name email')
       .populate('coClassTeacher', 'name email')
-      .populate('students', 'name email')
       .populate('subjects', 'name code')
-      .sort({ name: 1, stream: 1 });
+      .sort({ name: 1, stream: 1 })
+      .lean();
 
-    res.status(200).json({ success: true, classes });
+    const classIds = classes.map((classDoc) => classDoc._id);
+    const classStudents = await Student.find({
+      school: schoolId,
+      class: { $in: classIds },
+      status: { $ne: 'graduated' },
+    })
+      .select('class user')
+      .populate('user', 'name email')
+      .lean();
+
+    const studentsByClass = {};
+    classStudents.forEach((student) => {
+      const classId = String(student.class || '');
+      if (!classId || !student.user) return;
+      if (!studentsByClass[classId]) studentsByClass[classId] = [];
+      studentsByClass[classId].push(student.user);
+    });
+
+    const classesWithCurrentStudents = classes.map((classDoc) => ({
+      ...classDoc,
+      students: studentsByClass[String(classDoc._id)] || [],
+    }));
+
+    res.status(200).json({ success: true, classes: classesWithCurrentStudents });
   } catch (err) {
     res.status(500).json({
       message: 'Error fetching classes',
