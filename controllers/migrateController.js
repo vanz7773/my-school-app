@@ -31,6 +31,18 @@ const getAcademicYearVariants = (value) => {
   return [...new Set([raw, termFormat, studentFormat].filter(Boolean))];
 };
 
+const getNextAcademicYear = (value) => {
+  const normalized = toTermAcademicYear(value);
+  const match = normalized.match(/^(\d{4})\s*-\s*(\d{4})$/);
+  if (!match) return '';
+
+  const startYear = Number(match[1]);
+  const endYear = Number(match[2]);
+  if (!Number.isFinite(startYear) || !Number.isFinite(endYear)) return '';
+
+  return `${startYear + 1}-${endYear + 1}`;
+};
+
 const isRepeatedReportValue = (value, currentClass) => {
   const normalizedValue = normalizeClassLabel(value);
   if (!normalizedValue) return false;
@@ -76,9 +88,9 @@ const buildClassLookup = (classes) => {
 };
 
 const getReportCardPromotions = async ({ schoolId, classId, fromYear, fromTerm }) => {
-  const academicYear = toTermAcademicYear(fromYear);
+  const academicYearVariants = getAcademicYearVariants(fromYear);
   const termName = normalizeTermLabel(fromTerm);
-  const termQuery = { school: schoolId, academicYear };
+  const termQuery = { school: schoolId, academicYear: { $in: academicYearVariants } };
 
   if (termName) {
     termQuery.term = termName;
@@ -128,15 +140,22 @@ const getReportCardPromotions = async ({ schoolId, classId, fromYear, fromTerm }
 exports.migrateStudents = async (req, res) => {
   const { fromYear, toYear, fromTerm, classId, students } = req.body;
 
-  if (!fromYear || !toYear) {
-    return res.status(400).json({ message: 'Missing academic year.' });
+  if (!fromYear) {
+    return res.status(400).json({ message: 'Missing source academic year.' });
   }
 
   const fromYearForStudents = toTermAcademicYear(fromYear);
-  const toYearForStudents = toTermAcademicYear(toYear);
+  const requestedToYear = toTermAcademicYear(toYear);
+  const autoNextYear = getNextAcademicYear(fromYearForStudents);
+  const toYearForStudents =
+    requestedToYear && requestedToYear !== fromYearForStudents
+      ? requestedToYear
+      : autoNextYear;
 
-  if (fromYearForStudents === toYearForStudents) {
-    return res.status(400).json({ message: 'Cannot migrate to the same academic year.' });
+  if (!toYearForStudents || fromYearForStudents === toYearForStudents) {
+    return res.status(400).json({
+      message: 'Could not determine the next academic year for promotion.',
+    });
   }
 
   try {
@@ -172,7 +191,13 @@ exports.migrateStudents = async (req, res) => {
     let studentsToMigrate = [];
     const fromYearVariants = getAcademicYearVariants(fromYear);
 
-    if (Array.isArray(students) && students.length > 0) {
+    if (Array.isArray(students)) {
+      if (students.length === 0) {
+        return res.status(400).json({
+          message: 'No students were selected for promotion.',
+        });
+      }
+
       // INDIVIDUAL MIGRATION
       const ids = students.map(s => s.studentId);
       const studentQuery = {
@@ -210,7 +235,23 @@ exports.migrateStudents = async (req, res) => {
     }
 
     if (studentsToMigrate.length === 0) {
-      return res.json({ success: true, message: "No eligible students to migrate." });
+      console.log('[Student Promotion] No eligible students found', {
+        schoolId: String(schoolId),
+        classId,
+        fromYear,
+        toYear,
+        fromYearVariants,
+      });
+
+      return res.json({
+        success: true,
+        eligibleStudents: 0,
+        migrated: 0,
+        graduated: 0,
+        modifiedStudents: 0,
+        modifiedClassRosters: 0,
+        message: "No eligible students to migrate.",
+      });
     }
 
     // ------------------------------------------------------------
@@ -351,25 +392,73 @@ exports.migrateStudents = async (req, res) => {
     // ------------------------------------------------------------
     // 5. EXECUTE BULK OPERATION (SUPER FAST)
     // ------------------------------------------------------------
+    let studentWriteResult = null;
+    let classWriteResult = null;
+
     if (bulkOps.length > 0) {
-      await Student.bulkWrite(bulkOps);
+      studentWriteResult = await Student.bulkWrite(bulkOps);
       if (classBulkOps.length > 0) {
-        await Class.bulkWrite(classBulkOps);
+        classWriteResult = await Class.bulkWrite(classBulkOps);
       }
     }
+
+    const modifiedStudents =
+      studentWriteResult?.modifiedCount ??
+      studentWriteResult?.nModified ??
+      0;
+    const modifiedClassRosters =
+      classWriteResult?.modifiedCount ??
+      classWriteResult?.nModified ??
+      0;
+
+    console.log('[Student Promotion] Migration completed', {
+      schoolId: String(schoolId),
+      classId,
+      fromYear: fromYearForStudents,
+      toYear: toYearForStudents,
+      sourceTerm: reportCardPromotionData.sourceTerm
+        ? {
+            id: String(reportCardPromotionData.sourceTerm._id),
+            term: reportCardPromotionData.sourceTerm.term,
+            academicYear: reportCardPromotionData.sourceTerm.academicYear,
+          }
+        : null,
+      eligibleStudents: studentsToMigrate.length,
+      migratedCount,
+      graduatedCount,
+      reportCardPromotionCount,
+      reportCardRepeatCount,
+      fallbackPromotionCount,
+      unresolvedReportTargetCount: unresolvedReportTargets.length,
+      studentOps: bulkOps.length,
+      classOps: classBulkOps.length,
+      modifiedStudents,
+      modifiedClassRosters,
+    });
 
     // ------------------------------------------------------------
     // 6. RESPONSE
     // ------------------------------------------------------------
     return res.json({
       success: true,
+      eligibleStudents: studentsToMigrate.length,
       migrated: migratedCount,
       graduated: graduatedCount,
+      modifiedStudents,
+      modifiedClassRosters,
+      sourceTerm: reportCardPromotionData.sourceTerm
+        ? {
+            id: String(reportCardPromotionData.sourceTerm._id),
+            term: reportCardPromotionData.sourceTerm.term,
+            academicYear: reportCardPromotionData.sourceTerm.academicYear,
+          }
+        : null,
+      reportCardPromotionEntries: Object.keys(reportPromotions).length,
       reportCardPromotionsApplied: reportCardPromotionCount,
       reportCardRepeatsApplied: reportCardRepeatCount,
       fallbackPromotionsApplied: fallbackPromotionCount,
       unresolvedReportTargets,
-      message: `✔️ ${migratedCount} promoted, 🎓 ${graduatedCount} graduated.`
+      message: `${migratedCount} promoted, ${graduatedCount} graduated.`
     });
 
   } catch (err) {
