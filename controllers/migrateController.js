@@ -138,7 +138,8 @@ const getReportCardPromotions = async ({ schoolId, classId, fromYear, fromTerm }
 };
 
 exports.migrateStudents = async (req, res) => {
-  const { fromYear, toYear, fromTerm, classId, students } = req.body;
+  const { fromYear, toYear, fromTerm, classId, students, promoteAllClasses } = req.body;
+  const isAllClassPromotion = promoteAllClasses === true;
 
   if (!fromYear) {
     return res.status(400).json({ message: 'Missing source academic year.' });
@@ -216,6 +217,19 @@ exports.migrateStudents = async (req, res) => {
       .lean();
     }
 
+    else if (isAllClassPromotion) {
+      const classIds = allClasses.map((cls) => cls._id);
+
+      studentsToMigrate = await Student.find({
+        school: schoolId,
+        class: { $in: classIds },
+        academicYear: { $in: fromYearVariants },
+        status: { $ne: "graduated" }
+      })
+      .select('class academicYear status user')
+      .lean();
+    }
+
     else if (classId) {
       // FULL CLASS MIGRATION
       studentsToMigrate = await Student.find({
@@ -230,7 +244,7 @@ exports.migrateStudents = async (req, res) => {
 
     else {
       return res.status(400).json({
-        message: 'Provide either classId (full class migration) or students[] (individual migration).'
+        message: 'Provide classId, students[], or promoteAllClasses.'
       });
     }
 
@@ -238,6 +252,7 @@ exports.migrateStudents = async (req, res) => {
       console.log('[Student Promotion] No eligible students found', {
         schoolId: String(schoolId),
         classId,
+        promoteAllClasses: isAllClassPromotion,
         fromYear,
         toYear,
         fromYearVariants,
@@ -264,12 +279,42 @@ exports.migrateStudents = async (req, res) => {
     let reportCardPromotionCount = 0;
     let reportCardRepeatCount = 0;
     let fallbackPromotionCount = 0;
+    let skippedNoReportCardPromotionCount = 0;
     const unresolvedReportTargets = [];
 
-    const reportCardPromotionData = classId
-      ? await getReportCardPromotions({ schoolId, classId, fromYear, fromTerm })
-      : { sourceTerm: null, promotions: {} };
-    const reportPromotions = reportCardPromotionData.promotions || {};
+    const reportPromotionsByClass = {};
+    const sourceTermsByClass = {};
+
+    if (isAllClassPromotion) {
+      await Promise.all(allClasses.map(async (cls) => {
+        const classKey = String(cls._id);
+        const data = await getReportCardPromotions({
+          schoolId,
+          classId: cls._id,
+          fromYear,
+          fromTerm
+        });
+
+        reportPromotionsByClass[classKey] = data.promotions || {};
+        if (data.sourceTerm) {
+          sourceTermsByClass[classKey] = data.sourceTerm;
+        }
+      }));
+    } else if (classId) {
+      const reportCardPromotionData = await getReportCardPromotions({
+        schoolId,
+        classId,
+        fromYear,
+        fromTerm
+      });
+      reportPromotionsByClass[String(classId)] = reportCardPromotionData.promotions || {};
+      if (reportCardPromotionData.sourceTerm) {
+        sourceTermsByClass[String(classId)] = reportCardPromotionData.sourceTerm;
+      }
+    }
+
+    const reportCardPromotionEntries = Object.values(reportPromotionsByClass)
+      .reduce((total, promotions) => total + Object.keys(promotions || {}).length, 0);
 
     // Build a quick lookup for individual migration flags
     const promoteMap = {};
@@ -290,6 +335,7 @@ exports.migrateStudents = async (req, res) => {
       const currentClassId = String(student.class);
       const nextClassId = promotionMap[currentClassId]; // may be undefined
       const currentClass = classById[currentClassId];
+      const reportPromotions = reportPromotionsByClass[currentClassId] || {};
       const reportPromotedTo =
         reportPromotions[String(student._id)] ||
         reportPromotions[String(student.user)] ||
@@ -312,6 +358,9 @@ exports.migrateStudents = async (req, res) => {
               studentId: String(student._id),
               promotedTo: reportPromotedTo,
             });
+            if (isAllClassPromotion) {
+              continue;
+            }
             if (nextClassId) {
               newClassId = nextClassId;
               fallbackPromotionCount++;
@@ -320,6 +369,9 @@ exports.migrateStudents = async (req, res) => {
             }
           }
         }
+      } else if (isAllClassPromotion) {
+        skippedNoReportCardPromotionCount++;
+        continue;
       } else if (promote && nextClassId) {
         newClassId = nextClassId;
         fallbackPromotionCount++;
@@ -416,19 +468,15 @@ exports.migrateStudents = async (req, res) => {
       classId,
       fromYear: fromYearForStudents,
       toYear: toYearForStudents,
-      sourceTerm: reportCardPromotionData.sourceTerm
-        ? {
-            id: String(reportCardPromotionData.sourceTerm._id),
-            term: reportCardPromotionData.sourceTerm.term,
-            academicYear: reportCardPromotionData.sourceTerm.academicYear,
-          }
-        : null,
+      promoteAllClasses: isAllClassPromotion,
+      sourceTermCount: Object.keys(sourceTermsByClass).length,
       eligibleStudents: studentsToMigrate.length,
       migratedCount,
       graduatedCount,
       reportCardPromotionCount,
       reportCardRepeatCount,
       fallbackPromotionCount,
+      skippedNoReportCardPromotionCount,
       unresolvedReportTargetCount: unresolvedReportTargets.length,
       studentOps: bulkOps.length,
       classOps: classBulkOps.length,
@@ -446,17 +494,24 @@ exports.migrateStudents = async (req, res) => {
       graduated: graduatedCount,
       modifiedStudents,
       modifiedClassRosters,
-      sourceTerm: reportCardPromotionData.sourceTerm
+      promoteAllClasses: isAllClassPromotion,
+      sourceTerms: Object.values(sourceTermsByClass).map((term) => ({
+        id: String(term._id),
+        term: term.term,
+        academicYear: term.academicYear,
+      })),
+      sourceTerm: Object.values(sourceTermsByClass)[0]
         ? {
-            id: String(reportCardPromotionData.sourceTerm._id),
-            term: reportCardPromotionData.sourceTerm.term,
-            academicYear: reportCardPromotionData.sourceTerm.academicYear,
+            id: String(Object.values(sourceTermsByClass)[0]._id),
+            term: Object.values(sourceTermsByClass)[0].term,
+            academicYear: Object.values(sourceTermsByClass)[0].academicYear,
           }
         : null,
-      reportCardPromotionEntries: Object.keys(reportPromotions).length,
+      reportCardPromotionEntries,
       reportCardPromotionsApplied: reportCardPromotionCount,
       reportCardRepeatsApplied: reportCardRepeatCount,
       fallbackPromotionsApplied: fallbackPromotionCount,
+      skippedNoReportCardPromotion: skippedNoReportCardPromotionCount,
       unresolvedReportTargets,
       message: `${migratedCount} promoted, ${graduatedCount} graduated.`
     });
