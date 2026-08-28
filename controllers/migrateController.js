@@ -280,6 +280,7 @@ exports.migrateStudents = async (req, res) => {
     let reportCardRepeatCount = 0;
     let fallbackPromotionCount = 0;
     let skippedNoReportCardPromotionCount = 0;
+    let skippedUnresolvedReportTargetCount = 0;
     const unresolvedReportTargets = [];
 
     const reportPromotionsByClass = {};
@@ -358,15 +359,8 @@ exports.migrateStudents = async (req, res) => {
               studentId: String(student._id),
               promotedTo: reportPromotedTo,
             });
-            if (isAllClassPromotion) {
-              continue;
-            }
-            if (nextClassId) {
-              newClassId = nextClassId;
-              fallbackPromotionCount++;
-            } else {
-              shouldGraduate = true;
-            }
+            skippedUnresolvedReportTargetCount++;
+            continue;
           }
         }
       } else if (isAllClassPromotion) {
@@ -477,6 +471,7 @@ exports.migrateStudents = async (req, res) => {
       reportCardRepeatCount,
       fallbackPromotionCount,
       skippedNoReportCardPromotionCount,
+      skippedUnresolvedReportTargetCount,
       unresolvedReportTargetCount: unresolvedReportTargets.length,
       studentOps: bulkOps.length,
       classOps: classBulkOps.length,
@@ -512,6 +507,7 @@ exports.migrateStudents = async (req, res) => {
       reportCardRepeatsApplied: reportCardRepeatCount,
       fallbackPromotionsApplied: fallbackPromotionCount,
       skippedNoReportCardPromotion: skippedNoReportCardPromotionCount,
+      skippedUnresolvedReportTarget: skippedUnresolvedReportTargetCount,
       unresolvedReportTargets,
       message: `${migratedCount} promoted, ${graduatedCount} graduated.`
     });
