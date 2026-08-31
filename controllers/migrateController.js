@@ -58,6 +58,28 @@ const isRepeatedReportValue = (value, currentClass) => {
   return currentNames.includes(normalizedValue);
 };
 
+const getClassOrderIndex = (currentClass) => {
+  const possibleNames = [
+    currentClass?.displayName,
+    currentClass?.name,
+    currentClass?.stream ? `${currentClass.name}${currentClass.stream}` : '',
+    currentClass?.stream ? `${currentClass.name} ${currentClass.stream}` : '',
+  ].map(normalizeClassLabel).filter(Boolean);
+
+  return classOrder.findIndex((className) =>
+    possibleNames.includes(normalizeClassLabel(className))
+  );
+};
+
+const getExpectedNextClassName = (currentClass) => {
+  const classIndex = getClassOrderIndex(currentClass);
+  if (classIndex < 0) return '';
+  return classOrder[classIndex + 1] || '';
+};
+
+const isGraduationClass = (currentClass) =>
+  getClassOrderIndex(currentClass) === classOrder.length - 1;
+
 const addClassAlias = (lookup, label, classId) => {
   const normalized = normalizeClassLabel(label);
   if (normalized && !lookup[normalized]) {
@@ -281,7 +303,9 @@ exports.migrateStudents = async (req, res) => {
     let fallbackPromotionCount = 0;
     let skippedNoReportCardPromotionCount = 0;
     let skippedUnresolvedReportTargetCount = 0;
+    let skippedMissingNextClassCount = 0;
     const unresolvedReportTargets = [];
+    const missingNextClassTargets = [];
 
     const reportPromotionsByClass = {};
     const sourceTermsByClass = {};
@@ -336,6 +360,7 @@ exports.migrateStudents = async (req, res) => {
       const currentClassId = String(student.class);
       const nextClassId = promotionMap[currentClassId]; // may be undefined
       const currentClass = classById[currentClassId];
+      const expectedNextClassName = getExpectedNextClassName(currentClass);
       const reportPromotions = reportPromotionsByClass[currentClassId] || {};
       const reportPromotedTo =
         reportPromotions[String(student._id)] ||
@@ -370,7 +395,17 @@ exports.migrateStudents = async (req, res) => {
         newClassId = nextClassId;
         fallbackPromotionCount++;
       } else if (promote && !nextClassId) {
-        shouldGraduate = true;
+        if (isGraduationClass(currentClass)) {
+          shouldGraduate = true;
+        } else {
+          missingNextClassTargets.push({
+            studentId: String(student._id),
+            currentClass: currentClass?.displayName || currentClass?.name || currentClassId,
+            expectedNextClass: expectedNextClassName,
+          });
+          skippedMissingNextClassCount++;
+          continue;
+        }
       }
 
       // ------------ GRADUATION ------------
@@ -472,7 +507,9 @@ exports.migrateStudents = async (req, res) => {
       fallbackPromotionCount,
       skippedNoReportCardPromotionCount,
       skippedUnresolvedReportTargetCount,
+      skippedMissingNextClassCount,
       unresolvedReportTargetCount: unresolvedReportTargets.length,
+      missingNextClassTargetCount: missingNextClassTargets.length,
       studentOps: bulkOps.length,
       classOps: classBulkOps.length,
       modifiedStudents,
@@ -508,7 +545,9 @@ exports.migrateStudents = async (req, res) => {
       fallbackPromotionsApplied: fallbackPromotionCount,
       skippedNoReportCardPromotion: skippedNoReportCardPromotionCount,
       skippedUnresolvedReportTarget: skippedUnresolvedReportTargetCount,
+      skippedMissingNextClass: skippedMissingNextClassCount,
       unresolvedReportTargets,
+      missingNextClassTargets,
       message: `${migratedCount} promoted, ${graduatedCount} graduated.`
     });
 
