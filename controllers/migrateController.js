@@ -15,6 +15,39 @@ const classOrder = [
 const normalizeClassLabel = (value) =>
   String(value || '').toUpperCase().replace(/\s+/g, ' ').trim();
 
+const normalizedClassOrder = classOrder.map(normalizeClassLabel);
+
+const parseClassLabel = (value) => {
+  const normalized = normalizeClassLabel(value);
+  if (!normalized) return { baseName: '', stream: '' };
+
+  for (const className of classOrder) {
+    const baseName = normalizeClassLabel(className);
+    const compactBaseName = baseName.replace(/\s+/g, '');
+    const compactLabel = normalized.replace(/\s+/g, '');
+
+    if (normalized === baseName || compactLabel === compactBaseName) {
+      return { baseName, stream: '' };
+    }
+
+    if (normalized.startsWith(`${baseName} `)) {
+      const stream = normalized.slice(baseName.length).trim();
+      if (/^[A-Z]$/.test(stream)) {
+        return { baseName, stream };
+      }
+    }
+
+    if (compactLabel.startsWith(compactBaseName)) {
+      const stream = compactLabel.slice(compactBaseName.length);
+      if (/^[A-Z]$/.test(stream)) {
+        return { baseName, stream };
+      }
+    }
+  }
+
+  return { baseName: normalized, stream: '' };
+};
+
 const normalizeTermLabel = (value) => {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -29,6 +62,39 @@ const getAcademicYearVariants = (value) => {
   const termFormat = toTermAcademicYear(raw);
   const studentFormat = raw.replace(/\s*-\s*/g, ' to ');
   return [...new Set([raw, termFormat, studentFormat].filter(Boolean))];
+};
+
+const getClassBaseName = (currentClass) => {
+  const possibleNames = [
+    currentClass?.name,
+    currentClass?.displayName,
+  ].map(normalizeClassLabel).filter(Boolean);
+
+  for (const name of possibleNames) {
+    const { baseName } = parseClassLabel(name);
+    if (normalizedClassOrder.includes(baseName)) {
+      return baseName;
+    }
+  }
+
+  return possibleNames[0] || '';
+};
+
+const getClassStream = (currentClass) => {
+  const directStream = normalizeClassLabel(currentClass?.stream);
+  if (directStream) return directStream;
+
+  const possibleNames = [
+    currentClass?.displayName,
+    currentClass?.name,
+  ].map(normalizeClassLabel).filter(Boolean);
+
+  for (const name of possibleNames) {
+    const { stream } = parseClassLabel(name);
+    if (stream) return stream;
+  }
+
+  return '';
 };
 
 const getNextAcademicYear = (value) => {
@@ -58,18 +124,8 @@ const isRepeatedReportValue = (value, currentClass) => {
   return currentNames.includes(normalizedValue);
 };
 
-const getClassOrderIndex = (currentClass) => {
-  const possibleNames = [
-    currentClass?.displayName,
-    currentClass?.name,
-    currentClass?.stream ? `${currentClass.name}${currentClass.stream}` : '',
-    currentClass?.stream ? `${currentClass.name} ${currentClass.stream}` : '',
-  ].map(normalizeClassLabel).filter(Boolean);
-
-  return classOrder.findIndex((className) =>
-    possibleNames.includes(normalizeClassLabel(className))
-  );
-};
+const getClassOrderIndex = (currentClass) =>
+  normalizedClassOrder.findIndex((className) => className === getClassBaseName(currentClass));
 
 const getExpectedNextClassName = (currentClass) => {
   const classIndex = getClassOrderIndex(currentClass);
@@ -90,13 +146,26 @@ const addClassAlias = (lookup, label, classId) => {
 const buildClassLookup = (classes) => {
   const lookup = {};
   const byId = {};
+  const classesByBaseName = {};
 
   classes.forEach((cls) => {
     const classId = String(cls._id);
     byId[classId] = cls;
 
+    const baseName = getClassBaseName(cls);
+    const classStream = getClassStream(cls);
+    const normalizedName = normalizeClassLabel(cls.name);
+    if (baseName) {
+      if (!classesByBaseName[baseName]) {
+        classesByBaseName[baseName] = [];
+      }
+      classesByBaseName[baseName].push(cls);
+    }
+
     addClassAlias(lookup, cls.displayName, cls._id);
-    addClassAlias(lookup, cls.name, cls._id);
+    if (!classStream || normalizedName !== baseName) {
+      addClassAlias(lookup, cls.name, cls._id);
+    }
 
     if (cls.stream) {
       addClassAlias(lookup, `${cls.name}${cls.stream}`, cls._id);
@@ -106,7 +175,68 @@ const buildClassLookup = (classes) => {
     }
   });
 
-  return { lookup, byId };
+  return { lookup, byId, classesByBaseName };
+};
+
+const findUnstreamedClass = (classes) =>
+  (classes || []).find((cls) => !getClassStream(cls));
+
+const findClassByStream = (classes, stream) =>
+  (classes || []).find((cls) => getClassStream(cls) === stream);
+
+const resolveClassTarget = ({ targetLabel, classLookup, classesByBaseName }) => {
+  const normalizedTarget = normalizeClassLabel(targetLabel);
+  const directTargetId = classLookup[normalizedTarget];
+  if (directTargetId) {
+    return directTargetId;
+  }
+
+  const { baseName, stream } = parseClassLabel(targetLabel);
+  const candidates = classesByBaseName[baseName] || [];
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  if (stream) {
+    const matchingStreamClass = findClassByStream(candidates, stream);
+    if (matchingStreamClass) {
+      return matchingStreamClass._id;
+    }
+  }
+
+  const unstreamedClass = findUnstreamedClass(candidates);
+  if (unstreamedClass) {
+    return unstreamedClass._id;
+  }
+
+  return candidates.length === 1 ? candidates[0]._id : null;
+};
+
+const resolveNextClassTarget = ({ currentClass, classesByBaseName }) => {
+  const expectedNextClassName = getExpectedNextClassName(currentClass);
+  if (!expectedNextClassName) {
+    return null;
+  }
+
+  const candidates = classesByBaseName[normalizeClassLabel(expectedNextClassName)] || [];
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const currentStream = getClassStream(currentClass);
+  if (currentStream) {
+    const matchingStreamClass = findClassByStream(candidates, currentStream);
+    if (matchingStreamClass) {
+      return matchingStreamClass._id;
+    }
+  }
+
+  const unstreamedClass = findUnstreamedClass(candidates);
+  if (unstreamedClass) {
+    return unstreamedClass._id;
+  }
+
+  return candidates.length === 1 ? candidates[0]._id : null;
 };
 
 const getReportCardPromotions = async ({ schoolId, classId, fromYear, fromTerm }) => {
@@ -189,24 +319,11 @@ exports.migrateStudents = async (req, res) => {
     // ------------------------------------------------------------
     const allClasses = await Class.find({ school: schoolId }).lean();
 
-    const classMap = {};
-    const promotionMap = {}; // className → nextClassId
-    const { lookup: classLookup, byId: classById } = buildClassLookup(allClasses);
-
-    allClasses.forEach(cls => {
-      const name = normalizeClassLabel(cls.name);
-      classMap[name] = cls._id;
-    });
-
-    // Build promotion mapping
-    classOrder.forEach((className, index) => {
-      const current = className.toUpperCase();
-      const next = classOrder[index + 1]?.toUpperCase();
-
-      if (classMap[current] && classMap[next]) {
-        promotionMap[classMap[current]] = classMap[next]; // store classId → next classId
-      }
-    });
+    const {
+      lookup: classLookup,
+      byId: classById,
+      classesByBaseName,
+    } = buildClassLookup(allClasses);
 
     // ------------------------------------------------------------
     // 2. LOAD STUDENTS TO MIGRATE (ONLY ONCE)
@@ -358,8 +475,11 @@ exports.migrateStudents = async (req, res) => {
         : true;
 
       const currentClassId = String(student.class);
-      const nextClassId = promotionMap[currentClassId]; // may be undefined
       const currentClass = classById[currentClassId];
+      const nextClassId = resolveNextClassTarget({
+        currentClass,
+        classesByBaseName,
+      });
       const expectedNextClassName = getExpectedNextClassName(currentClass);
       const reportPromotions = reportPromotionsByClass[currentClassId] || {};
       const reportPromotedTo =
@@ -375,7 +495,11 @@ exports.migrateStudents = async (req, res) => {
           newClassId = currentClassId;
           reportCardRepeatCount++;
         } else {
-          const reportTargetClassId = classLookup[normalizeClassLabel(reportPromotedTo)];
+          const reportTargetClassId = resolveClassTarget({
+            targetLabel: reportPromotedTo,
+            classLookup,
+            classesByBaseName,
+          });
           if (reportTargetClassId) {
             newClassId = reportTargetClassId;
             reportCardPromotionCount++;
