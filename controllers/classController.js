@@ -491,3 +491,397 @@ exports.assignClassTeacher = async (req, res) => {
     });
   }
 };
+
+
+// ✅ Merge multiple stream classes into a single target class (admin only)
+exports.mergeStreams = async (req, res) => {
+  try {
+    const schoolId = req.user.school;
+    if (!schoolId) {
+      return res.status(400).json({ message: 'School context missing from token' });
+    }
+
+    const {
+      sourceClassIds,
+      targetClassId,
+      targetClassName,
+      targetClassStream = null,
+      deleteSourceClasses = true,
+    } = req.body;
+
+    if (!Array.isArray(sourceClassIds) || sourceClassIds.length === 0) {
+      return res.status(400).json({ message: 'Please select at least one source stream class to merge.' });
+    }
+
+    // Clean and validate source IDs
+    const cleanSourceIds = Array.from(
+      new Set(sourceClassIds.map((id) => String(id).trim()).filter(Boolean))
+    );
+
+    for (const id of cleanSourceIds) {
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({ message: `Invalid source class ID: ${id}` });
+      }
+    }
+
+    // Verify all source classes exist and belong to this school
+    const sourceClasses = await Class.find({
+      _id: { $in: cleanSourceIds },
+      school: schoolId,
+    });
+
+    if (sourceClasses.length !== cleanSourceIds.length) {
+      return res.status(400).json({
+        message: 'One or more source classes were not found in your school.',
+      });
+    }
+
+    // Determine target class
+    let targetClass = null;
+
+    if (targetClassId) {
+      if (!mongoose.Types.ObjectId.isValid(targetClassId)) {
+        return res.status(400).json({ message: 'Invalid target class ID provided.' });
+      }
+
+      if (cleanSourceIds.includes(String(targetClassId))) {
+        return res.status(400).json({
+          message: 'Target class cannot be one of the source classes being merged.',
+        });
+      }
+
+      targetClass = await Class.findOne({ _id: targetClassId, school: schoolId });
+      if (!targetClass) {
+        return res.status(404).json({ message: 'Target class not found in your school.' });
+      }
+    } else {
+      // Find or create target class based on name and stream
+      const finalTargetName = String(targetClassName || sourceClasses[0].name).trim();
+      const finalTargetStream =
+        targetClassStream && String(targetClassStream).trim() !== ''
+          ? String(targetClassStream).trim().toUpperCase()
+          : null;
+
+      if (!finalTargetName) {
+        return res.status(400).json({ message: 'Target class name is required.' });
+      }
+
+      // Check if target class already exists
+      targetClass = await Class.findOne({
+        school: schoolId,
+        name: finalTargetName,
+        stream: finalTargetStream,
+      });
+
+      if (targetClass && cleanSourceIds.includes(String(targetClass._id))) {
+        return res.status(400).json({
+          message:
+            'The target class already exists as one of the selected source classes. Please uncheck it from the source streams or select an alternative target.',
+        });
+      }
+
+      if (!targetClass) {
+        targetClass = new Class({
+          name: finalTargetName,
+          stream: finalTargetStream,
+          displayName: finalTargetStream
+            ? `${finalTargetName}${finalTargetStream}`
+            : finalTargetName,
+          school: schoolId,
+          teachers: [],
+          subjects: [],
+          students: [],
+          classTeacher: null,
+          coClassTeacher: null,
+        });
+        await targetClass.save();
+      }
+    }
+
+    const targetId = targetClass._id;
+
+    // 1. Reassign Students in Student collection
+    const studentsToMove = await Student.find({
+      school: schoolId,
+      class: { $in: cleanSourceIds },
+    }).select('_id user');
+
+    const studentIds = studentsToMove.map((s) => s._id);
+    const studentUserIds = studentsToMove.map((s) => s.user).filter(Boolean);
+
+    if (studentIds.length > 0) {
+      await Student.updateMany(
+        { _id: { $in: studentIds } },
+        { $set: { class: targetId } }
+      );
+    }
+
+    // Add student User IDs to targetClass.students array
+    if (studentUserIds.length > 0) {
+      await Class.findByIdAndUpdate(targetId, {
+        $addToSet: { students: { $each: studentUserIds } },
+      });
+    }
+
+    // 2. Consolidate Teachers, Subjects, and Class Teachers
+    const allSourceTeachers = [];
+    const allSourceSubjects = [];
+    let candidateClassTeacher = null;
+    let candidateCoClassTeacher = null;
+
+    for (const src of sourceClasses) {
+      if (Array.isArray(src.teachers)) {
+        allSourceTeachers.push(...src.teachers);
+      }
+      if (Array.isArray(src.subjects)) {
+        allSourceSubjects.push(...src.subjects);
+      }
+      if (!candidateClassTeacher && src.classTeacher) {
+        candidateClassTeacher = src.classTeacher;
+      }
+      if (!candidateCoClassTeacher && src.coClassTeacher) {
+        candidateCoClassTeacher = src.coClassTeacher;
+      }
+    }
+
+    const updateFields = {};
+    if (allSourceTeachers.length > 0) {
+      updateFields.$addToSet = updateFields.$addToSet || {};
+      updateFields.$addToSet.teachers = { $each: allSourceTeachers };
+    }
+    if (allSourceSubjects.length > 0) {
+      updateFields.$addToSet = updateFields.$addToSet || {};
+      updateFields.$addToSet.subjects = { $each: allSourceSubjects };
+    }
+
+    const setFields = {};
+    if (!targetClass.classTeacher && candidateClassTeacher) {
+      setFields.classTeacher = candidateClassTeacher;
+    }
+    if (
+      !targetClass.coClassTeacher &&
+      candidateCoClassTeacher &&
+      String(candidateCoClassTeacher) !== String(targetClass.classTeacher || candidateClassTeacher)
+    ) {
+      setFields.coClassTeacher = candidateCoClassTeacher;
+    }
+    if (Object.keys(setFields).length > 0) {
+      updateFields.$set = setFields;
+    }
+
+    if (Object.keys(updateFields).length > 0) {
+      await Class.findByIdAndUpdate(targetId, updateFields);
+    }
+
+    // 3. Update Teacher model assignedClasses
+    try {
+      const TeacherModel = require('../models/Teacher');
+      await TeacherModel.updateMany(
+        { school: schoolId, assignedClasses: { $in: cleanSourceIds } },
+        { $pull: { assignedClasses: { $in: cleanSourceIds } } }
+      );
+
+      const refreshedTarget = await Class.findById(targetId).select('teachers');
+      if (refreshedTarget?.teachers?.length > 0) {
+        await TeacherModel.updateMany(
+          { school: schoolId, user: { $in: refreshedTarget.teachers } },
+          { $addToSet: { assignedClasses: targetId } }
+        );
+      }
+    } catch (teacherErr) {
+      console.warn('⚠️ Warning: Teacher assignedClasses update encountered an issue:', teacherErr.message);
+    }
+
+    // 4. Update Enrollments
+    try {
+      const EnrollmentModel = require('../models/enrollmentModel');
+      await EnrollmentModel.updateMany(
+        { school: schoolId, class: { $in: cleanSourceIds } },
+        { $set: { class: targetId } }
+      );
+    } catch (enrollErr) {
+      console.warn('⚠️ Warning: Enrollment update issue:', enrollErr.message);
+    }
+
+    // 5. Update StudentAttendance
+    try {
+      const AttendanceModel = require('../models/StudentAttendance');
+      await AttendanceModel.updateMany(
+        { school: schoolId, class: { $in: cleanSourceIds } },
+        { $set: { class: targetId } }
+      );
+    } catch (attErr) {
+      console.warn('⚠️ Warning: StudentAttendance update issue:', attErr.message);
+    }
+
+    // 6. Update SbaRecord (handle unique index: { school, class, term, subject })
+    try {
+      const SbaRecordModel = require('../models/SbaRecord');
+      const sourceSbas = await SbaRecordModel.find({
+        school: schoolId,
+        class: { $in: cleanSourceIds },
+      });
+
+      for (const srcSba of sourceSbas) {
+        const existingTargetSba = await SbaRecordModel.findOne({
+          school: schoolId,
+          class: targetId,
+          term: srcSba.term,
+          subject: srcSba.subject,
+        });
+
+        if (existingTargetSba) {
+          const existingMap = new Set(
+            existingTargetSba.records.map((r) => String(r.student || ''))
+          );
+          for (const rec of srcSba.records || []) {
+            if (rec.student && !existingMap.has(String(rec.student))) {
+              existingTargetSba.records.push(rec);
+            }
+          }
+          await existingTargetSba.save();
+          await SbaRecordModel.findByIdAndDelete(srcSba._id);
+        } else {
+          srcSba.class = targetId;
+          await srcSba.save();
+        }
+      }
+    } catch (sbaErr) {
+      console.warn('⚠️ Warning: SbaRecord update issue:', sbaErr.message);
+    }
+
+    // 7. Update ClassFeeRecord (handle unique index: { school, classId, termId, week })
+    try {
+      const ClassFeeRecordModel = require('../models/ClassFeeRecord');
+      const sourceFeeRecords = await ClassFeeRecordModel.find({
+        school: schoolId,
+        classId: { $in: cleanSourceIds },
+      });
+
+      for (const srcFee of sourceFeeRecords) {
+        const existingTargetFee = await ClassFeeRecordModel.findOne({
+          school: schoolId,
+          classId: targetId,
+          termId: srcFee.termId,
+          week: srcFee.week,
+        });
+
+        if (existingTargetFee) {
+          const existingStudentIds = new Set(
+            existingTargetFee.breakdown.map((b) => String(b.student || ''))
+          );
+          for (const b of srcFee.breakdown || []) {
+            if (b.student && !existingStudentIds.has(String(b.student))) {
+              existingTargetFee.breakdown.push(b);
+            }
+          }
+          await existingTargetFee.save();
+          await ClassFeeRecordModel.findByIdAndDelete(srcFee._id);
+        } else {
+          srcFee.classId = targetId;
+          await srcFee.save();
+        }
+      }
+    } catch (classFeeErr) {
+      console.warn('⚠️ Warning: ClassFeeRecord update issue:', classFeeErr.message);
+    }
+
+    // 8. Update FeedingFeeRecord (handle unique index: { school, classId, termId, week })
+    try {
+      const FeedingFeeRecordModel = require('../models/FeedingFeeRecord');
+      const sourceFeedingRecords = await FeedingFeeRecordModel.find({
+        school: schoolId,
+        classId: { $in: cleanSourceIds },
+      });
+
+      for (const srcFeed of sourceFeedingRecords) {
+        const existingTargetFeeding = await FeedingFeeRecordModel.findOne({
+          school: schoolId,
+          classId: targetId,
+          termId: srcFeed.termId,
+          week: srcFeed.week,
+        });
+
+        if (existingTargetFeeding) {
+          const existingStudentIds = new Set(
+            existingTargetFeeding.breakdown.map((b) => String(b.student || ''))
+          );
+          for (const b of srcFeed.breakdown || []) {
+            if (b.student && !existingStudentIds.has(String(b.student))) {
+              existingTargetFeeding.breakdown.push(b);
+            }
+          }
+          await existingTargetFeeding.save();
+          await FeedingFeeRecordModel.findByIdAndDelete(srcFeed._id);
+        } else {
+          srcFeed.classId = targetId;
+          await srcFeed.save();
+        }
+      }
+    } catch (feedingErr) {
+      console.warn('⚠️ Warning: FeedingFeeRecord update issue:', feedingErr.message);
+    }
+
+    // 9. Update Timetable, Assignment, WeeklyExercise, Grade, Announcement, QuizSession, AgendaEvent
+    const simpleClassModels = [
+      { model: '../models/Timetable', field: 'class' },
+      { model: '../models/Assignment', field: 'class' },
+      { model: '../models/WeeklyExercise', field: 'class' },
+      { model: '../models/Grade', field: 'class' },
+      { model: '../models/Announcement', field: 'class' },
+      { model: '../models/QuizSession', field: 'class' },
+      { model: '../models/AgendaEvent', field: 'class' },
+    ];
+
+    for (const item of simpleClassModels) {
+      try {
+        const M = require(item.model);
+        await M.updateMany(
+          { school: schoolId, [item.field]: { $in: cleanSourceIds } },
+          { $set: { [item.field]: targetId } }
+        );
+      } catch (err) {
+        // Model might not exist or field optional
+      }
+    }
+
+    // 10. Delete or clear source classes
+    if (deleteSourceClasses) {
+      await Class.deleteMany({
+        _id: { $in: cleanSourceIds },
+        school: schoolId,
+      });
+    } else {
+      await Class.updateMany(
+        { _id: { $in: cleanSourceIds }, school: schoolId },
+        { $set: { students: [] } }
+      );
+    }
+
+    // Return updated populated target class
+    const populatedTargetClass = await Class.findById(targetId)
+      .populate('teachers', 'name email')
+      .populate('classTeacher', 'name email')
+      .populate('coClassTeacher', 'name email')
+      .populate('students', 'name email')
+      .populate('subjects', 'name code shortName');
+
+    return res.status(200).json({
+      success: true,
+      message: `Successfully merged ${cleanSourceIds.length} stream${
+        cleanSourceIds.length === 1 ? '' : 's'
+      } into ${populatedTargetClass.displayName || populatedTargetClass.name}. Moved ${
+        studentIds.length
+      } student${studentIds.length === 1 ? '' : 's'}.`,
+      mergedCount: cleanSourceIds.length,
+      studentsMoved: studentIds.length,
+      targetClass: populatedTargetClass,
+    });
+  } catch (err) {
+    console.error('Error merging streams:', err);
+    return res.status(500).json({
+      message: 'Failed to merge streams',
+      error: err.message,
+    });
+  }
+};

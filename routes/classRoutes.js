@@ -9,10 +9,12 @@ const {
   bulkAddSubjectsToClasses,
   assignClassTeacher,
   getTeacherClassesWithStudents,
-  getTeacherClasses // new endpoint
+  getTeacherClasses,
+  mergeStreams
 } = require('../controllers/classController');
 
 // ---------------- Admin Routes ----------------
+router.post('/merge-streams', protect, restrictTo('admin'), mergeStreams);
 router.post('/', protect, restrictTo('admin'), createClass);
 router.get('/', protect, restrictTo('admin'), getAllClasses);
 router.patch('/bulk-subjects', protect, restrictTo('admin'), bulkAddSubjectsToClasses);
