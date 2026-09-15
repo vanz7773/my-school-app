@@ -290,7 +290,7 @@ const getReportCardPromotions = async ({ schoolId, classId, fromYear, fromTerm }
 };
 
 exports.migrateStudents = async (req, res) => {
-  const { fromYear, toYear, fromTerm, classId, students, promoteAllClasses } = req.body;
+  const { fromYear, toYear, fromTerm, classId, students, promoteAllClasses, ignoreReportCardRepeats = true } = req.body;
   const isAllClassPromotion = promoteAllClasses === true;
 
   if (!fromYear) {
@@ -492,8 +492,26 @@ exports.migrateStudents = async (req, res) => {
 
       if (promote && reportPromotedTo) {
         if (isRepeatedReportValue(reportPromotedTo, currentClass)) {
-          newClassId = currentClassId;
-          reportCardRepeatCount++;
+          if (ignoreReportCardRepeats !== false) {
+            // Admin requested to promote regardless of report-card repeat remarks
+            if (nextClassId) {
+              newClassId = nextClassId;
+              fallbackPromotionCount++;
+            } else if (isGraduationClass(currentClass)) {
+              shouldGraduate = true;
+            } else {
+              missingNextClassTargets.push({
+                studentId: String(student._id),
+                currentClass: currentClass?.displayName || currentClass?.name || currentClassId,
+                expectedNextClass: expectedNextClassName,
+              });
+              skippedMissingNextClassCount++;
+              continue;
+            }
+          } else {
+            newClassId = currentClassId;
+            reportCardRepeatCount++;
+          }
         } else {
           const reportTargetClassId = resolveClassTarget({
             targetLabel: reportPromotedTo,
@@ -503,6 +521,9 @@ exports.migrateStudents = async (req, res) => {
           if (reportTargetClassId) {
             newClassId = reportTargetClassId;
             reportCardPromotionCount++;
+          } else if (ignoreReportCardRepeats !== false && nextClassId) {
+            newClassId = nextClassId;
+            fallbackPromotionCount++;
           } else {
             unresolvedReportTargets.push({
               studentId: String(student._id),
