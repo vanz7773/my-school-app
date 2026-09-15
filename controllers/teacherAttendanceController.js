@@ -494,7 +494,17 @@ const getAdminDailyRecords = async (req, res) => {
           message: 'Term not found'
         });
       }
-      match.term = term._id;
+
+      // Historical teacher attendance was sometimes linked to a different term id
+      // even though its date falls inside the selected term. The date range is
+      // the reliable source for admin reports, so only use the term to supply
+      // dates when the caller did not already request a specific week/range.
+      if (!from || !to) {
+        match.date = {
+          $gte: startOfDay(new Date(term.startDate)),
+          $lte: endOfDay(new Date(term.endDate))
+        };
+      }
     }
 
     // 1️⃣ Fetch all teachers for this school to ensure "Always list all teachers"

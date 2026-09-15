@@ -5,6 +5,9 @@ const { isWeekend } = require('../utils/dateHelpers');
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_TERM_DAYS = Number(process.env.MAX_TERM_DAYS || 140);
 
+const normalizeAcademicYear = (value) =>
+  String(value || '').trim().replace(/\s+to\s+/i, '-').replace(/\//g, '-');
+
 const getTermDurationDays = (startDate, endDate) => {
   const start = new Date(startDate).getTime();
   const end = new Date(endDate).getTime();
@@ -345,7 +348,7 @@ exports.getTermWeeks = async (req, res) => {
     if (termId && mongoose.Types.ObjectId.isValid(termId)) {
       searchObj._id = new mongoose.Types.ObjectId(termId);
     } else {
-      searchObj.academicYear = academicYear;
+      searchObj.academicYear = normalizeAcademicYear(academicYear);
       searchObj.term = term;
     }
 
