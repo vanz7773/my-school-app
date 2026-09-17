@@ -418,6 +418,7 @@ exports.migrateStudents = async (req, res) => {
     let reportCardPromotionCount = 0;
     let reportCardRepeatCount = 0;
     let fallbackPromotionCount = 0;
+    let manualPlacementCount = 0;
     let skippedNoReportCardPromotionCount = 0;
     let skippedUnresolvedReportTargetCount = 0;
     let skippedMissingNextClassCount = 0;
@@ -458,11 +459,30 @@ exports.migrateStudents = async (req, res) => {
     const reportCardPromotionEntries = Object.values(reportPromotionsByClass)
       .reduce((total, promotions) => total + Object.keys(promotions || {}).length, 0);
 
-    // Build a quick lookup for individual migration flags
+    // Build quick lookups for individual migration settings
     const promoteMap = {};
+    const manualTargetMap = {};
+    const invalidManualTargets = [];
     if (Array.isArray(students)) {
       students.forEach(s => {
         promoteMap[s.studentId] = s.promote !== false; // default true
+        if (s.targetClassId) {
+          if (classById[String(s.targetClassId)]) {
+            manualTargetMap[s.studentId] = String(s.targetClassId);
+          } else {
+            invalidManualTargets.push({
+              studentId: String(s.studentId || ''),
+              targetClassId: String(s.targetClassId),
+            });
+          }
+        }
+      });
+    }
+
+    if (invalidManualTargets.length > 0) {
+      return res.status(400).json({
+        message: 'One or more selected destination classes could not be found for this school.',
+        invalidManualTargets,
       });
     }
 
@@ -473,6 +493,9 @@ exports.migrateStudents = async (req, res) => {
       const promote = Array.isArray(students)
         ? promoteMap[student._id] !== false
         : true;
+      const manualTargetClassId = Array.isArray(students)
+        ? manualTargetMap[String(student._id)]
+        : null;
 
       const currentClassId = String(student.class);
       const currentClass = classById[currentClassId];
@@ -490,7 +513,10 @@ exports.migrateStudents = async (req, res) => {
       let newClassId = currentClassId;
       let shouldGraduate = false;
 
-      if (promote && reportPromotedTo) {
+      if (promote && manualTargetClassId) {
+        newClassId = manualTargetClassId;
+        manualPlacementCount++;
+      } else if (promote && reportPromotedTo) {
         if (isRepeatedReportValue(reportPromotedTo, currentClass)) {
           if (ignoreReportCardRepeats !== false) {
             // Admin requested to promote regardless of report-card repeat remarks
@@ -650,6 +676,7 @@ exports.migrateStudents = async (req, res) => {
       reportCardPromotionCount,
       reportCardRepeatCount,
       fallbackPromotionCount,
+      manualPlacementCount,
       skippedNoReportCardPromotionCount,
       skippedUnresolvedReportTargetCount,
       skippedMissingNextClassCount,
@@ -688,6 +715,7 @@ exports.migrateStudents = async (req, res) => {
       reportCardPromotionsApplied: reportCardPromotionCount,
       reportCardRepeatsApplied: reportCardRepeatCount,
       fallbackPromotionsApplied: fallbackPromotionCount,
+      manualPlacementsApplied: manualPlacementCount,
       skippedNoReportCardPromotion: skippedNoReportCardPromotionCount,
       skippedUnresolvedReportTarget: skippedUnresolvedReportTargetCount,
       skippedMissingNextClass: skippedMissingNextClassCount,
