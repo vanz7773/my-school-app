@@ -1,8 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const { protect, restrictTo } = require('../middlewares/authMiddleware');
-const { getClassEnrollmentSummary } = require('../controllers/enrollmentController');
+const {
+  getClassEnrollmentSummary,
+  moveStudentToClass,
+} = require('../controllers/enrollmentController');
 
 router.get('/summary', protect, restrictTo('admin'), getClassEnrollmentSummary);
+router.patch('/students/:studentId/class', protect, restrictTo('admin'), moveStudentToClass);
 
 module.exports = router;
