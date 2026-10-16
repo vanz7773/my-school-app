@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Grade = require('../models/Grade');
 const Student = require('../models/Student');
 const User = require('../models/User');
@@ -228,18 +229,25 @@ exports.getReportCard = async (req, res) => {
     const { studentId, classId, term } = req.query;
     const schoolId = req.user.school;
 
+    if ((studentId && !mongoose.Types.ObjectId.isValid(studentId)) ||
+        (!studentId && classId && !mongoose.Types.ObjectId.isValid(classId))) {
+      return res.status(400).json({ message: 'Invalid studentId or classId.' });
+    }
+
     // Simple memory caching for frequent requests
     if (studentId && term) {
-      const cacheKey = `report_card:${studentId}:${term}`;
+      const cacheKey = `report_card:${schoolId}:${studentId}:${term}`;
       const cached = getMemoryCache(cacheKey);
       if (cached) {
         return res.status(200).json({ reportCard: cached });
       }
     }
 
-    const filter = { school: schoolId };
-    if (studentId) filter.student = studentId;
-    if (classId) filter.class = classId;
+    // Aggregation does not cast query strings to ObjectIds. A student's
+    // archived grades are identified by student and term, not current class.
+    const filter = { school: new mongoose.Types.ObjectId(schoolId) };
+    if (studentId) filter.student = new mongoose.Types.ObjectId(studentId);
+    else if (classId) filter.class = new mongoose.Types.ObjectId(classId);
     if (term) filter.term = term;
 
     // Aggregation pipeline for optimized data fetching
@@ -360,7 +368,7 @@ exports.getReportCard = async (req, res) => {
 
     // Cache in memory for frequent requests
     if (studentId && term) {
-      setMemoryCache(`report_card:${studentId}:${term}`, reportCard);
+      setMemoryCache(`report_card:${schoolId}:${studentId}:${term}`, reportCard);
     }
 
     res.status(200).json({ reportCard });

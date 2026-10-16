@@ -2417,7 +2417,7 @@ exports.getMyReportSheet = async (req, res) => {
 
     // 🎓 STUDENT ACCESS
     if (requester.role === "student") {
-      targetStudent = await Student.findOne({ user: requester._id })
+      targetStudent = await Student.findOne({ user: requester._id, school: requester.school })
         .populate("class", "name displayName stream")
         .populate("user", "name")
         .lean();
@@ -2436,6 +2436,7 @@ exports.getMyReportSheet = async (req, res) => {
 
       targetStudent = await Student.findOne({
         _id: targetId,
+        school: requester.school,
         $or: [
           { parent: requester._id },
           { parentIds: { $in: [requester._id] } },
@@ -2460,11 +2461,8 @@ exports.getMyReportSheet = async (req, res) => {
     // --------------------------
     // VALIDATION
     // --------------------------
-    if (!targetStudent || !targetStudent.class) {
-      return res.status(400).json({
-        message: "Student not assigned to a class.",
-      });
-    }
+    // Individual PDFs are owned by the student and term, including after
+    // promotion or graduation. A current class is not required to read them.
 
     const studentDisplayName =
       targetStudent.user?.name || targetStudent.name || "Student";

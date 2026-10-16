@@ -1234,7 +1234,7 @@ const getFeedingFeeForStudent = async (req, res) => {
     const schoolId = user.school;
 
     // 🟢 Get term
-    const term = await Term.findById(termId);
+    const term = await Term.findOne({ _id: termId, school: schoolId });
     if (!term) {
       return res.status(404).json({
         success: false,
@@ -1352,13 +1352,16 @@ const getFeedingFeeForStudent = async (req, res) => {
           student: student._id,
           termId,
           weekNumber,
+          school: schoolId,
         }).lean(),
+        // Historical records retain the original class after promotion.
+        // Match the individual student instead of their current class roster.
         FeedingFeeRecord.findOne({
-          classId: student.class?._id,
+          'breakdown.student': student._id,
           termId,
           week: weekNumber,
           school: schoolId,
-        }).lean(),
+        }).sort({ updatedAt: -1, _id: -1 }).lean(),
       ]);
 
       console.log(`📊 Found attendance: ${!!attendance}, feedingRecord: ${!!feedingRecord}`);
@@ -1393,17 +1396,31 @@ const getFeedingFeeForStudent = async (req, res) => {
         }
       }
 
-      const isExempt = student.isExemptFromFeedingFee === true;
+      // Saved rates and per-day amounts belong to the selected historical week.
+      // A later promotion or fee-band change must not recalculate old payments.
+      const savedRate = manualEntry?.classFeeAmount ?? feedingRecord?.classFeeAmount;
+      const effectiveAmountPerDay = savedRate !== null && savedRate !== undefined
+        && Number.isFinite(Number(savedRate)) && Number(savedRate) >= 0
+        ? Number(savedRate)
+        : amountPerDay;
+      const isExempt = !manualEntry && student.isExemptFromFeedingFee === true;
       const presentDays = isExempt ? 0 : Object.values(days).filter(
         (v) => v === "present"
       ).length;
-      const total = presentDays * amountPerDay;
+      const recordedAmount = (day, status) => {
+        if (status !== "present" || isExempt) return 0;
+        const saved = manualEntry?.perDayFee?.[day];
+        return saved !== null && saved !== undefined && Number.isFinite(Number(saved)) && Number(saved) >= 0
+          ? Number(saved)
+          : effectiveAmountPerDay;
+      };
+      const total = Object.entries(days).reduce((sum, [day, status]) => sum + recordedAmount(day, status), 0);
 
       // Build records array for frontend
       const records = Object.entries(days).map(([key, val]) => ({
         day: key,
         status: val,
-        amount: val === "present" ? amountPerDay : 0,
+        amount: recordedAmount(key, val),
         category: student.class?.level || "N/A",
         source: manualEntry?.days?.[key] && manualEntry.days[key] !== "notmarked"
           ? "manual"
@@ -1420,7 +1437,7 @@ const getFeedingFeeForStudent = async (req, res) => {
         classDisplayName,       // BASIC 9A (UI-safe)
 
         presentDays,
-        amountPerDay,
+        amountPerDay: effectiveAmountPerDay,
         total,
         days,
         records,
