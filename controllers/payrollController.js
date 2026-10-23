@@ -413,6 +413,9 @@ exports.downloadPdf = async (req, res) => {
     }
 
     const doc = new jsPDF({ orientation: 'landscape', format: 'a5' });
+    // All sections share the same eight-column grid (182 mm inside 14 mm margins).
+    const columnWidths = [26, 18, 18, 38, 20, 20, 21, 21];
+    const gridColumns = Object.fromEntries(columnWidths.map((cellWidth, index) => [index, { cellWidth }]));
 
     const [yyyy, mm] = payroll.month.split('-');
     const yearNum = parseInt(yyyy, 10);
@@ -459,17 +462,22 @@ exports.downloadPdf = async (req, res) => {
       autoTable(doc, {
         startY: 15, margin: { left: 14, right: 14 }, theme: 'grid',
         styles: { font: 'helvetica', fontSize: 8, cellPadding: 1.5, lineWidth: 0.3, lineColor: [100, 100, 100], textColor: [60, 60, 60], fillColor: false },
-        columnStyles: {
-          0: { cellWidth: 35, halign: 'center', valign: 'bottom', fontStyle: 'bold' },
-          1: { cellWidth: 20, fontStyle: 'bold' },
-          2: { cellWidth: 50, fontStyle: 'normal' },
-          3: { cellWidth: 20, fontStyle: 'bold' },
-          4: { cellWidth: 'auto', fontStyle: 'normal' }
-        },
+        columnStyles: gridColumns,
         body: [
-          [{ content: logoBase64 ? '\n\n\n\n' + activeSchoolName : '[ Logo ]\n\n' + activeSchoolName, rowSpan: 3, styles: { fontStyle: 'bold', halign: 'center', valign: 'bottom', cellPadding: { bottom: 2 } } }, 'DATE', displayDate, 'SCHOOL', (payroll.school && payroll.school.name) ? payroll.school.name : 'N/A'],
-          ['PERIOD', displayPeriod, 'DATE OF BIRTH', formatDOB(dobToUse)],
-          ['NAME', slip.teacherName, '', '']
+          [
+            { content: logoBase64 ? '\n\n\n\n' + activeSchoolName : '[ Logo ]\n\n' + activeSchoolName, colSpan: 2, rowSpan: 3, styles: { fontStyle: 'bold', halign: 'center', valign: 'bottom', cellPadding: { bottom: 2 } } },
+            { content: 'DATE', styles: { fontStyle: 'bold' } },
+            { content: displayDate, colSpan: 2 },
+            { content: 'SCHOOL', styles: { fontStyle: 'bold' } },
+            { content: payroll.school?.name || 'N/A', colSpan: 2 }
+          ],
+          [
+            { content: 'PERIOD', styles: { fontStyle: 'bold' } },
+            { content: displayPeriod, colSpan: 2 },
+            { content: 'DATE OF BIRTH', styles: { fontStyle: 'bold' } },
+            { content: formatDOB(dobToUse), colSpan: 2 }
+          ],
+          [{ content: 'NAME', styles: { fontStyle: 'bold' } }, { content: slip.teacherName, colSpan: 5 }]
         ],
         didDrawCell: function (data) {
           if (data.section === 'body' && data.column.index === 0 && data.row.index === 0 && logoBase64) {
@@ -490,10 +498,10 @@ exports.downloadPdf = async (req, res) => {
 
       autoTable(doc, {
         startY: doc.lastAutoTable.finalY, margin: { left: 14, right: 14 }, theme: 'grid',
-        headStyles: { font: 'helvetica', textColor: [80, 80, 80], fontStyle: 'bold', lineWidth: 0.3, lineColor: [100, 100, 100], fontSize: 8, fillColor: false },
+        headStyles: { font: 'helvetica', textColor: [80, 80, 80], fontStyle: 'bold', lineWidth: 0.3, lineColor: [100, 100, 100], fontSize: 7, cellPadding: 1.5, fillColor: false },
         styles: { font: 'helvetica', fontSize: 8, cellPadding: 2, lineWidth: 0.3, lineColor: [100, 100, 100], textColor: [60, 60, 60], fillColor: false },
-        columnStyles: { 6: { halign: 'right' }, 7: { halign: 'right' } },
-        head: [['MONTH/YEAR', 'NATURE', 'LEVEL', 'DESCRIPTION', 'HRS/ORIGINAL AMOUNT', 'RATE(%) BALANCE', 'PAYMENTS', 'DEDUCTIONS']],
+        columnStyles: { ...gridColumns, 6: { ...gridColumns[6], halign: 'right' }, 7: { ...gridColumns[7], halign: 'right' } },
+        head: [['MONTH/YEAR', 'NATURE', 'LEVEL', 'DESCRIPTION', 'HRS / ORIGINAL AMOUNT', 'RATE (%) BALANCE', 'PAYMENTS', 'DEDUCTIONS']],
         body: tableRows,
         willDrawCell: function (data) {
           if (data.section === 'body' && data.row.index !== tableRows.length - 1)
@@ -505,14 +513,30 @@ exports.downloadPdf = async (req, res) => {
         startY: doc.lastAutoTable.finalY, margin: { left: 14, right: 14 }, theme: 'grid',
         styles: { font: 'helvetica', fontSize: 8, cellPadding: 1.5, lineWidth: 0.3, lineColor: [100, 100, 100], textColor: [60, 60, 60], fillColor: false },
         columnStyles: {
-          0: { cellWidth: 30, fontStyle: 'bold' }, 1: { cellWidth: 20, halign: 'right' }, 2: { cellWidth: 30, fontStyle: 'bold' },
-          3: { cellWidth: 18, halign: 'right' }, 4: { cellWidth: 25, fontStyle: 'bold' }, 5: { cellWidth: 15, halign: 'right' },
-          6: { cellWidth: 24, halign: 'center', fontStyle: 'bold' }, 7: { cellWidth: 'auto', halign: 'right', fontStyle: 'bold' }
+          ...gridColumns,
+          2: { ...gridColumns[2], halign: 'right' },
+          4: { ...gridColumns[4], halign: 'right' },
+          5: { ...gridColumns[5], halign: 'center' },
+          6: { ...gridColumns[6], halign: 'center' },
+          7: { ...gridColumns[7], halign: 'right', fontStyle: 'bold' }
         },
         body: [
-          ['ANNUAL SALARY', (slip.annualSalary || 0).toFixed(2), 'YTD SSF (WORKER)', '0.00', { content: 'EMPLOYER S.S.F.', colSpan: 2 }, { content: 'PAYMENT MODE', styles: { halign: 'center' } }, { content: 'NET SALARY', styles: { halign: 'center' } }],
-          ['YTD GROSS PAY', (slip.ytdGross || 0).toFixed(2), 'YTD INCOME TAX', '0.00', 'MONTHLY', '0.00', { content: 'Cash', rowSpan: 2, styles: { valign: 'middle', halign: 'center' } }, { content: (slip.netSalary || 0).toFixed(2), rowSpan: 2, styles: { valign: 'middle', halign: 'right', fontSize: 10 } }],
-          ['MONTHLY GROSS PAY', (slip.grossSalary || 0).toFixed(2), 'PAGE', '1', 'YTD', '0.00']
+          [
+            { content: 'ANNUAL SALARY', colSpan: 2, styles: { fontStyle: 'bold' } }, (slip.annualSalary || 0).toFixed(2),
+            'YTD SSF (WORKER)', '0.00', 'EMPLOYER S.S.F.',
+            { content: 'PAYMENT MODE', styles: { fontStyle: 'bold', halign: 'center' } },
+            { content: 'NET SALARY', styles: { halign: 'center' } }
+          ],
+          [
+            { content: 'YTD GROSS PAY', colSpan: 2, styles: { fontStyle: 'bold' } }, (slip.ytdGross || 0).toFixed(2),
+            'YTD INCOME TAX', '0.00', 'MONTHLY: 0.00',
+            { content: 'Cash', rowSpan: 2, styles: { valign: 'middle', halign: 'center' } },
+            { content: (slip.netSalary || 0).toFixed(2), rowSpan: 2, styles: { valign: 'middle', halign: 'right', fontSize: 10 } }
+          ],
+          [
+            { content: 'MONTHLY GROSS PAY', colSpan: 2, styles: { fontStyle: 'bold' } }, (slip.grossSalary || 0).toFixed(2),
+            'PAGE', '1', 'YTD: 0.00'
+          ]
         ]
       });
       doc.setFontSize(8);
