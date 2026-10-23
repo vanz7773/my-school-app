@@ -23,8 +23,51 @@ test('common subject abbreviations sort correctly and additional subjects remain
   assert.equal(sorted.length, subjects.length);
 });
 
-test('unconfirmed primary order and nursery reports retain their existing order', () => {
+test('nursery and unknown classes retain their existing order', () => {
   const subjects = [{ name: 'Maths' }, { name: 'English' }];
-  for (const level of ['Basic 1', 'Basic 6', 'KG 2', 'Nursery', 'Unknown']) assert.deepEqual(orderReportSubjects(subjects, level), subjects);
+  for (const level of ['KG 2', 'Nursery', 'Unknown']) assert.deepEqual(orderReportSubjects(subjects, level), subjects);
   assert.equal(getBasicLevel('Junior High School 3'), 9);
+});
+
+
+test('Basic 4-6 reports use their separate nine-subject order and preserve scores', () => {
+  const labels = ['English Language', 'Mathematics', 'Science', 'Ghanaian Language', 'French', 'Computing', 'History', 'Religious and Moral Education (RME)', 'Creative Arts'];
+  const subjects = labels.map((name, index) => ({ subject: { name }, total: 60 + index })).reverse();
+  const original = [...subjects];
+  for (const className of ['Basic 4', 'Basic 5', 'Basic 6', 'Primary 4', 'BS6A']) {
+    const sorted = orderReportSubjects(subjects, className);
+    assert.deepEqual(sorted.map(item => item.subject.name), labels);
+    sorted.forEach((item, index) => {
+      assert.equal(item.total, 60 + index);
+      assert.ok(subjects.includes(item));
+    });
+  }
+  assert.deepEqual(subjects, original);
+});
+
+test('primary subject aliases use primary positions and retain extra subjects', () => {
+  const labels = ['Extra B', 'R.M.E.', 'History of Ghana', 'ICT', 'Ga Language', 'French', 'Creative Arts', 'Extra A'];
+  const sorted = orderReportSubjects(labels.map(name => ({ name })), 'Basic 5');
+  assert.deepEqual(sorted.map(item => item.name), ['Ga Language', 'French', 'ICT', 'History of Ghana', 'R.M.E.', 'Creative Arts', 'Extra B', 'Extra A']);
+});
+
+
+test('Basic 1-3 reports use the seven-subject order without changing scores or input', () => {
+  const labels = ['English Language', 'Mathematics', 'Science', 'Ghanaian Language (Twi/Ga)', 'History', 'Religious and Moral Education (RME)', 'Creative Arts'];
+  const subjects = labels.map((name, index) => ({ subject: { name }, total: 70 + index })).reverse();
+  const original = [...subjects];
+  for (const className of ['Basic 1', 'Basic 2', 'Basic 3', 'Primary 1', 'BS3A']) {
+    const sorted = orderReportSubjects(subjects, className);
+    assert.deepEqual(sorted.map(item => item.subject.name), labels);
+    sorted.forEach((item, index) => {
+      assert.equal(item.total, 70 + index);
+      assert.ok(subjects.includes(item));
+    });
+  }
+  assert.deepEqual(subjects, original);
+});
+
+test('lower primary aliases sort correctly and retain additional subjects', () => {
+  const subjects = ['Extra B', 'Creative Arts', 'R.M.E.', 'History of Ghana', 'Twi', 'Science', 'Maths', 'English', 'Extra A'].map(name => ({ name }));
+  assert.deepEqual(orderReportSubjects(subjects, 'Basic 2').map(item => item.name), ['English', 'Maths', 'Science', 'Twi', 'History of Ghana', 'R.M.E.', 'Creative Arts', 'Extra B', 'Extra A']);
 });

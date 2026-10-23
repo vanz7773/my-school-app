@@ -1,4 +1,4 @@
-const SUBJECT_ORDER = [
+const JUNIOR_HIGH_ORDER = [
   ['englishlanguage', 'english'],
   ['mathematics', 'maths', 'math'],
   ['science', 'integratedscience', 'generalscience'],
@@ -9,6 +9,24 @@ const SUBJECT_ORDER = [
   ['computing', 'ict', 'informationandcommunicationtechnology'],
   ['careertechnology', 'basicdesignandtechnology', 'bdt'],
   ['creativeartsanddesign', 'creativearts'],
+];
+
+const UPPER_PRIMARY_ORDER = [
+  ...JUNIOR_HIGH_ORDER.slice(0, 3),
+  JUNIOR_HIGH_ORDER[5],
+  JUNIOR_HIGH_ORDER[6],
+  JUNIOR_HIGH_ORDER[7],
+  ['history', 'historyofghana', 'ghanahistory'],
+  JUNIOR_HIGH_ORDER[4],
+  JUNIOR_HIGH_ORDER[9],
+];
+
+const LOWER_PRIMARY_ORDER = [
+  ...JUNIOR_HIGH_ORDER.slice(0, 3),
+  JUNIOR_HIGH_ORDER[5],
+  UPPER_PRIMARY_ORDER[6],
+  JUNIOR_HIGH_ORDER[4],
+  JUNIOR_HIGH_ORDER[9],
 ];
 
 const normalizeSubject = value => String(value || '').toLowerCase().replace(/\([^)]*\)/g, '').replace(/&/g, 'and').replace(/[^a-z0-9]/g, '');
@@ -23,13 +41,13 @@ const getBasicLevel = className => {
 function orderReportSubjects(subjects, className) {
   const level = getBasicLevel(className);
   if (!Array.isArray(subjects)) return [];
-  if (level < 7 || level > 9 || level === null) return [...subjects];
+  if (level === null || level < 1 || level > 9) return [...subjects];
+  const subjectOrder = level <= 3 ? LOWER_PRIMARY_ORDER : level <= 6 ? UPPER_PRIMARY_ORDER : JUNIOR_HIGH_ORDER;
   const ranked = subjects.map((subject, index) => {
-    const name = normalizeSubject(subject.subject?.name || subject.subject?.subjectName || subject.name || subject.subjectName);
-    let rank = SUBJECT_ORDER.findIndex(aliases => aliases.includes(name));
-    if (rank < 0 && name.startsWith('ghanaianlanguage')) rank = 5;
-    if (rank < 0 && /^(twi|ga|ewe|fante)language$/.test(name)) rank = 5;
-    return { subject, index, rank: rank < 0 ? SUBJECT_ORDER.length : rank };
+    let name = normalizeSubject(subject.subject?.name || subject.subject?.subjectName || subject.name || subject.subjectName);
+    if (name.startsWith('ghanaianlanguage') || /^(twi|ga|ewe|fante)language$/.test(name)) name = 'ghanaianlanguage';
+    const rank = subjectOrder.findIndex(aliases => aliases.includes(name));
+    return { subject, index, rank: rank < 0 ? subjectOrder.length : rank };
   });
   // Preserve every score and retain the original order of extra/unrecognized subjects.
   return ranked.sort((a, b) => a.rank - b.rank || a.index - b.index).map(item => item.subject);
