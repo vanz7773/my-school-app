@@ -93,6 +93,7 @@ test('V2 report controller generates old-term marks for a student now in a new c
   await reports.getClassReportCards({ user: { role: 'admin', school: schoolId }, query: { schoolId, classId, termId } }, res);
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.className, 'BS 3');
+  assert.equal(res.body.vacationDate, '2020-06-01');
   assert.equal(res.body.data[0].studentInfo.name, 'Ama');
   assert.equal(res.body.data[0].subjects[0].total, 90);
 });

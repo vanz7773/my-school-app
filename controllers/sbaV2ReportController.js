@@ -1,5 +1,6 @@
 const { orderReportSubjects } = require('../services/reportSubjectOrder');
 const { getTermStudents, resolveReportClass } = require('../services/sbaReportHistory');
+const Term = require('../models/term');
 const SbaRecord = require("../models/SbaRecord");
 const Student = require("../models/Student");
 const Class = require("../models/Class");
@@ -44,6 +45,7 @@ exports.getClassReportCards = async (req, res) => {
     classId = await resolveReportClass(req);
     const classDoc = await Class.findOne({ _id: classId, school: schoolId }).select("name displayName stream").lean();
     if (!classDoc) return res.status(404).json({ message: 'Class not found' });
+    const reportTerm = await Term.findOne({ _id: termId, school: schoolId }).select('endDate').lean();
     const className = classDoc.displayName || (classDoc.stream ? `${classDoc.name}${classDoc.stream}` : classDoc.name) || "";
     const allSbaRecords = await SbaRecord.find({ school: schoolId, class: classId, term: termId })
       .populate("subject", "name subjectName code").sort({ updatedAt: -1 }).lean();
@@ -215,6 +217,7 @@ exports.getClassReportCards = async (req, res) => {
       success: true,
       classId,
       className,
+      vacationDate: reportTerm?.endDate || null,
       data: reportCards,
     });
 
