@@ -1218,16 +1218,19 @@ const getClassTermAttendance = async (req, res) => {
       resolvedTermId = resolvedTerm._id;
     }
 
-    const students = await Student.find({ class: classId, school: schoolId }).populate('user', 'name').lean();
-    if (!students || students.length === 0) {
-      return res.json([]);
-    }
-
     const attendanceRecords = await StudentAttendance.find({
       school: schoolId,
       class: classId,
       termId: resolvedTermId
     }).lean();
+    // Attendance belongs to the original class/term even after promotion.
+    const selectedTerm = await Term.findOne({ _id: resolvedTermId, school: schoolId }).lean();
+    const historical = selectedTerm?.endDate && new Date(selectedTerm.endDate) < new Date();
+    const recordedStudentIds = [...new Set(attendanceRecords.map(record => String(record.student)))];
+    const rosterQuery = historical
+      ? { _id: { $in: recordedStudentIds }, school: schoolId }
+      : { school: schoolId, $or: [{ class: classId }, { _id: { $in: recordedStudentIds } }] };
+    const students = await Student.find(rosterQuery).populate('user', 'name').lean();
 
     // Group attendance by student
     const result = students.map(student => {
@@ -1236,6 +1239,9 @@ const getClassTermAttendance = async (req, res) => {
 
       return {
         _id: studentId,
+        studentDocId: studentId,
+        user: student.user,
+        studentId: student.studentId || '',
         admissionNumber: student.admissionNumber || '',
         name: student.user?.name || student.name || 'Unknown',
         gender: student.gender || 'Unknown',
