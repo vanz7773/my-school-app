@@ -61,6 +61,9 @@ const studentSchema = new mongoose.Schema({
     { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
   ],
 
+  // Archive the original class and storage path for each student's term report.
+  reportCardMetadata: { type: Map, of: mongoose.Schema.Types.Mixed, default: {} },
+
   // ⭐ Report Card storage
   reportCards: {
     type: Map,

@@ -18,6 +18,7 @@ const VALID_TYPES = [
   'exam-report',
   'report-card',
   'transaction',
+  'salary-payment',
 ];
 
 const VALID_AUDIENCES = ['admin', 'teacher', 'student', 'parent', 'all', 'class', 'specific'];
@@ -125,6 +126,7 @@ const notificationSchema = new mongoose.Schema(
         'AgendaEvent',
         'QuizSession',  // ✅ ADDED
         'Movement',
+        'Payroll',
       ],
     },
 

@@ -31,7 +31,7 @@ test('dynamic payroll references resolve teachers and payroll-only staff', async
 test('salary SMS rejects drafts, skips sent slips, and releases failed claims', async () => {
   const originals = [Payroll.findOne, Payroll.updateOne, Staff.findOne, sms.sendSms];
   const school = id();
-  const batch = { _id: id(), status: 'Draft', month: '2026-10', payslips: [] };
+  const batch = { _id: id(), school, status: 'Draft', month: '2026-10', payslips: [] };
   Payroll.findOne = async () => batch;
   try {
     let res = response();
@@ -39,7 +39,7 @@ test('salary SMS rejects drafts, skips sent slips, and releases failed claims', 
     assert.equal(res.statusCode, 400);
     batch.status = 'Paid';
     batch.payslips = [
-      { _id: id(), salarySmsSentAt: new Date() },
+      { _id: id(), salaryPaidSmsSentAt: new Date() },
       { _id: id(), teacher: id(), employeeModel: 'PayrollStaff', teacherName: 'Cook', contactPhone: '0241234567', grossSalary: 1000, totalDeductions: 100, netSalary: 900, referenceNumber: 'PAY-2026-10-ABCD' }
     ];
     Staff.findOne = async () => ({ phone: '0241234567' });
@@ -49,7 +49,7 @@ test('salary SMS rejects drafts, skips sent slips, and releases failed claims', 
     res = response();
     await controller.sendSalarySms({ params: { id: batch._id }, user: { school } }, res);
     assert.equal(res.body.sent, 1); assert.equal(res.body.skipped, 1);
-    assert.ok(updates[1].$set['payslips.$.salarySmsSentAt']);
+    assert.ok(updates[1].$set['payslips.$.salaryPaidSmsSentAt']);
     const originalTeacherFind = Teacher.findOne;
     try {
       batch.payslips[1].employeeModel = 'Teacher';
@@ -63,7 +63,7 @@ test('salary SMS rejects drafts, skips sent slips, and releases failed claims', 
     res = response();
     await controller.sendSalarySms({ params: { id: batch._id }, user: { school } }, res);
     assert.equal(res.body.failed, 1);
-    assert.equal(updates.at(-1).$set['payslips.$.salarySmsSending'], false);
+    assert.equal(updates.at(-1).$set['payslips.$.salaryPaidSmsSending'], false);
   } finally { [Payroll.findOne, Payroll.updateOne, Staff.findOne, sms.sendSms] = originals; }
 });
 

@@ -1,3 +1,4 @@
+const { getTermStudents, resolveReportClass } = require('../services/sbaReportHistory');
 const SbaRecord = require("../models/SbaRecord");
 const Student = require("../models/Student");
 const Class = require("../models/Class");
@@ -32,32 +33,21 @@ const calculateGrade = (total, className = "") => {
  */
 exports.getClassReportCards = async (req, res) => {
   try {
-    const { schoolId, classId, termId } = req.query;
+    const { schoolId, termId } = req.query;
+    let { classId } = req.query;
 
     if (!schoolId || !classId || !termId) {
       return res.status(400).json({ message: "Missing required parameters: schoolId, classId, termId" });
     }
 
-    // 1. Find all students in the class
-    const studentDocs = await Student.find({ class: classId })
-      .populate("user", "name profilePicture")
-      .lean();
-
-    const students = studentDocs.filter(s => s.user);
-    const classDoc = await Class.findOne({ _id: classId, school: schoolId })
-      .select("name displayName stream")
-      .lean();
-    const className = classDoc?.displayName || (classDoc?.stream ? `${classDoc.name}${classDoc.stream}` : classDoc?.name) || "";
-    
-    // 2. Fetch all SBA records for this class and term across all subjects
-    const allSbaRecords = await SbaRecord.find({
-      school: schoolId,
-      class: classId,
-      term: termId,
-    })
-      .populate("subject", "name subjectName code")
-      .sort({ updatedAt: -1 })
-      .lean();
+    classId = await resolveReportClass(req);
+    const classDoc = await Class.findOne({ _id: classId, school: schoolId }).select("name displayName stream").lean();
+    if (!classDoc) return res.status(404).json({ message: 'Class not found' });
+    const className = classDoc.displayName || (classDoc.stream ? `${classDoc.name}${classDoc.stream}` : classDoc.name) || "";
+    const allSbaRecords = await SbaRecord.find({ school: schoolId, class: classId, term: termId })
+      .populate("subject", "name subjectName code").sort({ updatedAt: -1 }).lean();
+    const studentDocs = await getTermStudents({ schoolId, classId, termId, records: allSbaRecords });
+    const students = studentDocs.filter(student => student.user);
     const seenSubjectIds = new Set();
     const sbaRecords = [];
 
@@ -221,11 +211,13 @@ exports.getClassReportCards = async (req, res) => {
 
     return res.status(200).json({
       success: true,
+      classId,
+      className,
       data: reportCards,
     });
 
   } catch (error) {
     console.error("Error fetching class report cards:", error);
-    return res.status(500).json({ message: "Internal server error", error: error.message });
+    return res.status(error.statusCode || 500).json({ message: error.statusCode ? error.message : "Internal server error", error: error.message });
   }
 };

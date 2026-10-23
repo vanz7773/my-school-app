@@ -1,17 +1,14 @@
 const PayrollStaff = require('../models/PayrollStaff');
-const smsService = require('../services/smsService');
+const { notifyPaidPayroll, notificationSummary } = require('../services/payrollNotifications');
 const PayrollSettings = require('../models/PayrollSettings');
 const TeacherSalary = require('../models/TeacherSalary');
 const Payroll = require('../models/Payroll');
 const Teacher = require('../models/Teacher');
 const Attendance = require('../models/TeacherAttendance'); // existing model
 const SchoolInfo = require('../models/SchoolInfo');
+const { getPayslipLogo } = require('../services/payslipLogo');
 const { jsPDF } = require('jspdf');
 const autoTable = require('jspdf-autotable').default;
-const axios = require('axios');
-const Jimp = require('jimp');
-const path = require('path');
-const fs = require('fs');
 
 // PayrollSettings CRUD
 exports.getSettings = async (req, res) => {
@@ -313,12 +310,23 @@ exports.updatePayrollStatus = async (req, res) => {
         updateData.paidBy = req.user._id;
     }
 
-    const payroll = await Payroll.findOneAndUpdate(
+    let payroll = await Payroll.findOneAndUpdate(
        { _id: id, school: req.user.school, status: previousStatus },
        updateData,
        { new: true }
     );
+    // A repeated payment request retries only pending notifications and preserves the original payment date.
+    if (!payroll && status === 'Paid') payroll = await Payroll.findOne({ _id: id, school: req.user.school, status: 'Paid' });
     if (!payroll) return res.status(409).json({ message: 'Payroll not found or status has already changed' });
+    if (status === 'Paid') {
+      try {
+        const notifications = await notifyPaidPayroll(payroll);
+        return res.json({ success: true, payroll, notifications, message: `Payroll marked as Paid. ${notificationSummary(notifications)}` });
+      } catch (error) {
+        console.error('Paid payroll notification processing failed:', error.message);
+        return res.json({ success: true, payroll, notificationsError: true, message: 'Payroll is Paid, but notification processing failed. Use Retry Payment Notifications.' });
+      }
+    }
     res.json({ success: true, payroll });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -368,12 +376,16 @@ exports.downloadPdf = async (req, res) => {
     }
 
     let slipsToPrint = payroll.payslips;
-    if (teacherId) {
-      slipsToPrint = payroll.payslips.filter(s => String(s.teacher) === String(teacherId));
-    } else if (req.user.role === 'teacher') {
-      const teacher = await Teacher.findOne({ user: req.user._id });
+    if (req.user.role === 'teacher') {
+      const teacher = await Teacher.findOne({ user: req.user._id, school: req.user.school });
       if (!teacher) return res.status(404).json({ success: false, message: 'Teacher record not found' });
+      if (teacherId && String(teacherId) !== String(teacher._id)) return res.status(403).json({ message: 'You can only download your own payslip' });
+      if (!['Approved', 'Paid'].includes(payroll.status)) return res.status(403).json({ message: 'Payslip is not available yet' });
       slipsToPrint = payroll.payslips.filter(s => String(s.teacher) === String(teacher._id));
+    } else if (['admin', 'superadmin'].includes(req.user.role)) {
+      if (teacherId) slipsToPrint = payroll.payslips.filter(s => String(s.teacher) === String(teacherId));
+    } else {
+      return res.status(403).json({ message: 'You do not have access to payslips' });
     }
 
     if (slipsToPrint.length === 0) {
@@ -382,37 +394,8 @@ exports.downloadPdf = async (req, res) => {
 
     const schoolInfo = await SchoolInfo.findOne({ school: req.user.school });
     
-    let logoBase64 = null;
-    let grayLogoBase64 = null;
-    if (schoolInfo && schoolInfo.logo) {
-      try {
-        let rawBuffer = null;
-        const isAbsolute = schoolInfo.logo.startsWith('http');
-        if (isAbsolute) {
-          const response = await axios.get(schoolInfo.logo, { responseType: 'arraybuffer' });
-          rawBuffer = Buffer.from(response.data, 'binary');
-        } else {
-          const filePath = path.join(__dirname, '..', schoolInfo.logo);
-          if (fs.existsSync(filePath)) {
-            rawBuffer = fs.readFileSync(filePath);
-          }
-        }
-        
-        if (rawBuffer) {
-          const ext = path.extname(schoolInfo.logo).toLowerCase().replace('.', '') || 'png';
-          logoBase64 = `data:image/${ext};base64,${rawBuffer.toString('base64')}`;
-          
-          const image = await Jimp.read(rawBuffer);
-          image.greyscale();
-          const grayBuffer = await image.getBufferAsync(Jimp.MIME_PNG);
-          grayLogoBase64 = `data:image/png;base64,${grayBuffer.toString('base64')}`;
-        }
-      } catch (err) {
-        console.error("Logo fetch failed", err);
-      }
-    }
-
-    const doc = new jsPDF({ orientation: 'landscape', format: 'a5' });
+    const { logoBase64, grayLogoBase64 } = await getPayslipLogo(schoolInfo, req.user.school);
+    const doc = new jsPDF({ orientation: 'landscape', format: 'a5', compress: true });
     // All sections share the same eight-column grid (182 mm inside 14 mm margins).
     const columnWidths = [26, 18, 18, 38, 20, 20, 21, 21];
     const gridColumns = Object.fromEntries(columnWidths.map((cellWidth, index) => [index, { cellWidth }]));
@@ -548,6 +531,7 @@ exports.downloadPdf = async (req, res) => {
       ? `Payslip_${longMonth}_${yearNum}.pdf`
       : `Batch_Payslips_${longMonth}_${yearNum}.pdf`;
 
+    res.setHeader('Cache-Control', 'private, no-store');
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     return res.send(pdfBuffer);
@@ -569,39 +553,14 @@ exports.createPayrollStaff = async (req, res) => {
   } catch (err) { res.status(400).json({ message: err.message }); }
 };
 
-exports.sendSalarySms = async (req, res) => {
+const sendPaymentNotifications = async (req, res, smsOnly = false) => {
   try {
     const payroll = await Payroll.findOne({ _id: req.params.id, school: req.user.school });
     if (!payroll) return res.status(404).json({ message: 'Payroll not found' });
-    if (!['Approved', 'Paid'].includes(payroll.status)) return res.status(400).json({ message: 'Approve payroll before sending salary SMS' });
-    let sent = 0, skipped = 0, failed = 0;
-    for (const slip of payroll.payslips) {
-      if (slip.salarySmsSentAt) { skipped++; continue; }
-      const Model = slip.employeeModel === 'PayrollStaff' ? PayrollStaff : Teacher;
-      const employee = await Model.findOne({ _id: slip.teacher, school: req.user.school });
-      let phone = slip.contactPhone || employee?.phone;
-      if (!phone && employee?.user) {
-        const user = await require('../models/User').findById(employee.user).select('phone');
-        phone = user?.phone;
-      }
-      if (!phone) { failed++; continue; }
-      const claim = await Payroll.updateOne({ _id: payroll._id, school: req.user.school,
-        payslips: { $elemMatch: { _id: slip._id, salarySmsSentAt: null, $or: [{ salarySmsSending: { $ne: true } }, { salarySmsClaimedAt: { $lt: new Date(Date.now() - 10 * 60 * 1000) } }]  } } },
-        { $set: { 'payslips.$.salarySmsSending': true, 'payslips.$.salarySmsClaimedAt': new Date() } });
-      if (!claim.modifiedCount) { skipped++; continue; }
-      try {
-        const [salaryYear, salaryMonth] = payroll.month.split('-').map(Number);
-        const salaryPeriod = new Date(Date.UTC(salaryYear, salaryMonth - 1, 1))
-          .toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }).toUpperCase();
-        const message = `${slip.teacherName}, your salary for ${salaryPeriod} is ${payroll.status.toLowerCase()}. Gross: GHS ${Number(slip.grossSalary || 0).toFixed(2)}. Deductions: GHS ${Number(slip.totalDeductions || 0).toFixed(2)}. Net pay: GHS ${Number(slip.netSalary || 0).toFixed(2)}. Ref: ${slip.referenceNumber}.${slip.employeeModel !== 'PayrollStaff' ? ' Open the mobile app to view your payslip.' : ''}`;
-        await smsService.sendSms({ schoolId: req.user.school, recipients: [phone], message, messageType: 'custom' });
-        await Payroll.updateOne({ _id: payroll._id, 'payslips._id': slip._id }, { $set: { 'payslips.$.salarySmsSentAt': new Date(), 'payslips.$.salarySmsSending': false } });
-        sent++;
-      } catch (err) {
-        failed++;
-        await Payroll.updateOne({ _id: payroll._id, 'payslips._id': slip._id }, { $set: { 'payslips.$.salarySmsSending': false } });
-      }
-    }
-    res.json({ success: true, sent, skipped, failed, message: `${sent} salary SMS sent, ${skipped} already sent or in progress, ${failed} failed (check phone numbers, SMS settings and balance).` });
+    if (payroll.status !== 'Paid') return res.status(400).json({ message: 'Mark payroll as paid before sending payment notifications' });
+    const notifications = await notifyPaidPayroll(payroll, { sms: true, push: !smsOnly, inApp: !smsOnly });
+    res.json({ success: true, notifications, ...notifications.sms, message: notificationSummary(notifications) });
   } catch (err) { res.status(500).json({ message: err.message }); }
 };
+exports.sendSalarySms = (req, res) => sendPaymentNotifications(req, res, true);
+exports.sendPaymentNotifications = (req, res) => sendPaymentNotifications(req, res);

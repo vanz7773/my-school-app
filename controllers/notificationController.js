@@ -114,7 +114,8 @@ function buildNotificationPayload(req, body) {
 /* ------------------------------------------------------------------
    PUSH NOTIFICATION SERVICE
 ------------------------------------------------------------------ */
-async function sendPushNotifications(userIds, title, message, data = {}) {
+async function sendPushNotifications(userIds, title, message, data = {}, options = {}) {
+  let acceptedCount = 0;
   try {
     if (!userIds || userIds.length === 0) return;
 
@@ -166,14 +167,17 @@ async function sendPushNotifications(userIds, title, message, data = {}) {
 
     for (let chunk of chunks) {
       try {
-        await expo.sendPushNotificationsAsync(chunk);
+        const tickets = await expo.sendPushNotificationsAsync(chunk);
+        acceptedCount += tickets.filter(ticket => ticket.status === 'ok').length;
+        if (options.throwOnError && tickets.some(ticket => ticket.status === 'error')) throw new Error('Push provider rejected one or more devices');
       } catch (error) {
         console.error("Error sending push notification chunk:", error);
+        if (options.throwOnError) throw error;
       }
     }
 
     // --- 2. Web Push ---
-    const webTokens = await PushToken.find({
+    const webTokens = options.mobileOnly ? [] : await PushToken.find({
       userId: { $in: userIds },
       platform: 'web',
       disabled: { $ne: true }
@@ -185,18 +189,22 @@ async function sendPushNotifications(userIds, title, message, data = {}) {
       await Promise.all(webTokens.map(async (tokenDoc) => {
         try {
           await webpush.sendNotification(tokenDoc.subscription, payload);
+          acceptedCount++;
         } catch (error) {
           console.error('Error sending web push:', error);
           if (error.statusCode === 410 || error.statusCode === 404) {
             await PushToken.findByIdAndUpdate(tokenDoc._id, { disabled: true });
           }
+          if (options.throwOnError) throw error;
         }
       }));
     }
 
   } catch (error) {
     console.error("Error in sendPushNotifications:", error);
+    if (options.throwOnError) throw error;
   }
+  return { acceptedCount };
 }
 exports.sendPushNotifications = sendPushNotifications;
 

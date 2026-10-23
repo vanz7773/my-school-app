@@ -17,6 +17,7 @@ router.get('/settings', payrollController.getSettings);
 router.post('/settings', payrollController.updateSettings);
 
 router.post('/staff', payrollController.createPayrollStaff);
+router.post('/:id/payment-notifications', payrollController.sendPaymentNotifications);
 router.post('/:id/salary-sms', payrollController.sendSalarySms);
 
 router.get('/salaries', payrollController.getTeacherSalaries);

@@ -1,3 +1,4 @@
+const { freshReportUrl } = require('../services/sbaReportHistory');
 const path = require("path");
 const fs = require("fs");
 const multer = require("multer");
@@ -2257,13 +2258,14 @@ exports.uploadReportSheetPDF = [
             $set: {
               [`reportCards.${termKey}`]: studentUrl,
               // Optionally store metadata separately if needed (not as key)
-              reportCardMetadata: {
-                [termKey]: {
-                  termNumber: termDoc.term,
-                  academicYear: termDoc.academicYear,
-                  uploadedAt: new Date(),
-                  uploadedBy: req.user?._id
-                }
+              [`reportCardMetadata.${termKey}`]: {
+                termNumber: termDoc.term,
+                academicYear: termDoc.academicYear,
+                uploadedAt: new Date(),
+                uploadedBy: req.user?._id,
+                classId,
+                className: classDisplayName,
+                storagePath: studentDest,
               }
             }
           });
@@ -2473,9 +2475,7 @@ exports.getMyReportSheet = async (req, res) => {
     // --------------------------
     // FETCH STUDENT-SPECIFIC PDF
     // --------------------------
-    const pdfUrl =
-      targetStudent.reportCards?.[termKey] ||
-      targetStudent.reportCards?.get?.(termKey);
+    const pdfUrl = await freshReportUrl(targetStudent, termKey);
 
     // --------------------------
     // CASE 1 → INDIVIDUAL REPORT EXISTS

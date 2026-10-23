@@ -1,3 +1,4 @@
+const { getTermStudents } = require('../services/sbaReportHistory');
 const fs = require("fs");
 const multer = require("multer");
 const admin = require("firebase-admin");
@@ -104,6 +105,10 @@ const applyStudentOrder = (students, studentOrder) => {
     return;
   }
 
+  const ordered = studentOrder.map(id => students.find(student => [toIdString(student._id), toIdString(student.user)].includes(String(id))));
+  if (ordered.length !== students.length || ordered.some(student => !student) || new Set(ordered.map(student => toIdString(student._id))).size !== students.length) {
+    throw Object.assign(new Error('The report student order does not match this class and term. Generate the report again.'), { statusCode: 400 });
+  }
   const orderById = new Map(studentOrder.map((id, index) => [id, index]));
   const getStudentOrderIndex = (student) => {
     const possibleIds = [
@@ -478,15 +483,14 @@ exports.getClassAveragesForChart = async (req, res) => {
 exports.getSubjectMarks = async (req, res) => {
   try {
     const { schoolId, classId, termId, subjectId } = req.query;
+    if (req.user.role !== 'superadmin' && String(req.user.school?._id || req.user.school) !== String(schoolId)) return res.status(403).json({ message: 'School access denied' });
 
     if (!schoolId || !classId || !termId || !subjectId) {
       return res.status(400).json({ message: "Missing required parameters: schoolId, classId, termId, subjectId" });
     }
 
     // 1. Find all students in the class using the Student collection
-    const studentDocs = await Student.find({ class: classId })
-      .populate("user", "name profilePicture")
-      .lean();
+    const studentDocs = await getTermStudents({ schoolId, classId, termId });
 
     const students = studentDocs.filter(s => s.user); // Ensure user is not null
     const classObj = await Class.findById(classId).select("name displayName stream").lean();
@@ -594,6 +598,7 @@ exports.getSubjectMarks = async (req, res) => {
 exports.saveSubjectMarks = async (req, res) => {
   try {
     const { schoolId, classId, termId, subjectId, records } = req.body;
+    if (req.user.role !== 'superadmin' && String(req.user.school?._id || req.user.school) !== String(schoolId)) return res.status(403).json({ message: 'School access denied' });
 
     if (!schoolId || !classId || !termId || !subjectId || !records || !Array.isArray(records)) {
       return res.status(400).json({ message: "Missing required parameters or records payload" });
@@ -602,7 +607,7 @@ exports.saveSubjectMarks = async (req, res) => {
     // Fetch the class to determine the grading system based on class name
     const classObj = await Class.findById(classId).lean();
     const className = classObj ? (classObj.name || "") : "";
-    const studentDocs = await Student.find({ class: classId }).select("_id user").lean();
+    const studentDocs = await getTermStudents({ schoolId, classId, termId });
     const studentLookup = {};
     studentDocs.forEach((student) => {
       const studentDocId = toIdString(student._id);
@@ -695,6 +700,8 @@ exports.uploadGeneratedReportCards = [
         return res.status(400).json({ message: "No report PDF uploaded" });
       }
 
+      tempFilePath = req.file.path;
+
       const { classId, termId, schoolId, studentOrder: studentOrderRaw } = req.body;
 
       if (!classId || !termId || !schoolId) {
@@ -709,7 +716,8 @@ exports.uploadGeneratedReportCards = [
         });
       }
 
-      const termDoc = await Term.findById(termId).lean();
+      if (req.user.role !== 'superadmin' && String(req.user.school?._id || req.user.school) !== String(schoolId)) return res.status(403).json({ message: 'School access denied' });
+      const termDoc = await Term.findOne({ _id: termId, school: schoolId }).lean();
       if (!termDoc) {
         return res.status(400).json({ message: "Term not found" });
       }
@@ -718,34 +726,13 @@ exports.uploadGeneratedReportCards = [
       const termLabel = formatTermLabel(termDoc.term);
       const studentOrder = parseStringArray(studentOrderRaw);
 
-      tempFilePath = req.file.path;
       const bucket = admin.storage().bucket();
       const destination = `reportcards/${schoolId}/${classId}/${termKey}/REPORT.pdf`;
 
-      await bucket.upload(tempFilePath, {
-        destination,
-        metadata: { contentType: "application/pdf" },
-      });
+      const classDoc = await Class.findOne({ _id: classId, school: schoolId }).lean();
+      if (!classDoc) return res.status(404).json({ message: 'Class not found' });
 
-      const [pdfUrl] = await bucket.file(destination).getSignedUrl({
-        action: "read",
-        expires: Date.now() + 365 * 24 * 60 * 60 * 1000,
-      });
-
-      const classDoc = await Class.findByIdAndUpdate(
-        classId,
-        { $set: { reportSheetPdfUrl: pdfUrl } },
-        { new: true, runValidators: true }
-      );
-
-      if (!classDoc) {
-        return res.status(404).json({ message: "Class not found" });
-      }
-
-      const students = await Student.find({ class: classId })
-        .populate("user", "name")
-        .populate("parent parentIds")
-        .lean();
+      const students = await getTermStudents({ schoolId, classId, termId, includeParents: true });
 
       if (!students.length) {
         return res.status(400).json({ message: "No students found for this class" });
@@ -758,11 +745,12 @@ exports.uploadGeneratedReportCards = [
       const pageCount = finalDoc.getPageCount();
 
       if (pageCount !== students.length) {
-        console.warn("SBA V2 report PDF page/student count mismatch", {
-          pageCount,
-          studentCount: students.length,
-        });
+        return res.status(400).json({ message: 'The PDF page count does not match the students recorded for this term. Generate the report again for the selected class and term.' });
       }
+
+      await bucket.upload(tempFilePath, { destination, metadata: { contentType: 'application/pdf' } });
+      const [pdfUrl] = await bucket.file(destination).getSignedUrl({ action: 'read', expires: Date.now() + 365 * 24 * 60 * 60 * 1000 });
+      await Class.findOneAndUpdate({ _id: classId, school: schoolId }, { $set: { reportSheetPdfUrl: pdfUrl } }, { runValidators: true });
 
       const uploadedReports = {};
       const notifications = [];
@@ -800,6 +788,9 @@ exports.uploadGeneratedReportCards = [
                 uploadedAt: new Date(),
                 uploadedBy: req.user?._id,
                 source: "sba-v2",
+                classId: classDoc._id,
+                className: resolveClassDisplayName(classDoc),
+                storagePath: studentDest,
               },
             },
           });
@@ -928,8 +919,8 @@ exports.uploadGeneratedReportCards = [
       });
     } catch (error) {
       console.error("Error in SBA V2 report-card upload:", error);
-      return res.status(500).json({
-        message: "Failed to process SBA V2 report cards",
+      return res.status(error.statusCode || 500).json({
+        message: error.statusCode ? error.message : "Failed to process SBA V2 report cards",
         error: error.message,
       });
     } finally {
