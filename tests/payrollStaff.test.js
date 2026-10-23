@@ -45,11 +45,20 @@ test('salary SMS rejects drafts, skips sent slips, and releases failed claims', 
     Staff.findOne = async () => ({ phone: '0241234567' });
     const updates = [];
     Payroll.updateOne = async (filter, update) => { updates.push(update); return { modifiedCount: 1 }; };
-    sms.sendSms = async args => { assert.match(args.message, /Net pay: GHS 900.00/); assert.equal(args.schoolId, school); };
+    sms.sendSms = async args => { assert.match(args.message, /your salary for OCTOBER 2026 is paid/); assert.doesNotMatch(args.message, /Open the mobile app/); assert.match(args.message, /Net pay: GHS 900.00/); assert.equal(args.schoolId, school); };
     res = response();
     await controller.sendSalarySms({ params: { id: batch._id }, user: { school } }, res);
     assert.equal(res.body.sent, 1); assert.equal(res.body.skipped, 1);
     assert.ok(updates[1].$set['payslips.$.salarySmsSentAt']);
+    const originalTeacherFind = Teacher.findOne;
+    try {
+      batch.payslips[1].employeeModel = 'Teacher';
+      Teacher.findOne = async () => ({ phone: '0241234567' });
+      sms.sendSms = async args => { assert.match(args.message, /Open the mobile app to view your payslip\./); };
+      res = response();
+      await controller.sendSalarySms({ params: { id: batch._id }, user: { school } }, res);
+      assert.equal(res.body.sent, 1);
+    } finally { Teacher.findOne = originalTeacherFind; batch.payslips[1].employeeModel = 'PayrollStaff'; }
     sms.sendSms = async () => { throw new Error('SMS disabled'); };
     res = response();
     await controller.sendSalarySms({ params: { id: batch._id }, user: { school } }, res);
@@ -71,4 +80,72 @@ test('salary assignments cannot target an employee outside the current school', 
     await controller.updateTeacherSalary({ user: { school }, body: { teacherId: employee, employeeModel: 'PayrollStaff', baseSalary: 1000 } }, res);
     assert.equal(res.statusCode, 404);
   } finally { Staff.findOne = original; }
+});
+
+test('salary save persists numeric components for teachers and non-teaching staff with formatted phones', async () => {
+  const originals = [Teacher.findOne, Staff.findOne, Salary.findOneAndUpdate];
+  const school = id(), employeeId = id();
+  Teacher.findOne = Staff.findOne = async filter => {
+    assert.equal(filter.school, school);
+    return { _id: employeeId };
+  };
+  let persisted;
+  Salary.findOneAndUpdate = async (filter, update, options) => {
+    assert.equal(filter.school, school);
+    assert.equal(filter.teacher, employeeId);
+    assert.equal(options.runValidators, true);
+    const doc = new Salary({ ...filter, ...update });
+    await doc.validate();
+    persisted = doc.toObject();
+    return doc;
+  };
+  try {
+    for (const employeeModel of ['Teacher', 'PayrollStaff']) {
+      for (const phone of ['024 123 4567', '+233 24 123 4567', '024-123-4567', '00233241234567', '241234567']) {
+        const res = response();
+        await controller.updateTeacherSalary({ user: { school }, body: {
+          teacherId: employeeId, employeeModel, baseSalary: '1250.75',
+          allowances: [{ name: 'Transport', amount: '50.25' }],
+          deductions: [{ name: 'SSNIT', amount: '20' }], contactPhone: phone,
+          accountDetails: { bankName: 'Bank', accountNumber: '0012345' }
+        } }, res);
+        assert.equal(res.statusCode, 200, res.body?.message);
+        assert.equal(persisted.baseSalary, 1250.75);
+        assert.equal(persisted.allowances[0].amount, 50.25);
+        assert.equal(persisted.deductions[0].amount, 20);
+        assert.equal(persisted.contactPhone, '233241234567');
+        assert.equal(persisted.employeeModel, employeeModel);
+      }
+    }
+    const res = response();
+    await controller.updateTeacherSalary({ user: { school }, body: {
+      teacherId: employeeId, baseSalary: 0, allowances: [], deductions: [], contactPhone: 'invalid'
+    } }, res);
+    assert.equal(res.statusCode, 400);
+  } finally { [Teacher.findOne, Staff.findOne, Salary.findOneAndUpdate] = originals; }
+});
+
+test('concurrent first salary saves recover the duplicate insert within the same school', async () => {
+  const originals = [Teacher.findOne, Salary.findOneAndUpdate];
+  const school = id(), teacherId = id();
+  Teacher.findOne = async () => ({ _id: teacherId });
+  let calls = 0;
+  Salary.findOneAndUpdate = async (filter, update, options) => {
+    assert.equal(filter.school, school);
+    assert.equal(filter.teacher, teacherId);
+    calls++;
+    if (calls === 1) {
+      assert.equal(options.upsert, true);
+      throw Object.assign(new Error('Duplicate teacher'), { code: 11000, keyPattern: { teacher: 1 } });
+    }
+    assert.equal(options.upsert, undefined);
+    return new Salary({ ...filter, ...update });
+  };
+  try {
+    const res = response();
+    await controller.updateTeacherSalary({ user: { school }, body: { teacherId, baseSalary: 1500, allowances: [], deductions: [] } }, res);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.body.salary.baseSalary, 1500);
+    assert.equal(calls, 2);
+  } finally { [Teacher.findOne, Salary.findOneAndUpdate] = originals; }
 });

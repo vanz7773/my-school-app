@@ -1,3 +1,4 @@
+const { getPayrollExpenses } = require('../services/payrollExpenses');
 const mongoose = require('mongoose');
 const SchoolExpense = require('../models/SchoolExpense');
 const FeedingFeeRecord = require('../models/FeedingFeeRecord');
@@ -54,6 +55,8 @@ const serializeUser = (user) => {
 
 const serializeExpense = (expense) => ({
   _id: expense._id,
+  source: expense.source || 'manual',
+  payrollDetails: expense.payrollDetails || null,
   title: expense.title,
   category: expense.category,
   amount: normalizeMoney(expense.amount),
@@ -246,7 +249,7 @@ const getFeedingIncomeSummary = async ({ schoolId, term, startDate, endDate }) =
 };
 
 const getExpenseSummary = async ({ schoolId, startDate, endDate }) => {
-  const expenses = await SchoolExpense.find({
+  const manualExpenses = await SchoolExpense.find({
     school: schoolId,
     expenseDate: { $gte: startDate, $lte: endDate },
   })
@@ -254,6 +257,8 @@ const getExpenseSummary = async ({ schoolId, startDate, endDate }) => {
     .sort({ expenseDate: -1, createdAt: -1 })
     .lean();
 
+  const payrollExpenses = await getPayrollExpenses({ schoolId, startDate, endDate });
+  const expenses = [...manualExpenses, ...payrollExpenses].sort((a, b) => new Date(b.expenseDate) - new Date(a.expenseDate));
   const total = expenses.reduce((sum, expense) => sum + normalizeMoney(expense.amount), 0);
   const byCategory = expenses.reduce((acc, expense) => {
     const category = expense.category || 'General';
@@ -388,6 +393,7 @@ exports.createExpense = async (req, res) => {
 };
 
 exports.updateExpense = async (req, res) => {
+  if (String(req.params.id).startsWith('payroll-')) return res.status(403).json({ message: 'Salary payment expenses are controlled by payroll and cannot be edited here.' });
   try {
     const schoolId = getSchoolId(req);
     const { id } = req.params;
@@ -448,6 +454,7 @@ exports.updateExpense = async (req, res) => {
 };
 
 exports.deleteExpense = async (req, res) => {
+  if (String(req.params.id).startsWith('payroll-')) return res.status(403).json({ message: 'Salary payment expenses are controlled by payroll and cannot be deleted here.' });
   try {
     const expense = await SchoolExpense.findOneAndDelete({
       _id: req.params.id,

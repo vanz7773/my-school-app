@@ -92,18 +92,36 @@ exports.updateTeacherSalary = async (req, res) => {
     const employee = await Employee.findOne({ _id: teacherId, school: req.user.school });
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
     if (!Number.isFinite(Number(baseSalary)) || Number(baseSalary) < 0 ||
-        ![allowances || [], deductions || []].every(list => Array.isArray(list) && list.every(c => typeof c.name === 'string' && Number.isFinite(Number(c.amount)) && Number(c.amount) >= 0))) {
+        ![allowances || [], deductions || []].every(list => Array.isArray(list) && list.every(c => c && typeof c.name === 'string' && Number.isFinite(Number(c.amount)) && Number(c.amount) >= 0))) {
       return res.status(400).json({ message: 'Salary amounts must be valid non-negative numbers' });
     }
-    if (req.body.contactPhone && !/^(?:0|\+?233)[235]\d{8}$/.test(req.body.contactPhone)) return res.status(400).json({ message: 'Enter a valid Ghana phone number' });
+    // Accept the same local/international phone formats used for SMS delivery.
+    let contactPhone;
+    if (req.body.contactPhone !== undefined) {
+      if (typeof req.body.contactPhone !== 'string') return res.status(400).json({ message: 'Enter a valid Ghana phone number' });
+      const enteredPhone = req.body.contactPhone.trim();
+      contactPhone = enteredPhone.replace(/[\s()+.\-]/g, '');
+      if (contactPhone.startsWith('00')) contactPhone = contactPhone.slice(2);
+      if (/^0\d{9}$/.test(contactPhone)) contactPhone = `233${contactPhone.slice(1)}`;
+      else if (/^\d{9}$/.test(contactPhone)) contactPhone = `233${contactPhone}`;
+      if (enteredPhone && !/^233(?:20|23|24|25|26|27|28|29|50|53|54|55|56|57|59)\d{7}$/.test(contactPhone)) {
+        return res.status(400).json({ message: 'Enter a valid Ghana mobile number, e.g. 0241234567 or +233241234567' });
+      }
+    }
     // Sanitize: "Basic Salary" must never be stored inside the allowances array
-    const sanitizedAllowances = allowances ? allowances.filter(a => a.name.toLowerCase() !== 'basic salary') : [];
+    const sanitizedAllowances = allowances ? allowances.filter(a => a.name.trim().toLowerCase() !== 'basic salary').map(a => ({ name: a.name.trim(), amount: Number(a.amount) })) : [];
 
-    const salary = await TeacherSalary.findOneAndUpdate(
-      { school: req.user.school, teacher: teacherId },
-      { baseSalary, allowances: sanitizedAllowances, deductions, accountDetails, employeeModel, ...(req.body.contactPhone !== undefined ? { contactPhone: req.body.contactPhone } : {}) },
-      { new: true, upsert: true, runValidators: true }
-    );
+    const filter = { school: req.user.school, teacher: teacherId };
+    const update = { baseSalary: Number(baseSalary), allowances: sanitizedAllowances, deductions: (deductions || []).map(d => ({ name: d.name.trim(), amount: Number(d.amount) })), accountDetails, employeeModel, ...(contactPhone !== undefined ? { contactPhone } : {}) };
+    let salary;
+    try {
+      salary = await TeacherSalary.findOneAndUpdate(filter, update, { new: true, upsert: true, runValidators: true });
+    } catch (error) {
+      // Two initial saves can race to insert the same employee. Update the winning record.
+      if (error.code !== 11000 || !error.keyPattern?.teacher) throw error;
+      salary = await TeacherSalary.findOneAndUpdate(filter, update, { new: true, runValidators: true });
+      if (!salary) throw error;
+    }
     res.json({ success: true, salary });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -292,6 +310,7 @@ exports.updatePayrollStatus = async (req, res) => {
         updateData.approvedAt = new Date();
     } else if (status === 'Paid') {
         updateData.paidAt = new Date();
+        updateData.paidBy = req.user._id;
     }
 
     const payroll = await Payroll.findOneAndUpdate(
@@ -547,7 +566,10 @@ exports.sendSalarySms = async (req, res) => {
         { $set: { 'payslips.$.salarySmsSending': true, 'payslips.$.salarySmsClaimedAt': new Date() } });
       if (!claim.modifiedCount) { skipped++; continue; }
       try {
-        const message = `${slip.teacherName}, your salary for ${payroll.month} is ${payroll.status.toLowerCase()}. Gross: GHS ${Number(slip.grossSalary || 0).toFixed(2)}. Deductions: GHS ${Number(slip.totalDeductions || 0).toFixed(2)}. Net pay: GHS ${Number(slip.netSalary || 0).toFixed(2)}. Ref: ${slip.referenceNumber}.`;
+        const [salaryYear, salaryMonth] = payroll.month.split('-').map(Number);
+        const salaryPeriod = new Date(Date.UTC(salaryYear, salaryMonth - 1, 1))
+          .toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }).toUpperCase();
+        const message = `${slip.teacherName}, your salary for ${salaryPeriod} is ${payroll.status.toLowerCase()}. Gross: GHS ${Number(slip.grossSalary || 0).toFixed(2)}. Deductions: GHS ${Number(slip.totalDeductions || 0).toFixed(2)}. Net pay: GHS ${Number(slip.netSalary || 0).toFixed(2)}. Ref: ${slip.referenceNumber}.${slip.employeeModel !== 'PayrollStaff' ? ' Open the mobile app to view your payslip.' : ''}`;
         await smsService.sendSms({ schoolId: req.user.school, recipients: [phone], message, messageType: 'custom' });
         await Payroll.updateOne({ _id: payroll._id, 'payslips._id': slip._id }, { $set: { 'payslips.$.salarySmsSentAt': new Date(), 'payslips.$.salarySmsSending': false } });
         sent++;
