@@ -1,3 +1,4 @@
+const { orderReportSubjects } = require('../services/reportSubjectOrder');
 const { getTermStudents, resolveReportClass } = require('../services/sbaReportHistory');
 const SbaRecord = require("../models/SbaRecord");
 const Student = require("../models/Student");
@@ -191,6 +192,7 @@ exports.getClassReportCards = async (req, res) => {
 
     // Calculate averages and sort for positions
     reportCards = reportCards.map(report => {
+      report.subjects = orderReportSubjects(report.subjects, className);
       report.averageMarks = report.subjects.length > 0 
         ? parseFloat((report.totalMarks / report.subjects.length).toFixed(2)) 
         : 0;
