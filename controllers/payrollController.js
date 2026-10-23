@@ -1,3 +1,5 @@
+const PayrollStaff = require('../models/PayrollStaff');
+const smsService = require('../services/smsService');
 const PayrollSettings = require('../models/PayrollSettings');
 const TeacherSalary = require('../models/TeacherSalary');
 const Payroll = require('../models/Payroll');
@@ -68,6 +70,12 @@ exports.getTeacherSalaries = async (req, res) => {
       return { teacher: t, baseSalary: 0, allowances: [], deductions: [], accountDetails: {} };
     });
 
+    const staff = await PayrollStaff.find({ school: req.user.school });
+    for (const employee of staff) {
+      const salary = salaries.find(s => String(s.teacher) === String(employee._id));
+      combined.push({ ...(salary ? salary.toObject() : { baseSalary: 0, allowances: [], deductions: [], accountDetails: {} }),
+        employeeModel: 'PayrollStaff', teacher: { ...employee.toObject(), user: { name: employee.name, phone: employee.phone } } });
+    }
     res.json({ success: true, salaries: combined });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -78,13 +86,23 @@ exports.updateTeacherSalary = async (req, res) => {
   try {
     const { teacherId, baseSalary, allowances, deductions, accountDetails } = req.body;
     
+    const employeeModel = req.body.employeeModel === 'PayrollStaff' ? 'PayrollStaff' : 'Teacher';
+    const Employee = employeeModel === 'PayrollStaff' ? PayrollStaff : Teacher;
+    if (!require('mongoose').isValidObjectId(teacherId)) return res.status(400).json({ message: 'Invalid employee ID' });
+    const employee = await Employee.findOne({ _id: teacherId, school: req.user.school });
+    if (!employee) return res.status(404).json({ message: 'Employee not found' });
+    if (!Number.isFinite(Number(baseSalary)) || Number(baseSalary) < 0 ||
+        ![allowances || [], deductions || []].every(list => Array.isArray(list) && list.every(c => typeof c.name === 'string' && Number.isFinite(Number(c.amount)) && Number(c.amount) >= 0))) {
+      return res.status(400).json({ message: 'Salary amounts must be valid non-negative numbers' });
+    }
+    if (req.body.contactPhone && !/^(?:0|\+?233)[235]\d{8}$/.test(req.body.contactPhone)) return res.status(400).json({ message: 'Enter a valid Ghana phone number' });
     // Sanitize: "Basic Salary" must never be stored inside the allowances array
     const sanitizedAllowances = allowances ? allowances.filter(a => a.name.toLowerCase() !== 'basic salary') : [];
 
     const salary = await TeacherSalary.findOneAndUpdate(
       { school: req.user.school, teacher: teacherId },
-      { baseSalary, allowances: sanitizedAllowances, deductions, accountDetails },
-      { new: true, upsert: true }
+      { baseSalary, allowances: sanitizedAllowances, deductions, accountDetails, employeeModel, ...(req.body.contactPhone !== undefined ? { contactPhone: req.body.contactPhone } : {}) },
+      { new: true, upsert: true, runValidators: true }
     );
     res.json({ success: true, salary });
   } catch (err) {
@@ -120,10 +138,8 @@ exports.generatePayroll = async (req, res) => {
     });
 
     const settings = await PayrollSettings.findOne({ school: req.user.school });
-    const salaries = await TeacherSalary.find({ school: req.user.school }).populate({
-        path: 'teacher',
-        populate: { path: 'user' }
-    });
+    const salaries = await TeacherSalary.find({ school: req.user.school }).populate('teacher');
+    await Teacher.populate(salaries.filter(s => s.employeeModel !== 'PayrollStaff').map(s => s.teacher).filter(Boolean), { path: 'user' });
     
     // Fetch school to get the name for the payslip snapshots
     const schoolDoc = await require('../models/School').findById(req.user.school);
@@ -144,7 +160,9 @@ exports.generatePayroll = async (req, res) => {
     let totalNet = 0;
 
     for (const salary of salaries) {
-      if (!salary.teacher || !salary.teacher.user) continue;
+      if (!salary.teacher) continue;
+      const isStaff = salary.employeeModel === 'PayrollStaff';
+      if (!isStaff && !salary.teacher.user) continue;
 
       const teacherAtt = attendances.filter(a => String(a.teacher) === String(salary.teacher._id));
       const absentCount = teacherAtt.filter(a => a.status === 'Absent').length;
@@ -185,9 +203,11 @@ exports.generatePayroll = async (req, res) => {
 
       payslips.push({
         teacher: salary.teacher._id,
-        teacherName: salary.teacher.user.name,
+        teacherName: isStaff ? salary.teacher.name : salary.teacher.user.name,
+        employeeModel: salary.employeeModel || 'Teacher',
+        contactPhone: salary.contactPhone || salary.teacher.phone || salary.teacher.user?.phone,
         schoolName: schoolName,
-        teacherLevel: salary.teacher.rank || 'N/A',
+        teacherLevel: salary.teacher.jobTitle || salary.teacher.rank || 'N/A',
         teacherDateOfBirth: salary.teacher.dateOfBirth,
         employeeId: salary.teacher.employeeId || 'N/A',
         baseSalary: salary.baseSalary,
@@ -264,6 +284,8 @@ exports.updatePayrollStatus = async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
 
+    if (!['Approved', 'Paid'].includes(status)) return res.status(400).json({ message: 'Invalid payroll status' });
+    const previousStatus = status === 'Approved' ? 'Draft' : 'Approved';
     const updateData = { status };
     if (status === 'Approved') {
         updateData.approvedBy = req.user._id;
@@ -273,10 +295,11 @@ exports.updatePayrollStatus = async (req, res) => {
     }
 
     const payroll = await Payroll.findOneAndUpdate(
-       { _id: id, school: req.user.school },
+       { _id: id, school: req.user.school, status: previousStatus },
        updateData,
        { new: true }
     );
+    if (!payroll) return res.status(409).json({ message: 'Payroll not found or status has already changed' });
     res.json({ success: true, payroll });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -490,4 +513,49 @@ exports.downloadPdf = async (req, res) => {
     console.error("PDF generation error:", err);
     res.status(500).json({ success: false, message: 'Failed to generate PDF' });
   }
+};
+
+exports.createPayrollStaff = async (req, res) => {
+  try {
+    const { name, phone, jobTitle } = req.body;
+    if (typeof name !== 'string' || !name.trim() || typeof phone !== 'string' || !/^(?:0|\+?233)[235]\d{8}$/.test(phone.trim())) {
+      return res.status(400).json({ message: 'Name and a valid Ghana phone number are required' });
+    }
+    const staff = await PayrollStaff.create({ school: req.user.school, name: name.trim(), phone: phone.trim(), jobTitle });
+    res.status(201).json({ success: true, staff });
+  } catch (err) { res.status(400).json({ message: err.message }); }
+};
+
+exports.sendSalarySms = async (req, res) => {
+  try {
+    const payroll = await Payroll.findOne({ _id: req.params.id, school: req.user.school });
+    if (!payroll) return res.status(404).json({ message: 'Payroll not found' });
+    if (!['Approved', 'Paid'].includes(payroll.status)) return res.status(400).json({ message: 'Approve payroll before sending salary SMS' });
+    let sent = 0, skipped = 0, failed = 0;
+    for (const slip of payroll.payslips) {
+      if (slip.salarySmsSentAt) { skipped++; continue; }
+      const Model = slip.employeeModel === 'PayrollStaff' ? PayrollStaff : Teacher;
+      const employee = await Model.findOne({ _id: slip.teacher, school: req.user.school });
+      let phone = slip.contactPhone || employee?.phone;
+      if (!phone && employee?.user) {
+        const user = await require('../models/User').findById(employee.user).select('phone');
+        phone = user?.phone;
+      }
+      if (!phone) { failed++; continue; }
+      const claim = await Payroll.updateOne({ _id: payroll._id, school: req.user.school,
+        payslips: { $elemMatch: { _id: slip._id, salarySmsSentAt: null, $or: [{ salarySmsSending: { $ne: true } }, { salarySmsClaimedAt: { $lt: new Date(Date.now() - 10 * 60 * 1000) } }]  } } },
+        { $set: { 'payslips.$.salarySmsSending': true, 'payslips.$.salarySmsClaimedAt': new Date() } });
+      if (!claim.modifiedCount) { skipped++; continue; }
+      try {
+        const message = `${slip.teacherName}, your salary for ${payroll.month} is ${payroll.status.toLowerCase()}. Gross: GHS ${Number(slip.grossSalary || 0).toFixed(2)}. Deductions: GHS ${Number(slip.totalDeductions || 0).toFixed(2)}. Net pay: GHS ${Number(slip.netSalary || 0).toFixed(2)}. Ref: ${slip.referenceNumber}.`;
+        await smsService.sendSms({ schoolId: req.user.school, recipients: [phone], message, messageType: 'custom' });
+        await Payroll.updateOne({ _id: payroll._id, 'payslips._id': slip._id }, { $set: { 'payslips.$.salarySmsSentAt': new Date(), 'payslips.$.salarySmsSending': false } });
+        sent++;
+      } catch (err) {
+        failed++;
+        await Payroll.updateOne({ _id: payroll._id, 'payslips._id': slip._id }, { $set: { 'payslips.$.salarySmsSending': false } });
+      }
+    }
+    res.json({ success: true, sent, skipped, failed, message: `${sent} salary SMS sent, ${skipped} already sent or in progress, ${failed} failed (check phone numbers, SMS settings and balance).` });
+  } catch (err) { res.status(500).json({ message: err.message }); }
 };

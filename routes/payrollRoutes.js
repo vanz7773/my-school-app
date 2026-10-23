@@ -16,6 +16,9 @@ router.use(restrictTo('admin', 'superadmin'));
 router.get('/settings', payrollController.getSettings);
 router.post('/settings', payrollController.updateSettings);
 
+router.post('/staff', payrollController.createPayrollStaff);
+router.post('/:id/salary-sms', payrollController.sendSalarySms);
+
 router.get('/salaries', payrollController.getTeacherSalaries);
 router.post('/salaries', payrollController.updateTeacherSalary);
 

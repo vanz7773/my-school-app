@@ -1,7 +1,12 @@
 const mongoose = require('mongoose');
 
 const payslipSchema = new mongoose.Schema({
-  teacher: { type: mongoose.Schema.Types.ObjectId, ref: 'Teacher', required: true },
+  teacher: { type: mongoose.Schema.Types.ObjectId, ref: function () { return this.employeeModel || 'Teacher'; }, required: true },
+  employeeModel: { type: String, enum: ['Teacher', 'PayrollStaff'], default: 'Teacher' },
+  contactPhone: String,
+  salarySmsSentAt: Date,
+  salarySmsClaimedAt: Date,
+  salarySmsSending: { type: Boolean, default: false },
   teacherName: String, // Snapshot
   schoolName: String,
   teacherLevel: String,
