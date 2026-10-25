@@ -183,3 +183,76 @@ test('salary push mobile-only option does not query or send web push subscriptio
   const result = await pushes.sendPushNotifications([id()], 'Salary Paid', 'Payment confirmed', {}, { throwOnError: true, mobileOnly: true });
   assert.equal(result.acceptedCount, 0);
 });
+
+test('unmatched delivery claims are reported as failures instead of unexplained skips', async t => {
+  const { payroll, req, events } = fixture(t);
+  Payroll.updateOne = async () => ({ modifiedCount: 0 });
+  const response = res();
+  await controller.updatePayrollStatus(req, response);
+  assert.equal(payroll.status, 'Paid');
+  assert.equal(response.body.notifications.sms.failed, 2);
+  assert.equal(response.body.notifications.push.failed, 1);
+  assert.equal(response.body.notifications.inApp.failed, 1);
+  assert.equal(events.length, 0);
+  assert.match(response.body.message, /could not start delivery; retry/);
+});
+
+test('a concurrent send is reported as in progress and is never duplicated', async t => {
+  const { payroll, req, events } = fixture(t);
+  for (const slip of payroll.payslips) {
+    for (const prefix of ['salaryPaidSms', 'salaryPush', 'salaryInApp']) {
+      slip[`${prefix}Sending`] = true;
+      slip[`${prefix}ClaimedAt`] = new Date();
+    }
+  }
+  Payroll.updateOne = async () => ({ modifiedCount: 0 });
+  const response = res();
+  await controller.updatePayrollStatus(req, response);
+  assert.equal(response.body.notifications.sms.skipped, 2);
+  assert.equal(response.body.notifications.sms.failed, 0);
+  assert.equal(events.length, 0);
+  assert.match(response.body.message, /another send is in progress/);
+});
+
+test('missing stored payslips cannot be mistaken for sent notifications', async t => {
+  const { req, events } = fixture(t);
+  Payroll.updateOne = async () => ({ modifiedCount: 0 });
+  Payroll.findOne = async () => ({ payslips: [] });
+  const response = res();
+  await controller.updatePayrollStatus(req, response);
+  assert.equal(response.body.notifications.sms.failed, 2);
+  assert.match(response.body.message, /payslip could not be matched/);
+  assert.equal(events.length, 0);
+});
+
+test('completed delivery between initial load and claim is reported as already sent', async t => {
+  const { payroll, req, events } = fixture(t);
+  Payroll.updateOne = async () => ({ modifiedCount: 0 });
+  Payroll.findOne = async () => ({ payslips: payroll.payslips.map(slip => ({
+    ...slip, salaryPaidSmsSentAt: new Date(), salaryPushSentAt: new Date(), salaryInAppSentAt: new Date(),
+  })) });
+  const response = res();
+  await controller.updatePayrollStatus(req, response);
+  assert.equal(response.body.notifications.sms.skipped, 2);
+  assert.equal(response.body.notifications.sms.failed, 0);
+  assert.match(response.body.message, /already recorded as sent/);
+  assert.equal(events.length, 0);
+});
+
+test('a legacy sending flag without a timestamp is eligible for recovery', async t => {
+  const { payroll, req } = fixture(t);
+  for (const slip of payroll.payslips) slip.salaryPaidSmsSending = true;
+  const applyUpdate = Payroll.updateOne;
+  Payroll.updateOne = async (filter, update) => {
+    const match = filter.payslips?.$elemMatch;
+    if (match?.salaryPaidSmsSentAt === null) {
+      const permitsMissingTimestamp = match.$or.some(condition => Object.hasOwn(condition, 'salaryPaidSmsClaimedAt') && condition.salaryPaidSmsClaimedAt === null);
+      if (!permitsMissingTimestamp) return { modifiedCount: 0 };
+    }
+    return applyUpdate(filter, update);
+  };
+  const response = res();
+  await controller.updatePayrollStatus(req, response);
+  assert.equal(response.body.notifications.sms.sent, 2);
+  assert.equal(response.body.notifications.sms.failed, 0);
+});
