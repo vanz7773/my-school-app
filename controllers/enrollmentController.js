@@ -271,6 +271,7 @@ exports.getClassEnrollmentSummary = async (req, res) => {
                 hometown: 1,
                 languageSpoken: 1,
                 academicYear: 1,
+                profilePicture: 1,
                 'userName': '$userInfo.name',
                 'userEmail': '$userInfo.email'
               }
@@ -337,6 +338,7 @@ exports.getClassEnrollmentSummary = async (req, res) => {
               in: {
                 _id: '$$student._id',
                 name: { $ifNull: ['$$student.userName', 'Unnamed'] },
+                profilePicture: '$$student.profilePicture',
                 email: { $ifNull: ['$$student.userEmail', null] },
                 dateOfBirth: '$$student.dateOfBirth',
                 admissionNumber: '$$student.admissionNumber',

@@ -733,6 +733,7 @@ const getDailyBreakdown = async (req, res) => {
         $project: {
           studentId: '$_id',
           name: '$user.name',
+          profilePicture: 1,
           days: {
             $ifNull: [{ $arrayElemAt: ['$attendance.days', 0] }, { ...DEFAULT_DAYS }]
           },

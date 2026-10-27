@@ -1169,7 +1169,7 @@ exports.getTransportDebtorsForWeek = async (req, res) => {
             termId,
             week: weekNumber
         })
-        .populate('breakdown.student', 'guardianName guardianPhone')
+        .populate('breakdown.student', 'guardianName guardianPhone profilePicture')
         .lean();
 
         const paymentMap = await getCoveredTransportPaymentMap({
@@ -1196,6 +1196,7 @@ exports.getTransportDebtorsForWeek = async (req, res) => {
                         debtors.push({
                             studentId: studentIdId,
                             studentName: entry.studentName,
+                            profilePicture: studentObj.profilePicture || '',
                             className: entry.className,
                             week: record.week,
                             guardianName: studentObj.guardianName || '',

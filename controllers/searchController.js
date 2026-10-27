@@ -80,7 +80,7 @@ exports.globalSearch = async (req, res) => {
             name: s.user?.name || 'Unknown Student',
             admissionNumber: s.admissionNumber,
             class: s.class,
-            profilePicture: s.user?.profilePicture
+            profilePicture: s.profilePicture || s.user?.profilePicture || ''
         }));
 
         const formattedTeachers = teachers.map(t => ({

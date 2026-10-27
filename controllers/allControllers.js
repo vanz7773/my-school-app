@@ -1475,7 +1475,8 @@ module.exports = {
         ...transformBill(updatedBill),
         student: {
           _id: updatedBill.student?._id,
-          name: updatedBill.student?.user?.name || 'N/A'
+          name: updatedBill.student?.user?.name || 'N/A',
+          profilePicture: updatedBill.student?.profilePicture || ''
         },
         class: {
           _id: updatedBill.class?._id || null,
@@ -1717,7 +1718,8 @@ module.exports = {
         ...transformBill(updatedBill),
         student: {
           _id: updatedBill.student?._id,
-          name: updatedBill.student?.user?.name || 'N/A'
+          name: updatedBill.student?.user?.name || 'N/A',
+          profilePicture: updatedBill.student?.profilePicture || ''
         },
         class: {
           _id: updatedBill.class?._id || null,
@@ -1873,7 +1875,8 @@ module.exports = {
         ...transformBill(bill),
         student: {
           _id: student._id,
-          name: student.user?.name || 'N/A'
+          name: student.user?.name || 'N/A',
+          profilePicture: student.profilePicture || ''
         },
         class: {
           _id: bill.class?._id || student.class?._id || null,

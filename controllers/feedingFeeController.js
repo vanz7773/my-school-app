@@ -929,6 +929,7 @@ const calculateFeedingFeeCollection = async (req, res) => {
       breakdown.push({
         studentId,
         studentName,
+        profilePicture: student.profilePicture || '',
         className,
         classDisplayName,
         daysPaid,
@@ -1678,6 +1679,7 @@ const getFeedingFeeSummary = async (req, res) => {
       breakdown.push({
         studentId,
         studentName: getFullStudentName(student),
+        profilePicture: student.profilePicture || '',
         className,
         classDisplayName,
         daysPaid: isExempt ? 0 : studentTotal / (amountPerDay || 1), // Logical days equivalent
@@ -1777,7 +1779,7 @@ const getAbsenteesForWeek = async (req, res) => {
     })
       .populate({
         path: 'student',
-        select: 'name firstName lastName user',
+        select: 'name firstName lastName user profilePicture',
         populate: { path: 'user', select: 'name' }
       })
       .populate('class', 'name displayName')
@@ -1804,6 +1806,7 @@ const getAbsenteesForWeek = async (req, res) => {
         absentees.push({
           studentId: attRecord.student._id || attRecord.student,
           studentName,
+          profilePicture: attRecord.student.profilePicture || '',
           classId: cls._id || attRecord.class,
           className: cls.displayName || cls.name || '',
           absentDays
@@ -1839,7 +1842,7 @@ const getDebtorsForWeek = async (req, res) => {
     // Fetch all FeedingFeeRecords AND all StudentAttendance records for the term in parallel
     const [records, attendanceRecords] = await Promise.all([
       FeedingFeeRecord.find({ school: schoolId, termId })
-        .populate('breakdown.student', 'guardianName guardianPhone isExemptFromFeedingFee')
+        .populate('breakdown.student', 'guardianName guardianPhone isExemptFromFeedingFee profilePicture')
         .lean(),
       StudentAttendance.find({ school: schoolId, termId }).lean()
     ]);
@@ -1882,6 +1885,7 @@ const getDebtorsForWeek = async (req, res) => {
           debtors.push({
             studentId,
             studentName: entry.studentName,
+            profilePicture: studentObj.profilePicture || '',
             classId: record.classId,
             className: entry.className,
             week: record.week,

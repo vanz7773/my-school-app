@@ -164,7 +164,7 @@ const serializeConfigBands = (config) => {
   }, {});
 };
 
-const serializeRecord = (record, classDoc, amountPerDay) => {
+const serializeRecord = (record, classDoc, amountPerDay, studentPhotos) => {
   const dailyTotals = buildCollectionDailyTotals(record, amountPerDay);
 
   return {
@@ -184,6 +184,7 @@ const serializeRecord = (record, classDoc, amountPerDay) => {
     breakdown: (record.breakdown || []).map((entry) => ({
       studentId: entry.student,
       studentName: entry.studentName,
+      profilePicture: studentPhotos.get(String(entry.student)) || '',
       className: entry.className || getClassDisplayName(classDoc),
       amountPerDay: Number(entry.classFeeAmount ?? amountPerDay) || 0,
       days: ensureDays(entry.days),
@@ -212,7 +213,7 @@ const loadOrCreateRecord = async (req, { classId, termId, week }) => {
     status: 'active',
   })
     .populate('user', 'name')
-    .select('_id user surname otherNames class status')
+    .select('_id user surname otherNames class status profilePicture')
     .lean();
 
   const sortedStudents = students.sort((a, b) => (
@@ -263,7 +264,8 @@ const loadOrCreateRecord = async (req, { classId, termId, week }) => {
 
   await record.save();
 
-  return { record, classDoc, amountPerDay };
+  const studentPhotos = new Map(students.map(student => [String(student._id), student.profilePicture]));
+  return { record, classDoc, amountPerDay, studentPhotos };
 };
 
 exports.getClassFeeConfig = async (req, res) => {
@@ -344,13 +346,13 @@ exports.calculateClassFeeCollection = async (req, res) => {
   try {
     const { classId, termId } = req.body;
     const week = req.body.week || req.query.week;
-    const { record, classDoc, amountPerDay } = await loadOrCreateRecord(req, {
+    const { record, classDoc, amountPerDay, studentPhotos } = await loadOrCreateRecord(req, {
       classId,
       termId,
       week,
     });
 
-    res.json(serializeRecord(record, classDoc, amountPerDay));
+    res.json(serializeRecord(record, classDoc, amountPerDay, studentPhotos));
   } catch (error) {
     console.error('calculateClassFeeCollection error:', error);
     res.status(error.statusCode || 500).json({
@@ -363,13 +365,13 @@ exports.calculateClassFeeCollection = async (req, res) => {
 exports.getClassFeeSummary = async (req, res) => {
   try {
     const { classId, termId, week } = req.query;
-    const { record, classDoc, amountPerDay } = await loadOrCreateRecord(req, {
+    const { record, classDoc, amountPerDay, studentPhotos } = await loadOrCreateRecord(req, {
       classId,
       termId,
       week,
     });
 
-    res.json(serializeRecord(record, classDoc, amountPerDay));
+    res.json(serializeRecord(record, classDoc, amountPerDay, studentPhotos));
   } catch (error) {
     console.error('getClassFeeSummary error:', error);
     res.status(error.statusCode || 500).json({
@@ -562,7 +564,7 @@ exports.markClassFeeBulk = async (req, res) => {
       });
     }
 
-    const { record, classDoc, amountPerDay } = await loadOrCreateRecord(req, {
+    const { record, classDoc, amountPerDay, studentPhotos } = await loadOrCreateRecord(req, {
       classId,
       termId,
       week,
@@ -593,7 +595,7 @@ exports.markClassFeeBulk = async (req, res) => {
     await record.save();
 
     res.json({
-      ...serializeRecord(record, classDoc, amountPerDay),
+      ...serializeRecord(record, classDoc, amountPerDay, studentPhotos),
       message: 'Class fee marks saved successfully',
     });
   } catch (error) {
