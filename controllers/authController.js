@@ -283,7 +283,7 @@ exports.login = async (req, res) => {
         _id: { $in: user.childIds },
         school: user.school ? user.school._id || user.school : undefined,
       })
-        .select("user admissionNumber class school gender")
+        .select("user admissionNumber class school gender profilePicture profilePictureThumbnail")
         .populate("user", "name email profilePicture")
         .populate("class", "name")
         .populate("school", "name")
@@ -293,7 +293,8 @@ exports.login = async (req, res) => {
         ...c,
         name: c.user?.name || "Unknown Student",
         email: c.user?.email || "",
-        profilePicture: c.user?.profilePicture || null
+        profilePicture: c.profilePicture || c.user?.profilePicture || null,
+        profilePictureThumbnail: c.profilePictureThumbnail || null
       }));
 
       userResponse.children = children;

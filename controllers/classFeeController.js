@@ -184,7 +184,8 @@ const serializeRecord = (record, classDoc, amountPerDay, studentPhotos) => {
     breakdown: (record.breakdown || []).map((entry) => ({
       studentId: entry.student,
       studentName: entry.studentName,
-      profilePicture: studentPhotos.get(String(entry.student)) || '',
+      profilePicture: studentPhotos.get(String(entry.student))?.profilePicture || '',
+      profilePictureThumbnail: studentPhotos.get(String(entry.student))?.profilePictureThumbnail || '',
       className: entry.className || getClassDisplayName(classDoc),
       amountPerDay: Number(entry.classFeeAmount ?? amountPerDay) || 0,
       days: ensureDays(entry.days),
@@ -213,7 +214,7 @@ const loadOrCreateRecord = async (req, { classId, termId, week }) => {
     status: 'active',
   })
     .populate('user', 'name')
-    .select('_id user surname otherNames class status profilePicture')
+    .select('_id user surname otherNames class status profilePicture profilePictureThumbnail')
     .lean();
 
   const sortedStudents = students.sort((a, b) => (
@@ -264,7 +265,7 @@ const loadOrCreateRecord = async (req, { classId, termId, week }) => {
 
   await record.save();
 
-  const studentPhotos = new Map(students.map(student => [String(student._id), student.profilePicture]));
+  const studentPhotos = new Map(students.map(student => [String(student._id), { profilePicture: student.profilePicture, profilePictureThumbnail: student.profilePictureThumbnail }]));
   return { record, classDoc, amountPerDay, studentPhotos };
 };
 

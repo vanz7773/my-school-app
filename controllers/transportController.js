@@ -477,7 +477,7 @@ exports.getRouteStudents = async (req, res) => {
         // Explicitly extract name from nested user if available
         const studentName = obj.student.user?.name || obj.student.name || 'Unknown Student';
         obj.student.name = studentName;
-        obj.student.photo = obj.student.user?.photo || obj.student.user?.profilePicture || obj.student.photo;
+        obj.student.photo = obj.student.profilePicture || obj.student.user?.photo || obj.student.user?.profilePicture || obj.student.photo;
         
         console.log(`[DEBUG] Mapping Student - ID: ${obj.student._id}, Name: ${studentName}`);
       }

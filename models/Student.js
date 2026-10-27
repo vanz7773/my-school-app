@@ -87,6 +87,7 @@ const studentSchema = new mongoose.Schema({
   remarks: { type: String },
   
   profilePicture: { type: String, default: "" },
+  profilePictureThumbnail: { type: String, default: "" },
 
   isExemptFromFeedingFee: {
     type: Boolean,

@@ -930,6 +930,7 @@ const calculateFeedingFeeCollection = async (req, res) => {
         studentId,
         studentName,
         profilePicture: student.profilePicture || '',
+        profilePictureThumbnail: student.profilePictureThumbnail || '',
         className,
         classDisplayName,
         daysPaid,
@@ -1680,6 +1681,7 @@ const getFeedingFeeSummary = async (req, res) => {
         studentId,
         studentName: getFullStudentName(student),
         profilePicture: student.profilePicture || '',
+        profilePictureThumbnail: student.profilePictureThumbnail || '',
         className,
         classDisplayName,
         daysPaid: isExempt ? 0 : studentTotal / (amountPerDay || 1), // Logical days equivalent

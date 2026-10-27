@@ -173,7 +173,8 @@ exports.getMyChildren = async (req, res) => {
       ...c,
       name: c.user?.name || "Unknown Student",
       email: c.user?.email || "",
-      profilePicture: c.user?.profilePicture || null
+      profilePicture: c.profilePicture || c.user?.profilePicture || null,
+      profilePictureThumbnail: c.profilePictureThumbnail || null
     }));
 
     return res.json(children);
@@ -423,7 +424,7 @@ exports.getChildrenByParentId = async (req, res) => {
       _id: { $in: parent.childIds },
       school: parent.school
     })
-      .select('user admissionNumber class school academicYear gender')
+      .select('user admissionNumber class school academicYear gender profilePicture profilePictureThumbnail')
       .populate('user', 'name email profilePicture')
       .populate('class', 'name')
       .populate('school', 'name schoolType')
@@ -433,7 +434,8 @@ exports.getChildrenByParentId = async (req, res) => {
       ...c,
       name: c.user?.name || "Unknown Student",
       email: c.user?.email || "",
-      profilePicture: c.user?.profilePicture || null
+      profilePicture: c.profilePicture || c.user?.profilePicture || null,
+      profilePictureThumbnail: c.profilePictureThumbnail || null
     }));
 
     return res.json({ children });

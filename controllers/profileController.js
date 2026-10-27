@@ -1,5 +1,7 @@
 // controllers/profileController.js
 const User = require("../models/User");
+const Student = require("../models/Student");
+const { uploadStudentPhoto } = require("../services/studentPhotos");
 const { uploadFile } = require("../utils/firebaseStorage");
 const admin = require("firebase-admin");
 
@@ -112,6 +114,21 @@ function invalidateProfileCache(userId) {
  * Get current profile with caching
  * GET /api/profile
  */
+const withStudentPhoto = async (user) => {
+  if (user.role !== 'student') return user;
+  const student = await Student.findOne({ user: user._id, school: user.school?._id || user.school })
+    .select('profilePicture profilePictureThumbnail admissionNumber class')
+    .populate('class', 'name displayName')
+    .lean();
+  return {
+    ...user,
+    profilePicture: student?.profilePicture || user.profilePicture || '',
+    profilePictureThumbnail: student?.profilePicture ? student.profilePictureThumbnail || '' : '',
+    admissionNumber: student?.admissionNumber || '',
+    studentClass: student?.class?.displayName || student?.class?.name || '',
+  };
+};
+
 exports.getProfile = async (req, res) => {
   const startTime = Date.now();
   const userId = req.user.id;
@@ -121,7 +138,7 @@ exports.getProfile = async (req, res) => {
     const cachedProfile = getCachedProfile(userId);
     if (cachedProfile) {
       console.log(`⚡ Profile cache hit for user ${userId}`);
-      return res.json(cachedProfile);
+      return res.json(await withStudentPhoto(cachedProfile));
     }
 
     // Cache miss - fetch from database
@@ -143,7 +160,7 @@ exports.getProfile = async (req, res) => {
     setCachedProfile(userId, user);
 
     console.log(`✅ Profile fetched in ${Date.now() - startTime}ms`);
-    res.json(user);
+    res.json(await withStudentPhoto(user));
 
   } catch (err) {
     console.error("❌ Error fetching profile:", err);
@@ -196,6 +213,7 @@ exports.updateProfilePicture = async (req, res) => {
 
   let newFileUrl = null;
   let oldProfilePicture = null;
+  let photoLinkedToStudent = false;
 
   try {
     // Fetch user first to get current profile picture
@@ -210,13 +228,20 @@ exports.updateProfilePicture = async (req, res) => {
     oldProfilePicture = user.profilePicture;
 
     // Upload new file to Firebase - passing proper folder and identifier
-    newFileUrl = await uploadFile(file, 'profiles', userId);
+    const photo = user.role === 'student'
+      ? await uploadStudentPhoto(file, user.school)
+      : { profilePicture: await uploadFile(file, 'profiles', userId) };
+    newFileUrl = photo.profilePicture;
 
     if (!newFileUrl) {
       throw new Error('File upload failed - no URL returned');
     }
 
     // Update user profile picture
+    if (user.role === 'student') {
+      const saved = await Student.updateOne({ user: userId, school: user.school }, { $set: photo });
+      photoLinkedToStudent = Boolean(saved.matchedCount ?? saved.n);
+    }
     user.profilePicture = newFileUrl;
     await user.save();
 
@@ -238,14 +263,15 @@ exports.updateProfilePicture = async (req, res) => {
     res.json({
       success: true,
       message: "Profile picture updated successfully",
-      profilePicture: newFileUrl
+      profilePicture: newFileUrl,
+      profilePictureThumbnail: photo.profilePictureThumbnail || ""
     });
 
   } catch (err) {
     console.error("❌ Error updating profile picture:", err);
 
     // Cleanup: Delete the new file if upload was successful but something else failed
-    if (newFileUrl) {
+    if (newFileUrl && !photoLinkedToStudent) {
       process.nextTick(() => {
         deleteFileFromFirebase(newFileUrl)
           .catch(cleanupError => {
@@ -290,7 +316,10 @@ exports.deleteProfilePicture = async (req, res) => {
       });
     }
 
-    const oldProfilePicture = user.profilePicture;
+    const student = user.role === 'student'
+      ? await Student.findOne({ user: userId, school: user.school }).select('profilePicture')
+      : null;
+    const oldProfilePicture = student?.profilePicture || user.profilePicture;
 
     if (!oldProfilePicture) {
       return res.status(400).json({
@@ -300,6 +329,11 @@ exports.deleteProfilePicture = async (req, res) => {
     }
 
     // Remove profile picture from user
+    if (user.role === 'student') {
+      await Student.updateOne({ user: userId, school: user.school }, {
+        $set: { profilePicture: '', profilePictureThumbnail: '' },
+      });
+    }
     user.profilePicture = null;
     await user.save();
 

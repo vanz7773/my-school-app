@@ -5,7 +5,7 @@ const Notification = require('../models/Notification');
 const StudentAttendance = require('../models/StudentAttendance');
 const FeedingFeeRecord = require('../models/FeedingFeeRecord');
 const enrollmentController = require('./enrollmentController'); // Ensure cache clearing support
-const { uploadFile } = require('../utils/firebaseStorage');
+const { uploadStudentPhoto } = require('../services/studentPhotos');
 
 const formatPhoneNumber = (phone) => {
   if (!phone) return phone;
@@ -116,8 +116,7 @@ exports.createStudent = async (req, res) => {
 
     if (req.file) {
       try {
-        const publicUrl = await uploadFile(req.file, 'profiles', req.user.school);
-        studentData.profilePicture = publicUrl;
+        Object.assign(studentData, await uploadStudentPhoto(req.file, req.user.school));
       } catch (uploadErr) {
         console.warn('⚠️ Profile picture upload failed:', uploadErr.message);
       }
@@ -328,8 +327,7 @@ exports.updateStudent = async (req, res) => {
 
     if (req.file) {
       try {
-        const publicUrl = await uploadFile(req.file, 'profiles', req.user.school);
-        student.profilePicture = publicUrl;
+        Object.assign(student, await uploadStudentPhoto(req.file, req.user.school));
       } catch (uploadErr) {
         console.warn('⚠️ Profile picture upload failed:', uploadErr.message);
       }
@@ -484,7 +482,7 @@ exports.getStudentById = async (req, res) => {
 
     // Populate related user, class, and school data
     const student = await Student.findById(id)
-      .populate("user", "name email")
+      .populate("user", "name email profilePicture")
       .populate("class", "name")
       .populate("school", "name");
 
@@ -496,6 +494,9 @@ exports.getStudentById = async (req, res) => {
     const formatted = {
       _id: student._id,
       name: student.user?.name || "Unnamed Student",
+      admissionNumber: student.admissionNumber,
+      profilePicture: student.profilePicture || student.user?.profilePicture || "",
+      profilePictureThumbnail: student.profilePictureThumbnail || "",
       email: student.user?.email || "",
       class: student.class?.name || "Unassigned",
       school: student.school?.name || "",
@@ -861,8 +862,7 @@ exports.bulkUploadPictures = async (req, res) => {
 
       // Upload the picture
       try {
-        const publicUrl = await uploadFile(file, 'profiles', req.user.school);
-        student.profilePicture = publicUrl;
+        Object.assign(student, await uploadStudentPhoto(file, req.user.school));
         await student.save();
         results.success.push({ 
           file: originalName, 
