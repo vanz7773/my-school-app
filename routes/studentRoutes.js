@@ -3,6 +3,7 @@ const router = express.Router();
 const { protect, restrictTo } = require('../middlewares/authMiddleware');
 const upload = require('../middlewares/upload');
 const studentController = require('../controllers/studentController');
+const { downloadStudentContacts } = require('../controllers/studentContactController');
 
 const {
   createStudent,
@@ -25,6 +26,7 @@ router.post('/bulk-pictures', protect, restrictTo('admin'), upload.array('pictur
 
 // 🧭 Admin-only: View, update, delete students
 router.get('/', protect, restrictTo('admin'), getAllStudents);
+router.get('/contacts/export', protect, restrictTo('admin'), downloadStudentContacts);
 router.put('/:id', protect, restrictTo('admin'), upload.single('profilePicture'), updateStudent);
 router.delete('/:id', protect, restrictTo('admin'), deleteStudent);
 router.delete('/class/:classId', protect, restrictTo('admin'), deleteStudentsByClass);
