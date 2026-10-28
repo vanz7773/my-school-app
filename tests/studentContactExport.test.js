@@ -26,6 +26,7 @@ function controller(find) {
     require(name) {
       if (name === '../models/Student') return { find };
       if (name === '../services/studentContactExport') return { buildStudentContactsWorkbook };
+      if (name === '../services/studentContactImport') return require('../services/studentContactImport');
       throw new Error(`Unexpected dependency: ${name}`);
     },
   });

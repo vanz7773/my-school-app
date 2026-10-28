@@ -3,7 +3,13 @@ const router = express.Router();
 const { protect, restrictTo } = require('../middlewares/authMiddleware');
 const upload = require('../middlewares/upload');
 const studentController = require('../controllers/studentController');
-const { downloadStudentContacts } = require('../controllers/studentContactController');
+const { downloadStudentContacts, previewStudentContacts, applyStudentContacts } = require('../controllers/studentContactController');
+const multer = require('multer');
+const contactUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, cb) => cb(null, /\.xlsx$/i.test(file.originalname)),
+}).single('file');
 
 const {
   createStudent,
@@ -27,6 +33,13 @@ router.post('/bulk-pictures', protect, restrictTo('admin'), upload.array('pictur
 // 🧭 Admin-only: View, update, delete students
 router.get('/', protect, restrictTo('admin'), getAllStudents);
 router.get('/contacts/export', protect, restrictTo('admin'), downloadStudentContacts);
+router.post('/contacts/preview', protect, restrictTo('admin'), (req, res, next) => {
+  contactUpload(req, res, error => {
+    if (error) return res.status(400).json({ message: error.code === 'LIMIT_FILE_SIZE' ? 'The Excel file must be 5 MB or smaller.' : 'Unable to upload the Excel file.' });
+    return next();
+  });
+}, previewStudentContacts);
+router.post('/contacts/apply', protect, restrictTo('admin'), applyStudentContacts);
 router.put('/:id', protect, restrictTo('admin'), upload.single('profilePicture'), updateStudent);
 router.delete('/:id', protect, restrictTo('admin'), deleteStudent);
 router.delete('/class/:classId', protect, restrictTo('admin'), deleteStudentsByClass);
