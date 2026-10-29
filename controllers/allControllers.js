@@ -1533,38 +1533,16 @@ module.exports = {
 
       // 💬 Auto-Trigger SMS for Fee Payment
       try {
-        const smsService = require('../services/smsService');
-        const settings = await smsService.getSchoolSettings(req.user.school);
-        
-        // Skip immediate SMS for Daily Variable payers (we send a weekly summary instead)
-        if (settings.smsEnabled && settings.autoTriggers?.feePayments && !isDailyVariable) {
-          const User = require('../models/User');
-          const studentName = updatedBill.student?.user?.name || "your child";
-          
-          let phones = [];
-          if (updatedBill.student?.parentIds && updatedBill.student.parentIds.length > 0) {
-            const parents = await User.find({ _id: { $in: updatedBill.student.parentIds } }).select('phone').lean();
-            phones = parents.map(p => p.phone).filter(Boolean);
-          } else if (updatedBill.student?.parent) {
-            const parent = await User.findById(updatedBill.student.parent).select('phone').lean();
-            if (parent && parent.phone) phones.push(parent.phone);
-          }
-          
-          phones = [...new Set(phones)]; // Unique phone numbers
-          
-          if (phones.length > 0) {
-            const amountFormatted = formatCurrency(payment[0].amount);
-            const shortReceiptNo = payment[0]._id.toString().slice(-6).toUpperCase();
-            const smsMessage = `Payment of ${amountFormatted} received for ${studentName}. Receipt #${shortReceiptNo}. Balance: ${formatCurrency(newBalance)}. Log in to the app to download receipt.`;
-            
-            await smsService.sendSms({
-              schoolId: req.user.school,
-              recipients: phones,
-              message: smsMessage,
-              messageType: 'fees'
-            });
-          }
-        }
+        const { sendFeePaymentSms } = require('../services/studentSmsRecipients');
+        const studentName = updatedBill.student?.user?.name || "your child";
+        const amountFormatted = formatCurrency(payment[0].amount);
+        const shortReceiptNo = payment[0]._id.toString().slice(-6).toUpperCase();
+        await sendFeePaymentSms({
+          schoolId: req.user.school,
+          student: updatedBill.student,
+          isDailyVariable,
+          message: `Payment of ${amountFormatted} received for ${studentName}. Receipt #${shortReceiptNo}. Balance: ${formatCurrency(newBalance)}. Log in to the app to download receipt.`
+        });
       } catch (smsError) {
         console.error("Auto-SMS fee payment failed:", smsError.message);
       }

@@ -2095,7 +2095,7 @@ exports.uploadReportSheetPDF = [
       const { classDisplayName } = resolveClassNames(classDoc);
 
       // Fetch students
-      const students = await Student.find({ class: classId })
+      const students = await Student.find({ class: classId, school: schoolId })
         .populate("user", "name")
         .populate("parent parentIds")
         .lean();
@@ -2210,6 +2210,7 @@ exports.uploadReportSheetPDF = [
 
       const uploadedReports = {};
       const notifications = [];
+      const reportSmsStudents = [];
 
       function getParentIds(student) {
         const set = new Set();
@@ -2270,6 +2271,7 @@ exports.uploadReportSheetPDF = [
             }
           });
 
+          reportSmsStudents.push(student);
           const studentName = student.user?.name || student.name || "your child";
           const pIds = getParentIds(student);
           const sId = student.user?._id ? String(student.user._id) : null;
@@ -2331,31 +2333,6 @@ exports.uploadReportSheetPDF = [
               await sendPush([...userSet], pushTitle, msg).catch(e => console.error("Push Error:", e));
             }
           }
-
-          // 💬 SMS AUTO-TRIGGER
-          try {
-            const smsService = require('../services/smsService');
-            const settings = await smsService.getSchoolSettings(schoolId);
-            if (settings.smsEnabled && settings.autoTriggers?.examReports) {
-              for (const [msg, userSet] of Object.entries(pushesByMessage)) {
-                if (userSet.size === 0) continue;
-                const User = require('../models/User');
-                const targetUsers = await User.find({ _id: { $in: [...userSet] } }).select('phone').lean();
-                const phones = targetUsers.map(u => u.phone).filter(Boolean);
-                if (phones.length > 0) {
-                  await smsService.sendSms({
-                    schoolId,
-                    recipients: phones,
-                    message: `New Report Card: ${msg}`,
-                    messageType: 'reports'
-                  });
-                }
-              }
-            }
-          } catch (smsErr) {
-            console.error("SMS Auto-Trigger error in report cards:", smsErr);
-          }
-
         } catch (e) {
           console.warn("Failed to batch insert or push notifications:", e.message || e);
         }
@@ -2364,6 +2341,14 @@ exports.uploadReportSheetPDF = [
       // ✅ 4️⃣ UPDATE TERM DOCUMENT USING termKey
       // ====================================================
       // Firebase storage paths remain unchanged and consistent
+      // SMS contacts do not require an app account or a successful push notification.
+      try {
+        const { sendReportSms } = require('../services/studentSmsRecipients');
+        await sendReportSms({ schoolId, students: reportSmsStudents, termLabel });
+      } catch (smsError) {
+        console.error('Report SMS failed:', smsError.message);
+      }
+
       await Term.findByIdAndUpdate(termKey, {
         $set: { [`reportSheets.${classId}`]: pdfUrl }
       });

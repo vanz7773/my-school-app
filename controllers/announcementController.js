@@ -231,22 +231,21 @@ exports.createAnnouncement = async (req, res) => {
     // 💬 SMS AUTO-TRIGGER
     // --------------------------------------------------
     try {
-      if (recipientUsers.length > 0) {
-        const smsService = require('../services/smsService');
-        const settings = await smsService.getSchoolSettings(schoolId);
-        if (settings.smsEnabled && settings.autoTriggers?.announcements) {
-          // Fetch phones for recipient users
-          const User = require('../models/User');
-          const targetUsers = await User.find({ _id: { $in: recipientUsers } }).select('phone').lean();
-          const phones = targetUsers.map(u => u.phone).filter(Boolean);
-          if (phones.length > 0) {
-            await smsService.sendSms({
-              schoolId,
-              recipients: phones,
-              message: `New Announcement from school: ${title || "Please check the portal for details."}`,
-              messageType: 'announcements'
-            });
-          }
+      const smsService = require('../services/smsService');
+      const settings = await smsService.getSchoolSettings(schoolId);
+      if (settings.smsEnabled && settings.autoTriggers?.announcements) {
+        const { collectAnnouncementPhones } = require('../services/studentSmsRecipients');
+        const phones = await collectAnnouncementPhones({
+          schoolId, recipientUserIds: recipientUsers, classId,
+          includeGuardians: resolvedRoles.some(role => ['parent', 'all', 'everyone'].includes(role))
+        });
+        if (phones.length > 0) {
+          await smsService.sendSms({
+            schoolId,
+            recipients: phones,
+            message: `New Announcement from school: ${title || "Please check the portal for details."}`,
+            messageType: 'announcements'
+          });
         }
       }
     } catch (smsErr) {

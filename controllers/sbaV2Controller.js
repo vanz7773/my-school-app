@@ -754,6 +754,7 @@ exports.uploadGeneratedReportCards = [
 
       const uploadedReports = {};
       const notifications = [];
+      const reportSmsStudents = [];
       const pagesToProcess = Math.min(pageCount, students.length);
 
       for (let i = 0; i < pagesToProcess; i += 1) {
@@ -795,6 +796,7 @@ exports.uploadGeneratedReportCards = [
             },
           });
 
+          reportSmsStudents.push(student);
           const studentName = student.user?.name || student.name || "your child";
           const parentIds = getParentIds(student);
           const studentUserId = student.user?._id ? String(student.user._id) : null;
@@ -871,31 +873,17 @@ exports.uploadGeneratedReportCards = [
                 .catch(error => console.error("Push Error:", error));
             }
           }
-
-          try {
-            const smsService = require("../services/smsService");
-            const settings = await smsService.getSchoolSettings(schoolId);
-            if (settings.smsEnabled && settings.autoTriggers?.examReports) {
-              for (const [message, userSet] of Object.entries(pushesByMessage)) {
-                if (userSet.size === 0) continue;
-                const targetUsers = await User.find({ _id: { $in: [...userSet] } }).select("phone").lean();
-                const phones = targetUsers.map(user => user.phone).filter(Boolean);
-                if (phones.length > 0) {
-                  await smsService.sendSms({
-                    schoolId,
-                    recipients: phones,
-                    message: `New Report Card: ${message}`,
-                    messageType: "reports",
-                  });
-                }
-              }
-            }
-          } catch (smsError) {
-            console.error("SMS Auto-Trigger error in SBA V2 report cards:", smsError);
-          }
         } catch (error) {
           console.warn("Failed to insert or push SBA V2 report notifications:", error.message || error);
         }
+      }
+
+      // SMS contacts do not require an app account or a successful push notification.
+      try {
+        const { sendReportSms } = require('../services/studentSmsRecipients');
+        await sendReportSms({ schoolId, students: reportSmsStudents, termLabel });
+      } catch (smsError) {
+        console.error('Report SMS failed:', smsError.message);
       }
 
       await Term.findByIdAndUpdate(termKey, {

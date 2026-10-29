@@ -5,36 +5,7 @@ const Student = require('../models/Student');
 const User = require('../models/User');
 const NonTeachingStaff = require('../models/NonTeachingStaff');
 
-const collectParentPhonesFromStudents = async (students, schoolId) => {
-  const phones = [];
-  const parentUserIds = new Set();
-
-  students.forEach(student => {
-    if (student.guardianPhone) phones.push(student.guardianPhone);
-    if (student.guardianPhone2) phones.push(student.guardianPhone2);
-
-    if (student.parent) parentUserIds.add(String(student.parent._id || student.parent));
-    if (Array.isArray(student.parentIds)) {
-      student.parentIds.forEach(parentId => {
-        if (parentId) parentUserIds.add(String(parentId._id || parentId));
-      });
-    }
-  });
-
-  if (parentUserIds.size > 0) {
-    const parentUsers = await User.find({
-      _id: { $in: Array.from(parentUserIds) },
-      role: 'parent',
-      school: schoolId
-    }).select('phone');
-
-    parentUsers.forEach(parent => {
-      if (parent.phone) phones.push(parent.phone);
-    });
-  }
-
-  return phones;
-};
+const { collectParentPhonesFromStudents } = require('../services/studentSmsRecipients');
 
 exports.getSettings = async (req, res) => {
   try {
@@ -355,26 +326,13 @@ exports.triggerOverdueFeesSms = async (req, res) => {
     for (const bill of overdueBills) {
       if (!bill.student) continue;
       
-      const studentData = await Student.findById(bill.student._id).populate('parent parentIds');
+      const studentData = await Student.findOne({ _id: bill.student._id, school: req.user.school }).populate('parent parentIds');
       if (!studentData) continue;
 
       const studentName = bill.student.user?.name || studentData.name || 'Student';
       const message = `Fee Reminder: ${studentName} has an outstanding balance of GHS ${bill.balance}. Please arrange payment.`;
 
-      const phones = new Set();
-      if (studentData.guardianPhone) phones.add(studentData.guardianPhone);
-      if (studentData.guardianPhone2) phones.add(studentData.guardianPhone2);
-      
-      const parentIds = [];
-      if (studentData.parent) parentIds.push(studentData.parent._id || studentData.parent);
-      if (Array.isArray(studentData.parentIds)) {
-        studentData.parentIds.forEach(p => parentIds.push(p._id || p));
-      }
-
-      if (parentIds.length > 0) {
-        const parentUsers = await User.find({ _id: { $in: parentIds } }).select('phone');
-        parentUsers.forEach(pu => { if (pu.phone) phones.add(pu.phone); });
-      }
+      const phones = await collectParentPhonesFromStudents([studentData], req.user.school);
 
       for (const phone of phones) {
         if (!phoneMessages[phone]) phoneMessages[phone] = [];
@@ -453,20 +411,7 @@ exports.triggerWeeklyDailyFeesSms = async (req, res) => {
       const studentName = data.student.user?.name || data.student.name || 'Student';
       const summaryText = `${studentName} (GHS ${data.total})`;
 
-      const phones = new Set();
-      if (data.student.guardianPhone) phones.add(data.student.guardianPhone);
-      if (data.student.guardianPhone2) phones.add(data.student.guardianPhone2);
-      
-      const parentIds = [];
-      if (data.student.parent) parentIds.push(data.student.parent._id || data.student.parent);
-      if (Array.isArray(data.student.parentIds)) {
-        data.student.parentIds.forEach(p => parentIds.push(p._id || p));
-      }
-
-      if (parentIds.length > 0) {
-        const parentUsers = await User.find({ _id: { $in: parentIds } }).select('phone');
-        parentUsers.forEach(pu => { if (pu.phone) phones.add(pu.phone); });
-      }
+      const phones = await collectParentPhonesFromStudents([data.student], req.user.school);
 
       for (const phone of phones) {
         if (!phoneMessages[phone]) phoneMessages[phone] = [];
@@ -552,20 +497,7 @@ exports.processAllWeeklyDailyFeesSMS = async () => {
         const studentName = data.student.user?.name || data.student.name || 'Student';
         const summaryText = `${studentName} (GHS ${data.total})`;
 
-        const phones = new Set();
-        if (data.student.guardianPhone) phones.add(data.student.guardianPhone);
-        if (data.student.guardianPhone2) phones.add(data.student.guardianPhone2);
-        
-        const parentIds = [];
-        if (data.student.parent) parentIds.push(data.student.parent._id || data.student.parent);
-        if (Array.isArray(data.student.parentIds)) {
-          data.student.parentIds.forEach(p => parentIds.push(p._id || p));
-        }
-
-        if (parentIds.length > 0) {
-          const parentUsers = await User.find({ _id: { $in: parentIds } }).select('phone');
-          parentUsers.forEach(pu => { if (pu.phone) phones.add(pu.phone); });
-        }
+        const phones = await collectParentPhonesFromStudents([data.student], schoolId);
 
         for (const phone of phones) {
           if (!phoneMessages[phone]) phoneMessages[phone] = [];
