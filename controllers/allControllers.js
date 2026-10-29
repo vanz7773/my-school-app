@@ -1,3 +1,4 @@
+const { formatSmsDate } = require('../utils/smsDates');
 const mongoose = require('mongoose');
 const { FeeTemplate, TermBill, Parent, Payment } = require('../models/allModels');
 const currency = require('currency-formatter');
@@ -1541,7 +1542,7 @@ module.exports = {
           schoolId: req.user.school,
           student: updatedBill.student,
           isDailyVariable,
-          message: `Payment of ${amountFormatted} received for ${studentName}. Receipt #${shortReceiptNo}. Balance: ${formatCurrency(newBalance)}. Log in to the app to download receipt.`
+          message: `Payment of ${amountFormatted} received for ${studentName}. Payment date: ${formatSmsDate(payment[0].paymentDate || payment[0].createdAt)}. Receipt #${shortReceiptNo}. Balance: ${formatCurrency(newBalance)}. Log in to the app to download receipt.`
         });
       } catch (smsError) {
         console.error("Auto-SMS fee payment failed:", smsError.message);
