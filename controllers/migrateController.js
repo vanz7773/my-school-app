@@ -587,6 +587,7 @@ exports.migrateStudents = async (req, res) => {
             update: {
               $set: {
                 status: "graduated",
+                graduationAcademicYear: fromYearForStudents,
                 academicYear: toYearForStudents,
                 class: null
               }

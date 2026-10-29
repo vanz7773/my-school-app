@@ -6,6 +6,8 @@ const {
   moveStudentToClass,
 } = require('../controllers/enrollmentController');
 
+router.get('/graduates', protect, restrictTo('admin'), require('../controllers/graduatedStudentsController').getGraduatedStudents);
+
 router.get('/summary', protect, restrictTo('admin'), getClassEnrollmentSummary);
 router.patch('/students/:studentId/class', protect, restrictTo('admin'), moveStudentToClass);
 

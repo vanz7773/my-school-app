@@ -71,6 +71,9 @@ const studentSchema = new mongoose.Schema({
     default: {}
   },
 
+  // Completed school year retained when the student graduates.
+  graduationAcademicYear: { type: String },
+
   status: {
     type: String,
     enum: ['active', 'graduated', 'withdrawn'],

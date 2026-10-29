@@ -237,6 +237,7 @@ exports.getClassEnrollmentSummary = async (req, res) => {
           pipeline: [
             {
               $match: {
+                status: { $ne: 'graduated' },
                 $expr: {
                   $and: [
                     { $eq: ['$class', '$$classId'] },

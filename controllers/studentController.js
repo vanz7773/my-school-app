@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const Student = require('../models/Student');
 const Class = require('../models/Class');
@@ -175,6 +176,7 @@ exports.createStudent = async (req, res) => {
 exports.getAllStudents = async (req, res) => {
   try {
     const filter = { school: req.user.school };
+    if (req.query.excludeGraduated === 'true') filter.status = { $ne: 'graduated' };
 
     if (req.query.classId) filter.class = req.query.classId;
     if (req.query.academicYear) filter.academicYear = req.query.academicYear;
@@ -199,7 +201,8 @@ exports.getAllStudents = async (req, res) => {
 
       // Note: If an aggregation match filter includes ObjectIds, they must be cast properly.
       // But Mongoose handles basic filters well. Note: inside aggregate filter, $or needs care, but standard filters work.
-      const matchFilter = { school: req.user.school };
+      const matchFilter = { school: new mongoose.Types.ObjectId(req.user.school) };
+      if (filter.status) matchFilter.status = filter.status;
       if (req.query.classId) matchFilter.class = new mongoose.Types.ObjectId(req.query.classId);
       if (req.query.academicYear) matchFilter.academicYear = req.query.academicYear;
       if (filter.$or) matchFilter.$or = filter.$or;
