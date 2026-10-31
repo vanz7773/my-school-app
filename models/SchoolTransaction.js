@@ -31,6 +31,7 @@ const schoolTransactionSchema = new mongoose.Schema({
         enum: ['pending', 'paid', 'cancelled'],
         default: 'paid'
     },
+    confirmationSeenBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     reference: {
         type: String
     },
