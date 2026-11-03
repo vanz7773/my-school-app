@@ -185,3 +185,6 @@ Regression checks after the extension: 83 existing backend tests passed; the int
 ## Refactor verification
 
 The supported examination types are centralized in `models/examFeeFields.js` and reused by the campaign model and campaign/report validation. Accepted values, transaction processing, routes, indexes, tenant isolation and financial behavior are unchanged. The isolated local integration run passed all 24 tests with zero skips/failures; 83 existing backend tests also passed (the isolated integration suite is intentionally skipped in that separate broad run). No production database operation, migration or deployment was performed.
+
+
+Student photos: charge list responses additionally include `profilePicture` and `profilePictureThumbnail` (empty strings when unavailable). Photos are loaded only for the authorized, school-scoped page of student IDs. Historical student names, classes and financial values remain unchanged. No schema or migration is required.

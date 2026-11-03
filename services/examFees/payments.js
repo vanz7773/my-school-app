@@ -1,6 +1,7 @@
 const { randomUUID } = require('crypto');
 const Campaign = require('../../models/ExamFeeCampaign');
 const Charge = require('../../models/ExamFeeCharge');
+const Student = require('../../models/Student');
 const Payment = require('../../models/ExamFeePayment');
 const c = require('./core');
 const chargeStatus = charge => ({ ...charge, balancePesewas: charge.amountDuePesewas - charge.netPaidPesewas,
@@ -21,7 +22,14 @@ exports.charges = async (user, query) => {
       { $and: [{ $gt: ['$netPaidPesewas', 0] }, { $lt: ['$netPaidPesewas', '$amountDuePesewas'] }] };
   }
   const result = await c.paginated(Charge, filter, query, { studentName: 1, _id: 1 });
-  return { ...result, items: result.items.map(chargeStatus) };
+  // Fetch only photos for this authorized page; preserve historical names/classes.
+  const students = result.items.length ? await Student.find({ ...c.scope(user), _id: { $in: result.items.map(item => item.student) } })
+    .select('_id profilePicture profilePictureThumbnail').lean() : [];
+  const photos = new Map(students.map(student => [String(student._id), student]));
+  return { ...result, items: result.items.map(item => {
+    const photo = photos.get(String(item.student));
+    return { ...chargeStatus(item), profilePicture: photo?.profilePicture || '', profilePictureThumbnail: photo?.profilePictureThumbnail || '' };
+  }) };
 };
 exports.record = async (user, body) => {
   c.only(body, ['chargeId', 'amountPesewas', 'method', 'clientRequestId']);
