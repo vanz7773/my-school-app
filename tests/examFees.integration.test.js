@@ -265,6 +265,30 @@ test('exam fees integration on an isolated replica set', { skip: !uri, timeout: 
     assert.equal(history.items.length, 1); assert.ok(history.total > 1);
     await call(f.admin, 'GET', '/campaigns?limit=10000', null, 400);
   });
+  await t.test('Mid-Term has independent charges, authorized collections and correctly filtered reports', async () => {
+    const midDraft = { name: 'Mid-Term Examination', examinationType: 'mid_term', academicYear: '2026-2027', termId: String(privateSchool.term._id),
+      classFees: [{ classId: String(privateSchool.cls._id), amountPesewas: 5000 }, { classId: String(privateSchool.cls2._id), amountPesewas: 7000 }] };
+    const mid = (await call(privateSchool.admin, 'POST', '/campaigns', midDraft)).campaign;
+    assert.equal(mid.examinationType, 'mid_term');
+    await call(privateSchool.admin, 'PATCH', `/campaigns/${mid._id}`, { ...midDraft, name: 'Mid-Term Examination revised' });
+    await call(privateSchool.admin, 'POST', `/campaigns/${mid._id}/activate`, {});
+    await call(privateSchool.teacherUser, 'GET', `/charges?campaignId=${mid._id}&classId=${privateSchool.cls._id}`, null, 403);
+    await call(privateSchool.admin, 'POST', `/campaigns/${mid._id}/assignments`, { teacherId: String(privateSchool.teacher._id), classId: String(privateSchool.cls._id) });
+    const roster = await call(privateSchool.teacherUser, 'GET', `/charges?campaignId=${mid._id}&classId=${privateSchool.cls._id}`);
+    assert.equal(roster.total, 1);
+    const body = pay(roster.items[0], 2000, 'mid-term-payment-01');
+    const first = await call(privateSchool.teacherUser, 'POST', '/payments', body);
+    const retry = await call(privateSchool.teacherUser, 'POST', '/payments', body);
+    assert.equal(first.charge.balancePesewas, 3000);
+    assert.equal(retry.duplicate, true); assert.equal(retry.payment._id, first.payment._id);
+    const filtered = await call(privateSchool.teacherUser, 'GET', '/campaigns?examinationType=mid_term');
+    assert.equal(filtered.total, 1); assert.equal(filtered.items[0]._id, mid._id);
+    const report = await call(privateSchool.admin, 'GET', `/reports?campaignId=${mid._id}&examinationType=mid_term&groupBy=examinationType`);
+    assert.equal(report.summary.expectedPesewas, 12000); assert.equal(report.summary.collectedPesewas, 2000);
+    assert.equal(report.summary.outstandingPesewas, 10000); assert.equal(report.items[0]._id, 'mid_term');
+    assert.equal((await call(f.admin, 'GET', '/campaigns?examinationType=mid_term')).total, 0);
+    await call(f.admin, 'POST', '/campaigns', draft('Invalid examination', 'unknown'), 400);
+  });
   await t.test('disabling blocks every feature path without deleting financial history; settings can re-enable', async () => {
     const count = await Payment.countDocuments({ school: f.school._id });
     await call(f.admin, 'PATCH', '/settings', { examFeesEnabled: false });

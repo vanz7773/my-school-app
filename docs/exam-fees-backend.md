@@ -14,7 +14,7 @@ All amounts accepted/returned are **integer pesewas**: GHS 50.00 = `5000`. No en
 
 | Model | Purpose and integrity constraints |
 |---|---|
-| ExamFeeCampaign | Draft/active/closed examination, type `end_of_term` or `mock`, real term and academic year, class-specific amounts and names, activation/closure actor and date. |
+| ExamFeeCampaign | Draft/active/closed examination, type `end_of_term`, `mock` or `mid_term`, real term and academic year, class-specific amounts and names, activation/closure actor and date. |
 | ExamFeeCharge | One school/campaign/student obligation (unique index), original class and student-name snapshots, original/current amount due, net paid, reasoned adjustment history. |
 | ExamFeePayment | Immutable payment identity and receipt, collector User and optional Teacher reference, method, recorded/reversed status, time-of-payment balance, reversal metadata and handover allocation counters. Unique school/clientRequestId and global receiptNumber indexes. |
 | ExamFeeCollectorAssignment | Unique school/campaign/Teacher-profile/class assignment; grant/revoke actor, status and date. Class-teacher status is irrelevant. |
@@ -173,3 +173,11 @@ Modified:
 - No production database operations, frontend edits or deployment performed.
 
 The local integration harness covers government/private activation, auth and disabled access, cross-school terms/classes/teachers/payments/receipts/reports, drafts and repeat activation, independent mocks, historical classes, multiple-class authorization, unsafe inputs, partial/full payments, concurrent and duplicate payment requests, unique receipts, access revocation, transactional rollback on audit failure, concurrent handovers, partial allocations, repeat confirmation, rejection, mandatory-reason reversal, confirmed-handover credits, explicit charge adjustments, all four methods, report grouping/accuracy, closed campaigns, pagination and retention after disabling.
+
+## Mid-Term extension — 3 November 2026
+
+The campaign model, create/edit validation, campaign filters and report filters now accept `mid_term`. Mid-Term campaigns have separate charges, payments and balances, using the same feature guard, authorization, tenant isolation and transaction safeguards. Existing end-of-term/mock records are unchanged. No migration, additional index or new endpoint is required. Deploy this backend version before offering Mid-Term creation in the admin dashboard. No production deployment was performed.
+
+Mid-Term verification: the isolated local replica-set integration run passed all 24 tests (including its parent suite), with zero failures/skips. The new scenario verifies create/edit, activation, teacher access checks, partial Cash payment, idempotent retry, campaign/report filtering, separate obligations and school isolation.
+
+Regression checks after the extension: 83 existing backend tests passed; the integration suite was skipped in that broad run and separately passed all 24 tests on the disposable replica set as described above. Admin checks: 31 tests passed, production build passed with existing warnings, and the mobile TypeScript check passed.

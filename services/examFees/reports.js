@@ -32,7 +32,7 @@ exports.adminReport = async (user, query) => {
   if (query.campaignId) campaignFilter._id = c.id(query.campaignId);
   if (query.academicYear) campaignFilter.academicYear = c.text(query.academicYear, 20);
   if (query.termId) campaignFilter.term = c.id(query.termId);
-  if (query.examinationType) { if (!['mock', 'end_of_term'].includes(query.examinationType)) c.fail(400, 'Invalid examination type.'); campaignFilter.examinationType = query.examinationType; }
+  if (query.examinationType) { if (!['mock', 'end_of_term', 'mid_term'].includes(query.examinationType)) c.fail(400, 'Invalid examination type.'); campaignFilter.examinationType = query.examinationType; }
   const groupBy = query.groupBy || 'class';
   if (!['class', 'teacher', 'campaign', 'examinationType', 'academicYear', 'term', 'method'].includes(groupBy)) c.fail(400, 'Invalid report grouping.');
   return snapshot(async session => {
