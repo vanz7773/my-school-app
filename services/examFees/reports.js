@@ -5,6 +5,7 @@ const Payment = require('../../models/ExamFeePayment');
 const Remittance = require('../../models/ExamFeeRemittance');
 const Audit = require('../../models/ExamFeeAudit');
 const c = require('./core');
+const { examinationTypes } = require('../../models/examFeeFields');
 const sumIf = (condition, value) => ({ $sum: { $cond: [condition, value, 0] } });
 const recorded = { $eq: ['$status', 'recorded'] };
 const paymentTotals = {
@@ -32,7 +33,7 @@ exports.adminReport = async (user, query) => {
   if (query.campaignId) campaignFilter._id = c.id(query.campaignId);
   if (query.academicYear) campaignFilter.academicYear = c.text(query.academicYear, 20);
   if (query.termId) campaignFilter.term = c.id(query.termId);
-  if (query.examinationType) { if (!['mock', 'end_of_term', 'mid_term'].includes(query.examinationType)) c.fail(400, 'Invalid examination type.'); campaignFilter.examinationType = query.examinationType; }
+  if (query.examinationType) { if (!examinationTypes.includes(query.examinationType)) c.fail(400, 'Invalid examination type.'); campaignFilter.examinationType = query.examinationType; }
   const groupBy = query.groupBy || 'class';
   if (!['class', 'teacher', 'campaign', 'examinationType', 'academicYear', 'term', 'method'].includes(groupBy)) c.fail(400, 'Invalid report grouping.');
   return snapshot(async session => {

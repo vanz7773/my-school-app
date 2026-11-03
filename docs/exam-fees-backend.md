@@ -181,3 +181,7 @@ The campaign model, create/edit validation, campaign filters and report filters 
 Mid-Term verification: the isolated local replica-set integration run passed all 24 tests (including its parent suite), with zero failures/skips. The new scenario verifies create/edit, activation, teacher access checks, partial Cash payment, idempotent retry, campaign/report filtering, separate obligations and school isolation.
 
 Regression checks after the extension: 83 existing backend tests passed; the integration suite was skipped in that broad run and separately passed all 24 tests on the disposable replica set as described above. Admin checks: 31 tests passed, production build passed with existing warnings, and the mobile TypeScript check passed.
+
+## Refactor verification
+
+The supported examination types are centralized in `models/examFeeFields.js` and reused by the campaign model and campaign/report validation. Accepted values, transaction processing, routes, indexes, tenant isolation and financial behavior are unchanged. The isolated local integration run passed all 24 tests with zero skips/failures; 83 existing backend tests also passed (the isolated integration suite is intentionally skipped in that separate broad run). No production database operation, migration or deployment was performed.

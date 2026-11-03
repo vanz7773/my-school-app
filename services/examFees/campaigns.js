@@ -8,6 +8,7 @@ const Campaign = require('../../models/ExamFeeCampaign');
 const Charge = require('../../models/ExamFeeCharge');
 const Assignment = require('../../models/ExamFeeCollectorAssignment');
 const c = require('./core');
+const { examinationTypes } = require('../../models/examFeeFields');
 
 exports.getSettings = async user => {
   c.admin(user);
@@ -27,7 +28,7 @@ exports.updateSettings = async (user, body) => {
 };
 async function definition(user, body, session) {
   c.only(body, ['name', 'examinationType', 'academicYear', 'termId', 'classFees']);
-  if (!['end_of_term', 'mock', 'mid_term'].includes(body.examinationType)) c.fail(400, 'Invalid examinationType.');
+  if (!examinationTypes.includes(body.examinationType)) c.fail(400, 'Invalid examinationType.');
   const term = await Term.findOne({ ...c.scope(user), _id: c.id(body.termId) }).session(session);
   if (!term) c.fail(404, 'Term not found.');
   if (body.academicYear !== term.academicYear) c.fail(400, 'Academic year must match the selected term.');
@@ -103,7 +104,7 @@ exports.list = async (user, query) => {
   const filter = c.scope(user);
   if (query.academicYear) filter.academicYear = c.text(query.academicYear, 20);
   if (query.termId) filter.term = c.id(query.termId);
-  if (query.examinationType) { if (!['mock', 'end_of_term', 'mid_term'].includes(query.examinationType)) c.fail(400, 'Invalid examination type.'); filter.examinationType = query.examinationType; }
+  if (query.examinationType) { if (!examinationTypes.includes(query.examinationType)) c.fail(400, 'Invalid examination type.'); filter.examinationType = query.examinationType; }
   if (query.status) { if (!['draft', 'active', 'closed'].includes(query.status)) c.fail(400, 'Invalid status.'); filter.status = query.status; }
   let assignments;
   if (user.role === 'teacher') {
