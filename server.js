@@ -193,6 +193,7 @@ app.use('/api/transport', transportRoutes);
 app.use('/api/release-notes', releaseNoteRoutes);
 app.use('/api/sms', require('./routes/smsRoutes'));
 app.use('/api/payroll', require('./routes/payrollRoutes'));
+app.use('/api/exam-fees', require('./routes/examFeeRoutes'));
 
 
 // Default root route

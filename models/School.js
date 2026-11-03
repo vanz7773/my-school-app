@@ -17,6 +17,12 @@ const schoolSchema = new mongoose.Schema(
       default: "Private",
     },
 
+    features: {
+      examFeesEnabled: { type: Boolean, default: false },
+    },
+    // Serializes exam-fee financial writes with feature/authorization changes per school.
+    examFeesRevision: { type: Number, default: 0 },
+
     lockedFeatures: [{
       type: String,
       enum: [
