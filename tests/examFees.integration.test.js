@@ -289,6 +289,53 @@ test('exam fees integration on an isolated replica set', { skip: !uri, timeout: 
     assert.equal((await call(f.admin, 'GET', '/campaigns?examinationType=mid_term')).total, 0);
     await call(f.admin, 'POST', '/campaigns', draft('Invalid examination', 'unknown'), 400);
   });
+  await t.test('active class fees update atomically, preserve payments and record per-student adjustments', async () => {
+    const exam = (await call(f.admin, 'POST', '/campaigns', draft('Fee correction'))).campaign;
+    const fees = [{ classId: String(f.cls._id), amountPesewas: 6000 }, { classId: String(f.cls2._id), amountPesewas: 8000 }];
+    await call(f.admin, 'POST', `/campaigns/${exam._id}/fees`, { classFees: fees, reason: 'Draft' }, 409);
+    await call(f.admin, 'POST', `/campaigns/${exam._id}/activate`, {});
+    const charge = await Charge.findOne({ campaign: exam._id, class: f.cls._id });
+    const payment = (await call(f.admin, 'POST', '/payments', pay(charge, 1000, 'fee-correction-payment-01'))).payment;
+    await call(f.teacherUser, 'POST', `/campaigns/${exam._id}/fees`, { classFees: fees, reason: 'Teacher' }, 403);
+    await call(privateSchool.admin, 'POST', `/campaigns/${exam._id}/fees`, { classFees: fees, reason: 'Cross school' }, 404);
+    const result = await call(f.admin, 'POST', `/campaigns/${exam._id}/fees`, { classFees: fees, reason: '$Bulk correction' });
+    assert.equal(result.chargesAdjusted, 2);
+    await call(f.admin, 'POST', `/campaigns/${exam._id}/fees`, { classFees: [{ classId: String(f.cls._id), amountPesewas: 6500 }], reason: 'Stale form', expectedRevision: 0 }, 409);
+    let updated = await Charge.findById(charge._id);
+    assert.equal(updated.amountDuePesewas, 6000); assert.equal(updated.netPaidPesewas, 1000); assert.equal(updated.originalAmountPesewas, 5000);
+    assert.equal(updated.adjustments[0].previousAmountPesewas, 5000); assert.equal(updated.adjustments[0].reason, '$Bulk correction');
+    assert.equal(String(updated.adjustments[0].by), String(f.admin._id));
+    assert.equal((await Payment.findById(payment._id)).balanceAfterPesewas, 4000);
+    const report = await call(f.admin, 'GET', `/reports?campaignId=${exam._id}`);
+    assert.equal(report.summary.expectedPesewas, 14000); assert.equal(report.summary.outstandingPesewas, 13000);
+    const individual = await Charge.findOne({ campaign: exam._id, class: f.cls2._id });
+    await call(f.admin, 'POST', `/charges/${individual._id}/adjustments`, { amountDuePesewas: 8500, reason: 'Individual fee adjustment' });
+    const retry = await call(f.admin, 'POST', `/campaigns/${exam._id}/fees`, { classFees: fees, reason: 'Retry', expectedRevision: 0 });
+    assert.equal((await Charge.findById(individual._id)).amountDuePesewas, 8500);
+    assert.equal(retry.chargesAdjusted, 0); assert.equal((await Charge.findById(charge._id)).adjustments.length, 1);
+    await call(f.admin, 'POST', `/campaigns/${exam._id}/fees`, { classFees: [{ classId: String(f.cls._id), amountPesewas: 500 }, { classId: String(f.cls2._id), amountPesewas: 9000 }], reason: 'Invalid reduction' }, 409);
+    assert.equal((await Charge.findOne({ campaign: exam._id, class: f.cls2._id })).amountDuePesewas, 8500);
+    await call(f.admin, 'POST', `/campaigns/${exam._id}/fees`, { classFees: [{ classId: String(f.cls._id), amountPesewas: 1000 }], reason: 'Reduce to paid amount' });
+    updated = await Charge.findById(charge._id); assert.equal(updated.amountDuePesewas, updated.netPaidPesewas);
+    await call(f.admin, 'POST', `/campaigns/${exam._id}/fees`, { classFees: [{ classId: String(f.cls._id), amountPesewas: 0 }], reason: 'Invalid zero' }, 400);
+    await call(f.admin, 'POST', `/campaigns/${exam._id}/fees`, { classFees: [{ classId: String(privateSchool.cls._id), amountPesewas: 1000 }], reason: 'Foreign class' }, 400);
+    await call(f.admin, 'POST', `/campaigns/${exam._id}/close`, {});
+    await call(f.admin, 'POST', `/campaigns/${exam._id}/fees`, { classFees: fees, reason: 'Closed' }, 409);
+    assert.equal(await Audit.countDocuments({ campaign: exam._id, action: 'campaign.fees_updated' }), 2);
+  });
+  await t.test('fee reduction racing collection cannot create an overpaid obligation', async () => {
+    const exam = (await call(f.admin, 'POST', '/campaigns', draft('Fee update race'))).campaign;
+    await call(f.admin, 'POST', `/campaigns/${exam._id}/activate`, {});
+    const charge = await Charge.findOne({ campaign: exam._id, class: f.cls._id });
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt.sign({ id: String(f.admin._id) }, process.env.JWT_SECRET)}` };
+    const [paymentResponse, feeResponse] = await Promise.all([
+      fetch(base + '/payments', { method: 'POST', headers, body: JSON.stringify(pay(charge, 4000, 'fee-update-race-payment-01')) }),
+      fetch(base + `/campaigns/${exam._id}/fees`, { method: 'POST', headers, body: JSON.stringify({ classFees: [{ classId: String(f.cls._id), amountPesewas: 3000 }], reason: 'Correction' }) })
+    ]);
+    assert.deepEqual([paymentResponse.status, feeResponse.status].sort(), [200, 409]);
+    const updated = await Charge.findById(charge._id);
+    assert.ok(updated.netPaidPesewas <= updated.amountDuePesewas);
+  });
   await t.test('duplicate deletion is tenant-scoped, audited and protects historical collections', async () => {
     const duplicate = (await call(f.admin, 'POST', '/campaigns', draft('Duplicate examination'))).campaign;
     await call(f.admin, 'POST', `/campaigns/${duplicate._id}/activate`, {});
@@ -329,6 +376,7 @@ test('exam fees integration on an isolated replica set', { skip: !uri, timeout: 
     await call(f.admin, 'PATCH', '/settings', { examFeesEnabled: false });
     for (const path of ['/campaigns', '/charges', '/payments', '/remittances', '/collector-summary', '/reports', '/audit', `/payments/${firstPayment._id}/receipt`]) await call(f.admin, 'GET', path, null, 403);
     await call(f.admin, 'DELETE', `/campaigns/${campaign._id}`, { reason: 'Disabled' }, 403);
+    await call(f.admin, 'POST', `/campaigns/${campaign._id}/fees`, { classFees: [], reason: 'Disabled' }, 403);
     assert.equal((await call(f.admin, 'GET', '/settings')).examFeesEnabled, false);
     assert.equal(await Payment.countDocuments({ school: f.school._id }), count);
     await call(f.admin, 'PATCH', '/settings', { examFeesEnabled: true });

@@ -173,3 +173,51 @@ exports.remove = async (user, campaignId, body) => {
     return { deletedCampaignId: String(campaign._id) };
   });
 };
+
+exports.updateFees = async (user, campaignId, body) => {
+  c.admin(user); c.id(campaignId); c.only(body, ['classFees', 'reason', 'expectedRevision']);
+  if (body.expectedRevision !== undefined && (!Number.isSafeInteger(body.expectedRevision) || body.expectedRevision < 0)) c.fail(400, 'Invalid examination revision.');
+  const reason = c.text(body.reason, 500);
+  if (!Array.isArray(body.classFees) || !body.classFees.length || body.classFees.length > 100) c.fail(400, 'Select 1–100 existing classes.');
+  const seen = new Set();
+  const requested = body.classFees.map(fee => {
+    c.only(fee, ['classId', 'amountPesewas']);
+    const classId = c.id(fee.classId);
+    if (seen.has(String(classId))) c.fail(400, 'Duplicate class.');
+    seen.add(String(classId));
+    return { classId, amountPesewas: c.money(fee.amountPesewas) };
+  });
+  return c.transaction(user, async session => {
+    const campaign = await Campaign.findOne({ ...c.scope(user), _id: campaignId }).session(session);
+    if (!campaign) c.fail(404, 'Examination not found.');
+    if (campaign.status !== 'active') c.fail(409, 'Only active examination fees can be updated. Edit draft fees before activation; closed examinations remain locked.');
+    const changes = [];
+    for (const fee of requested) {
+      const existing = campaign.classFees.find(item => String(item.class) === String(fee.classId));
+      if (!existing) c.fail(400, 'Only classes already included in this examination can be updated.');
+      if (existing.amountPesewas === fee.amountPesewas) continue;
+      if (await Charge.exists({ ...c.scope(user), campaign: campaign._id, class: fee.classId, netPaidPesewas: { $gt: fee.amountPesewas } }).session(session)) {
+        c.fail(409, `${existing.className}: the new fee is below an amount already paid by a student. No class fees were changed.`);
+      }
+      changes.push({ classId: fee.classId, className: existing.className, previousAmountPesewas: existing.amountPesewas, amountPesewas: fee.amountPesewas });
+    }
+    if (changes.length && body.expectedRevision !== undefined && body.expectedRevision !== campaign.revision) c.fail(409, 'Examination fees changed since this form was opened. Close the form, refresh and try again.');
+    let chargesAdjusted = 0;
+    const now = new Date();
+    for (const change of changes) {
+      const result = await Charge.updateMany({ ...c.scope(user), campaign: campaign._id, class: change.classId, amountDuePesewas: { $ne: change.amountPesewas } }, [{ $set: {
+        adjustments: { $concatArrays: [{ $ifNull: ['$adjustments', []] }, [{ previousAmountPesewas: '$amountDuePesewas', amountDuePesewas: change.amountPesewas, reason: { $literal: reason }, by: user._id, at: now }]] },
+        amountDuePesewas: change.amountPesewas, updatedAt: now
+      } }], { session });
+      chargesAdjusted += result.modifiedCount;
+      campaign.classFees.find(item => String(item.class) === String(change.classId)).amountPesewas = change.amountPesewas;
+    }
+    const definitionChanged = changes.some(change => change.previousAmountPesewas !== change.amountPesewas);
+    if (definitionChanged || chargesAdjusted) {
+      campaign.revision += 1;
+      await campaign.save({ session });
+      await c.audit(user, 'campaign.fees_updated', campaign._id, campaign._id, { reason, changes, chargesAdjusted }, session);
+    }
+    return { campaign, chargesAdjusted };
+  });
+};

@@ -19,6 +19,7 @@ router.get('/collector-summary', c.collectorSummary);
 router.use(restrictTo('admin'));
 router.post('/campaigns', c.createCampaign);
 router.delete('/campaigns/:campaignId', c.deleteCampaign);
+router.post('/campaigns/:campaignId/fees', c.updateCampaignFees);
 router.patch('/campaigns/:campaignId', c.editCampaign);
 router.post('/campaigns/:campaignId/activate', c.activate);
 router.post('/campaigns/:campaignId/close', c.close);
