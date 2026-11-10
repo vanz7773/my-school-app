@@ -39,3 +39,5 @@ exports.remittances = wrap(req => remittances.list(req.user, req.query));
 exports.collectorSummary = wrap(req => reports.collectorSummary(req.user, req.query));
 exports.report = wrap(req => reports.adminReport(req.user, req.query));
 exports.audit = wrap(req => reports.auditTrail(req.user, req.query));
+
+exports.deleteCampaign = wrap(req => campaigns.remove(req.user, req.params.campaignId, req.body || {}));

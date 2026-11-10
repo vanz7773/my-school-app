@@ -7,6 +7,8 @@ const User = require('../../models/User');
 const Campaign = require('../../models/ExamFeeCampaign');
 const Charge = require('../../models/ExamFeeCharge');
 const Assignment = require('../../models/ExamFeeCollectorAssignment');
+const Payment = require('../../models/ExamFeePayment');
+const Remittance = require('../../models/ExamFeeRemittance');
 const c = require('./core');
 const { examinationTypes } = require('../../models/examFeeFields');
 
@@ -146,4 +148,28 @@ exports.assignments = async (user, query) => {
   if (user.role === 'teacher') { filter.teacher = (await c.teacherFor(user))._id; filter.status = 'active'; }
   if (query.campaignId) filter.campaign = c.id(query.campaignId);
   return c.paginated(Assignment, filter, query);
+};
+
+// Delete only unused duplicates; never erase payment, remittance or adjustment history.
+exports.remove = async (user, campaignId, body) => {
+  c.admin(user); c.id(campaignId); c.only(body, ['reason']);
+  const reason = c.text(body.reason, 500);
+  return c.transaction(user, async session => {
+    const filter = { ...c.scope(user), campaign: campaignId };
+    const campaign = await Campaign.findOne({ ...c.scope(user), _id: campaignId }).session(session);
+    if (!campaign) c.fail(404, 'Examination not found.');
+    if (await Payment.exists(filter).session(session) || await Remittance.exists(filter).session(session) ||
+        await Charge.exists({ ...filter, $or: [{ netPaidPesewas: { $ne: 0 } }, { 'adjustments.0': { $exists: true } }] }).session(session)) {
+      c.fail(409, 'This examination has payment, handover or adjustment history and cannot be deleted. Close collection to stop new payments.');
+    }
+    const charges = await Charge.deleteMany(filter, { session });
+    const assignments = await Assignment.deleteMany(filter, { session });
+    await c.audit(user, 'campaign.deleted', campaign._id, campaign._id, {
+      reason, name: campaign.name, academicYear: campaign.academicYear, termName: campaign.termName,
+      status: campaign.status, classFees: campaign.classFees.map(fee => ({ class: fee.class, className: fee.className, amountPesewas: fee.amountPesewas })),
+      chargesRemoved: charges.deletedCount, assignmentsRemoved: assignments.deletedCount
+    }, session);
+    await Campaign.deleteOne({ ...c.scope(user), _id: campaignId }, { session });
+    return { deletedCampaignId: String(campaign._id) };
+  });
 };

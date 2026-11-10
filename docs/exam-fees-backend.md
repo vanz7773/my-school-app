@@ -188,3 +188,10 @@ The supported examination types are centralized in `models/examFeeFields.js` and
 
 
 Student photos: charge list responses additionally include `profilePicture` and `profilePictureThumbnail` (empty strings when unavailable). Photos are loaded only for the authorized, school-scoped page of student IDs. Historical student names, classes and financial values remain unchanged. No schema or migration is required.
+
+
+## Delete unused duplicate examinations
+
+`DELETE /api/exam-fees/campaigns/:campaignId` (admin, feature enabled), body `{ "reason": "Duplicate entry" }`. Returns `{ success: true, deletedCampaignId }`. A reason is required. Uses the school-serialized MongoDB transaction to check ownership and prevent concurrent collection races. Any payment (including reversed), remittance (any status), adjusted charge or nonzero net paid amount blocks deletion with 409. Otherwise unpaid generated charges, collector assignments and the campaign are deleted atomically. A `campaign.deleted` audit entry retains the name, period, class amounts, reason, actor and removed-record counts. No payment/remittance/audit records are deleted. The campaign then disappears from lists and uncollected expected/outstanding totals. Cross-school requests return 404, teacher requests 403. No schema migration or new environment variable is required.
+
+Deletion verification: five backend unit tests and all 26 isolated replica-set integration tests passed, including tenant/role/feature checks, cascade deletion, audit retention, protected financial history and concurrent payment versus deletion. The disposable database was stopped after testing; no production database was accessed.

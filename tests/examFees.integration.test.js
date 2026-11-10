@@ -289,10 +289,46 @@ test('exam fees integration on an isolated replica set', { skip: !uri, timeout: 
     assert.equal((await call(f.admin, 'GET', '/campaigns?examinationType=mid_term')).total, 0);
     await call(f.admin, 'POST', '/campaigns', draft('Invalid examination', 'unknown'), 400);
   });
+  await t.test('duplicate deletion is tenant-scoped, audited and protects historical collections', async () => {
+    const duplicate = (await call(f.admin, 'POST', '/campaigns', draft('Duplicate examination'))).campaign;
+    await call(f.admin, 'POST', `/campaigns/${duplicate._id}/activate`, {});
+    await call(f.admin, 'POST', `/campaigns/${duplicate._id}/assignments`, { teacherId: String(f.teacher._id), classId: String(f.cls._id) });
+    await call(f.teacherUser, 'DELETE', `/campaigns/${duplicate._id}`, { reason: 'Duplicate' }, 403);
+    await call(privateSchool.admin, 'DELETE', `/campaigns/${duplicate._id}`, { reason: 'Duplicate' }, 404);
+    await call(f.admin, 'DELETE', `/campaigns/${duplicate._id}`, { reason: '' }, 400);
+    await call(f.admin, 'DELETE', `/campaigns/${duplicate._id}`, { reason: 'Duplicate entry' });
+    assert.equal(await Campaign.countDocuments({ _id: duplicate._id }), 0);
+    assert.equal(await Charge.countDocuments({ campaign: duplicate._id }), 0);
+    assert.equal(await Assignment.countDocuments({ campaign: duplicate._id }), 0);
+    assert.equal(await Audit.countDocuments({ school: f.school._id, action: 'campaign.deleted', entityId: duplicate._id }), 1);
+    await call(f.admin, 'DELETE', `/campaigns/${campaign._id}`, { reason: 'Has history' }, 409);
+    assert.ok(await Campaign.exists({ _id: campaign._id }));
+  });
+  await t.test('deletion racing a payment cannot erase a successfully recorded payment', async () => {
+    const duplicate = (await call(f.admin, 'POST', '/campaigns', draft('Deletion race'))).campaign;
+    await call(f.admin, 'POST', `/campaigns/${duplicate._id}/activate`, {});
+    const charge = await Charge.findOne({ school: f.school._id, campaign: duplicate._id });
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt.sign({ id: String(f.admin._id) }, process.env.JWT_SECRET)}` };
+    const [paymentResponse, deleteResponse] = await Promise.all([
+      fetch(base + '/payments', { method: 'POST', headers, body: JSON.stringify(pay(charge, 1000, 'deletion-race-payment-01')) }),
+      fetch(base + `/campaigns/${duplicate._id}`, { method: 'DELETE', headers, body: JSON.stringify({ reason: 'Duplicate entry' }) })
+    ]);
+    if (paymentResponse.status === 200) {
+      assert.equal(deleteResponse.status, 409);
+      assert.ok(await Campaign.exists({ _id: duplicate._id }));
+      assert.equal(await Payment.countDocuments({ campaign: duplicate._id }), 1);
+    } else {
+      assert.equal(deleteResponse.status, 200);
+      assert.equal(paymentResponse.status, 404);
+      assert.equal(await Payment.countDocuments({ campaign: duplicate._id }), 0);
+      assert.equal(await Charge.countDocuments({ campaign: duplicate._id }), 0);
+    }
+  });
   await t.test('disabling blocks every feature path without deleting financial history; settings can re-enable', async () => {
     const count = await Payment.countDocuments({ school: f.school._id });
     await call(f.admin, 'PATCH', '/settings', { examFeesEnabled: false });
     for (const path of ['/campaigns', '/charges', '/payments', '/remittances', '/collector-summary', '/reports', '/audit', `/payments/${firstPayment._id}/receipt`]) await call(f.admin, 'GET', path, null, 403);
+    await call(f.admin, 'DELETE', `/campaigns/${campaign._id}`, { reason: 'Disabled' }, 403);
     assert.equal((await call(f.admin, 'GET', '/settings')).examFeesEnabled, false);
     assert.equal(await Payment.countDocuments({ school: f.school._id }), count);
     await call(f.admin, 'PATCH', '/settings', { examFeesEnabled: true });
