@@ -371,12 +371,53 @@ test('exam fees integration on an isolated replica set', { skip: !uri, timeout: 
       assert.equal(await Charge.countDocuments({ campaign: duplicate._id }), 0);
     }
   });
+  await t.test('student sync backfills late enrolments and normalized years without duplicate or rewritten obligations', async () => {
+    async function addStudent(overrides = {}) {
+      const school = overrides.school || f.school._id;
+      const user = { _id: id(), school, role: 'student', name: `Roster student ${id()}`, email: `${id()}@test.invalid`, password: 'unused', isActive: true };
+      await User.collection.insertOne(user);
+      return Student.create({ school, user: user._id, class: f.cls._id, gender: 'Male', academicYear: '2026-2027', admissionNumber: String(id()), ...overrides });
+    }
+    const legacy = await addStudent({ academicYear: '2026/2027' });
+    const exam = (await call(f.admin, 'POST', '/campaigns', draft('Roster sync'))).campaign;
+    await call(f.admin, 'POST', `/campaigns/${exam._id}/sync-students`, {}, 409);
+    await call(f.admin, 'POST', `/campaigns/${exam._id}/activate`, {});
+    assert.ok(await Charge.exists({ campaign: exam._id, student: legacy._id }));
+    const existing = await Charge.findOne({ campaign: exam._id, student: f.students[0]._id });
+    await call(f.admin, 'POST', `/charges/${existing._id}/adjustments`, { amountDuePesewas: 5500, reason: 'Individual adjustment' });
+    await call(f.admin, 'POST', '/payments', pay(existing, 1000, 'roster-payment-preservation-01'));
+    const original = await Charge.findById(existing._id).lean();
+    await Student.updateOne({ _id: existing.student }, { $set: { class: f.cls2._id } });
+    const late = await addStudent({ academicYear: ' 2026 / 2027 ' });
+    const spaced = await addStudent({ academicYear: '2026 - 2027' });
+    const excluded = await Promise.all([
+      addStudent({ academicYear: '2025-2026' }), addStudent({ status: 'graduated' }), addStudent({ status: 'withdrawn' }), addStudent({ school: privateSchool.school._id })
+    ]);
+    await call(f.teacherUser, 'POST', `/campaigns/${exam._id}/sync-students`, {}, 403);
+    await call(privateSchool.admin, 'POST', `/campaigns/${exam._id}/sync-students`, {}, 404);
+    const result = await call(f.admin, 'POST', `/campaigns/${exam._id}/sync-students`, {});
+    assert.equal(result.chargesGenerated, 2);
+    assert.equal(await Charge.countDocuments({ campaign: exam._id, student: { $in: [late._id, spaced._id] } }), 2);
+    assert.equal(await Charge.countDocuments({ campaign: exam._id, student: { $in: excluded.map(student => student._id) } }), 0);
+    assert.deepEqual(await Charge.findById(existing._id).lean(), original);
+    const repeat = await call(f.admin, 'POST', `/campaigns/${exam._id}/sync-students`, {});
+    assert.equal(repeat.chargesGenerated, 0);
+    const newest = await addStudent();
+    const racing = await Promise.all([call(f.admin, 'POST', `/campaigns/${exam._id}/sync-students`, {}), call(f.admin, 'POST', `/campaigns/${exam._id}/sync-students`, {})]);
+    assert.equal(racing.reduce((sum, row) => sum + row.chargesGenerated, 0), 1);
+    assert.equal(await Charge.countDocuments({ campaign: exam._id, student: newest._id }), 1);
+    const report = await call(f.admin, 'GET', `/reports?campaignId=${exam._id}`);
+    assert.equal(report.summary.expectedPesewas, 32500); assert.equal(report.summary.collectedPesewas, 1000);
+    await call(f.admin, 'POST', `/campaigns/${exam._id}/close`, {});
+    await call(f.admin, 'POST', `/campaigns/${exam._id}/sync-students`, {}, 409);
+  });
   await t.test('disabling blocks every feature path without deleting financial history; settings can re-enable', async () => {
     const count = await Payment.countDocuments({ school: f.school._id });
     await call(f.admin, 'PATCH', '/settings', { examFeesEnabled: false });
     for (const path of ['/campaigns', '/charges', '/payments', '/remittances', '/collector-summary', '/reports', '/audit', `/payments/${firstPayment._id}/receipt`]) await call(f.admin, 'GET', path, null, 403);
     await call(f.admin, 'DELETE', `/campaigns/${campaign._id}`, { reason: 'Disabled' }, 403);
     await call(f.admin, 'POST', `/campaigns/${campaign._id}/fees`, { classFees: [], reason: 'Disabled' }, 403);
+    await call(f.admin, 'POST', `/campaigns/${campaign._id}/sync-students`, {}, 403);
     assert.equal((await call(f.admin, 'GET', '/settings')).examFeesEnabled, false);
     assert.equal(await Payment.countDocuments({ school: f.school._id }), count);
     await call(f.admin, 'PATCH', '/settings', { examFeesEnabled: true });

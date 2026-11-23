@@ -43,3 +43,5 @@ exports.audit = wrap(req => reports.auditTrail(req.user, req.query));
 exports.deleteCampaign = wrap(req => campaigns.remove(req.user, req.params.campaignId, req.body || {}));
 
 exports.updateCampaignFees = wrap(req => campaigns.updateFees(req.user, req.params.campaignId, req.body || {}));
+
+exports.syncCampaignStudents = wrap(req => campaigns.syncStudents(req.user, req.params.campaignId, req.body || {}));

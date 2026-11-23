@@ -206,3 +206,12 @@ The existing school-serialized transaction validates all reductions against stud
 The admin form sends only changed classes and the campaign revision. A stale revision with different new amounts is rejected with 409. Exact repeated values remain safely repeatable after a lost response. Unchanged classes retain individual student adjustments.
 
 Class-fee update verification: all 28 isolated replica-set integration tests passed, including increases, reductions, paid-amount protection, report totals, audit/charge history, receipt snapshots, unchanged individual adjustments, exact retry, stale revision, closed/draft/tenant/role/feature restrictions and collection racing fee reduction. The disposable test database was stopped after verification.
+
+
+## Recover missing student fee records
+
+`POST /api/exam-fees/campaigns/:campaignId/sync-students` (admin only, feature enabled) accepts an empty body and requires an active campaign. It adds missing eligible students using the current campaign class amounts. Returns `{ success: true, campaignId, chargesGenerated, eligibleStudents, byClass }`. Existing charges, paid amounts, adjustments, names, original class snapshots and timestamps are untouched. Eligibility remains school + campaign class + matching academic year, excluding graduated/withdrawn students. Equivalent separators (`-`, `/`, `to`) and surrounding spaces are recognized during activation and sync. Students from different years are never included by loosening the year filter.
+
+The existing school-serialized transaction and school/campaign/student unique index prevent duplicate obligations. Batches use insert-only upserts with timestamps disabled for existing records. A transferred student with an existing charge keeps the original obligation instead of being billed twice. `campaign.students_synced` records counts in the audit trail. Closed/draft campaigns cannot sync; historical records remain fixed. No migration or new dependency is required.
+
+Roster verification: all 29 isolated replica-set integration tests and 8 focused backend unit tests passed. Coverage includes late enrolment, equivalent year formats, repeat/concurrent sync, original charge timestamps/adjustments/payments/classes, tenant/role/status/feature restrictions and report totals. Test data was isolated and the disposable database stopped afterward.

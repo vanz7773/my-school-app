@@ -1,7 +1,6 @@
 const School = require('../../models/School');
 const Term = require('../../models/term');
 const Class = require('../../models/Class');
-const Student = require('../../models/Student');
 const Teacher = require('../../models/Teacher');
 const User = require('../../models/User');
 const Campaign = require('../../models/ExamFeeCampaign');
@@ -67,24 +66,8 @@ exports.activate = async (user, campaignId) => {
     if (!campaign) c.fail(404, 'Campaign not found.');
     if (campaign.status === 'closed') c.fail(409, 'Closed campaigns cannot be activated.');
     if (campaign.status === 'active') return { campaign, chargesGenerated: 0, alreadyActive: true };
-    let count = 0;
-    // Stream the roster and insert bounded batches; activation remains one atomic transaction.
-    for (const fee of campaign.classFees) {
-      const cursor = Student.find({ ...c.scope(user), class: fee.class, status: { $nin: ['graduated', 'withdrawn'] },
-        academicYear: { $in: [campaign.academicYear, campaign.academicYear.replace('-', ' to ')] }
-      }).populate({ path: 'user', select: 'name', match: { school: user.school } }).session(session).cursor();
-      let batch = [];
-      for await (const student of cursor) {
-        batch.push({ ...c.scope(user), campaign: campaign._id, student: student._id, class: fee.class,
-          studentName: student.user?.name || [student.surname, student.otherNames].filter(Boolean).join(' ') || 'Student',
-          admissionNumber: student.admissionNumber || '', className: fee.className,
-          originalAmountPesewas: fee.amountPesewas, amountDuePesewas: fee.amountPesewas, netPaidPesewas: 0 });
-        count++;
-        if (batch.length === 250) { await Charge.insertMany(batch, { session }); batch = []; }
-      }
-      if (batch.length) await Charge.insertMany(batch, { session });
-    }
-    if (!count) c.fail(409, 'No eligible enrolled students match the campaign classes and academic year.');
+    const { chargesGenerated: count, eligibleStudents } = await require('./roster').ensureCharges(user, campaign, session);
+    if (!eligibleStudents) c.fail(409, 'No eligible enrolled students match the campaign classes and academic year.');
     campaign.status = 'active'; campaign.activatedBy = user._id; campaign.activatedAt = new Date();
     await campaign.save({ session });
     await c.audit(user, 'campaign.activated', campaign._id, campaign._id, { chargesGenerated: count }, session);
@@ -219,5 +202,17 @@ exports.updateFees = async (user, campaignId, body) => {
       await c.audit(user, 'campaign.fees_updated', campaign._id, campaign._id, { reason, changes, chargesAdjusted }, session);
     }
     return { campaign, chargesAdjusted };
+  });
+};
+
+exports.syncStudents = async (user, campaignId, body) => {
+  c.admin(user); c.id(campaignId); c.only(body, []);
+  return c.transaction(user, async session => {
+    const campaign = await Campaign.findOne({ ...c.scope(user), _id: campaignId }).session(session);
+    if (!campaign) c.fail(404, 'Examination not found.');
+    if (campaign.status !== 'active') c.fail(409, 'Only active examinations can update their student list.');
+    const result = await require('./roster').ensureCharges(user, campaign, session);
+    await c.audit(user, 'campaign.students_synced', campaign._id, campaign._id, result, session);
+    return { campaignId: String(campaign._id), ...result };
   });
 };
