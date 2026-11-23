@@ -45,3 +45,5 @@ exports.deleteCampaign = wrap(req => campaigns.remove(req.user, req.params.campa
 exports.updateCampaignFees = wrap(req => campaigns.updateFees(req.user, req.params.campaignId, req.body || {}));
 
 exports.syncCampaignStudents = wrap(req => campaigns.syncStudents(req.user, req.params.campaignId, req.body || {}));
+
+exports.reviewCampaignStudents = wrap(req => campaigns.studentRoster(req.user, req.params.campaignId, req.query));

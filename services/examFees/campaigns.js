@@ -206,13 +206,27 @@ exports.updateFees = async (user, campaignId, body) => {
 };
 
 exports.syncStudents = async (user, campaignId, body) => {
-  c.admin(user); c.id(campaignId); c.only(body, []);
+  c.admin(user); c.id(campaignId); c.only(body, ['studentIds']);
+  let selected;
+  if (body.studentIds !== undefined) {
+    if (!Array.isArray(body.studentIds) || !body.studentIds.length || body.studentIds.length > 100) c.fail(400, 'Select 1–100 students.');
+    selected = body.studentIds.map(value => c.id(value));
+    if (new Set(selected.map(String)).size !== selected.length) c.fail(400, 'Duplicate student selection.');
+  }
   return c.transaction(user, async session => {
     const campaign = await Campaign.findOne({ ...c.scope(user), _id: campaignId }).session(session);
     if (!campaign) c.fail(404, 'Examination not found.');
     if (campaign.status !== 'active') c.fail(409, 'Only active examinations can update their student list.');
-    const result = await require('./roster').ensureCharges(user, campaign, session);
-    await c.audit(user, 'campaign.students_synced', campaign._id, campaign._id, result, session);
+    const result = await require('./roster').ensureCharges(user, campaign, session, selected);
+    if (selected && result.eligibleStudents !== selected.length) c.fail(400, 'Some selected students are not active members of the examination classes or do not meet the academic-year rules. No students were added.');
+    await c.audit(user, 'campaign.students_synced', campaign._id, campaign._id, { ...result, selectedStudentIds: selected || [] }, session);
     return { campaignId: String(campaign._id), ...result };
   });
+};
+
+exports.studentRoster = async (user, campaignId, query) => {
+  c.admin(user); c.id(campaignId);
+  const campaign = await Campaign.findOne({ ...c.scope(user), _id: campaignId });
+  if (!campaign) c.fail(404, 'Examination not found.');
+  return require('./roster').review(user, campaign, query);
 };
